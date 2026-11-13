@@ -432,7 +432,8 @@ impl App {
         let a = self.canvas.area;
         let h = 26.0 * s;
         let bw = h;
-        let track_w = 120.0 * s;
+        // On a narrow canvas: fit, −, +, the zoom; no slider.
+        let track_w = if a.w < 560.0 * s { 0.0 } else { 120.0 * s };
         let pct = format!("{:.0} %", self.layout.view.zoom * 100.0);
         let pw = g.measure(Face::Regular, FONT * s, "400 %") + 12.0 * s;
         let w = bw * 3.0 + track_w + pw + 5.0 * 6.0 * s;
@@ -482,16 +483,18 @@ impl App {
         }
         self.add_hit(minus, Action::ZoomBy(1.0 / 1.2));
         self.add_hit(plus, Action::ZoomBy(1.2));
-        // Track: a line, a tick at 100 %, the knob.
-        let ty = track.cy().round();
-        let lw = (2.0 * s).max(1.0).round();
-        g.rect(Rect::new(track.x, ty - lw / 2.0, track.w, lw), PANEL_LINE);
-        let one = track.x + App::zoom_to_t(1.0) * track.w;
-        g.rect(Rect::new(one.round(), ty - 5.0 * s, s.max(1.0), 10.0 * s), TEXT_DIM);
-        let kx = track.x + App::zoom_to_t(self.layout.view.zoom) * track.w;
-        let active = self.ui.slider.is_some() || self.hovered(&track);
-        g.circle([kx, ty], 6.0 * s, if active { HILIGHT } else { BORDER });
-        self.add_hit(track, Action::ZoomSlider(track));
+        // Track: a line, a tick at 100 %, the knob (none on a narrow canvas).
+        if track.w > 0.0 {
+            let ty = track.cy().round();
+            let lw = (2.0 * s).max(1.0).round();
+            g.rect(Rect::new(track.x, ty - lw / 2.0, track.w, lw), PANEL_LINE);
+            let one = track.x + App::zoom_to_t(1.0) * track.w;
+            g.rect(Rect::new(one.round(), ty - 5.0 * s, s.max(1.0), 10.0 * s), TEXT_DIM);
+            let kx = track.x + App::zoom_to_t(self.layout.view.zoom) * track.w;
+            let active = self.ui.slider.is_some() || self.hovered(&track);
+            g.circle([kx, ty], 6.0 * s, if active { HILIGHT } else { BORDER });
+            self.add_hit(track, Action::ZoomSlider(track));
+        }
         g.text_center(Face::Regular, FONT * s, pr, if self.hovered(&pr) { TEXT_BRIGHT } else { TEXT }, &pct);
         self.add_hit(pr, Action::ZoomTo(1.0));
     }
@@ -563,7 +566,7 @@ impl App {
         let sess_tw = tile_w(g, &["New", "Open", "Save"]);
         let sess_w = group_w(3, sess_tw);
         let lcd_w = 136.0 * s;
-        let trans_w = 3.0 * bh + 2.0 * bgap + 6.0 * s + lcd_w + 8.0 * s;
+        let trans_btns = 3.0 * bh + 2.0 * bgap + 8.0 * s;
         let kinds = self.kinds();
         let kind_tw = tile_w(g, &["AUDIO", "MIDI", "CV", "OSC"]);
         let kinds_w = group_w(kinds.len(), kind_tw);
@@ -582,12 +585,33 @@ impl App {
         let buf_w = read_w(g, &bs, "BUFFER");
         let xr_w = read_w(g, "0000", "XRUNS");
         let dsp_w = read_w(g, "100.0 %", "DSP LOAD").max(84.0 * s);
-        let jack_w = rate_w + buf_w + xr_w + dsp_w + 3.0 * bgap + 8.0 * s;
+        let jack_core = buf_w + xr_w + dsp_w + 2.0 * bgap + 8.0 * s;
         let gap = 8.0 * s;
         let avail = bar.w - 2.0 * pad;
-        let need_all = sess_w + trans_w + kinds_w + views_w + jack_w + 4.0 * gap;
-        let show_sess = need_all <= avail;
-        let show_views = need_all - if show_sess { 0.0 } else { sess_w + gap } <= avail;
+        // What fits, dropped in this order as the window narrows: the session's buttons, the
+        // views, the time display, the rate readout (the sidebar has it), the port types (keys
+        // 1-4), the transport buttons. The JACK readouts stay.
+        let mut show = [true; 6]; // session, views, lcd, rate, kinds, transport
+        let need = |s: &[bool; 6]| -> f32 {
+            let parts = [
+                (s[0], sess_w),
+                (s[1], views_w),
+                (s[5], trans_btns + if s[2] { 6.0 * self.scale + lcd_w } else { 0.0 }),
+                (s[4], kinds_w),
+                (true, jack_core + if s[3] { rate_w + bgap } else { 0.0 }),
+            ];
+            let shown: Vec<f32> = parts.iter().filter(|(on, _)| *on).map(|(_, w)| *w).collect();
+            shown.iter().sum::<f32>() + gap * (shown.len().saturating_sub(1)) as f32
+        };
+        for k in [0usize, 1, 2, 3, 4, 5] {
+            if need(&show) <= avail {
+                break;
+            }
+            show[k] = false;
+        }
+        let [show_sess, show_views, show_lcd, show_rate, show_kinds, show_trans] = show;
+        let trans_w = trans_btns + if show_lcd { 6.0 * s + lcd_w } else { 0.0 };
+        let jack_w = jack_core + if show_rate { rate_w + bgap } else { 0.0 };
 
         let mut x = bar.x + pad;
         // Session.
@@ -607,7 +631,7 @@ impl App {
             x += sess_w + gap;
         }
         // Transport: rewind, play/pause, stop, and the time display.
-        {
+        if show_trans {
             let r = Rect::new(x, gy, trans_w, gh);
             self.group(g, r);
             let t = st.transport;
@@ -638,28 +662,30 @@ impl App {
                 }
             }
             // The time display (Luluda's LCD): time, and bars|beats|ticks and tempo below.
-            let lcd = Rect::new(bx + 2.0 * s, by, lcd_w, bh);
-            g.rrect(lcd, 3.0 * s, LCD_BG);
-            g.rrect_stroke(lcd, 3.0 * s, s.max(1.0), PANEL_LINE);
-            let secs = t.frame as f64 / t.rate.max(1) as f64;
-            let time = format!("{}:{:02}:{:04.1}", (secs / 3600.0) as u32, ((secs / 60.0) as u32) % 60, secs % 60.0);
-            let tcol = if playing { LCD_TEXT } else { alpha(LCD_TEXT, 0.8) };
-            let tpx = px * 1.2;
-            let lh = g.line_height(Face::Regular, tpx);
-            let slh = g.line_height(Face::Regular, spx);
-            let sub = match t.bbt {
-                Some((bar_n, beat, tick, bpm, _, _)) => format!("{bar_n}|{beat}|{tick:04}  {bpm:.1} BPM"),
-                None => "TIME".to_string(),
-            };
-            let y0 = lcd.cy() - (lh + slh) / 2.0;
-            let w = g.measure(Face::Regular, tpx, &time);
-            g.text(Face::Regular, tpx, lcd.cx() - w / 2.0, y0, tcol, &time);
-            let sw = g.measure(Face::Regular, spx, &sub);
-            g.text(Face::Regular, spx, lcd.cx() - sw / 2.0, y0 + lh, LCD_CAPTION, &sub);
+            let lcd = Rect::new(bx + 2.0 * s, by, if show_lcd { lcd_w } else { 0.0 }, bh);
+            if show_lcd {
+                g.rrect(lcd, 3.0 * s, LCD_BG);
+                g.rrect_stroke(lcd, 3.0 * s, s.max(1.0), PANEL_LINE);
+                let secs = t.frame as f64 / t.rate.max(1) as f64;
+                let time = format!("{}:{:02}:{:04.1}", (secs / 3600.0) as u32, ((secs / 60.0) as u32) % 60, secs % 60.0);
+                let tcol = if playing { LCD_TEXT } else { alpha(LCD_TEXT, 0.8) };
+                let tpx = px * 1.2;
+                let lh = g.line_height(Face::Regular, tpx);
+                let slh = g.line_height(Face::Regular, spx);
+                let sub = match t.bbt {
+                    Some((bar_n, beat, tick, bpm, _, _)) => format!("{bar_n}|{beat}|{tick:04}  {bpm:.1} BPM"),
+                    None => "TIME".to_string(),
+                };
+                let y0 = lcd.cy() - (lh + slh) / 2.0;
+                let w = g.measure(Face::Regular, tpx, &time);
+                g.text(Face::Regular, tpx, lcd.cx() - w / 2.0, y0, tcol, &time);
+                let sw = g.measure(Face::Regular, spx, &sub);
+                g.text(Face::Regular, spx, lcd.cx() - sw / 2.0, y0 + lh, LCD_CAPTION, &sub);
+            }
             x += trans_w + gap;
         }
         // Graph: the port types, then the view.
-        {
+        if show_kinds {
             let r = Rect::new(x, gy, kinds_w, gh);
             self.group(g, r);
             let mut bx = r.x + 4.0 * s;
@@ -722,6 +748,9 @@ impl App {
                 self.add_hit(br, Action::BufferMenu(br));
             }
             rx -= buf_w + bgap;
+            if !show_rate {
+                return;
+            }
             let rr = Rect::new(rx - rate_w, by, rate_w, bh);
             g.rrect(rr, 3.0 * s, LCD_BG);
             g.rrect_stroke(rr, 3.0 * s, s.max(1.0), PANEL_LINE);
