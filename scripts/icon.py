@@ -3,7 +3,8 @@
 outside it). Writes an SVG:
 
     scripts/icon.py dist/share/patchbox.svg
-    scripts/icon.py dist/share/patchbox-small.svg simple    (five plugs, for 16 and 24 px)
+
+(`simple` as a second argument draws five big plugs only; not shipped.)
 """
 import sys
 COL = {
