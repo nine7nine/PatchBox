@@ -32,6 +32,8 @@ pub struct View {
     /// Interface scale for the window's contents (top bar, sidebar, canvas at zoom 1), on top of
     /// the desktop's scale. The window buttons follow the desktop's scale only.
     pub ui_scale: f32,
+    /// Our names for blocks and ports go to JACK's metadata (pretty-name) for other programs.
+    pub export_names: bool,
     /// The camera (cam, zoom) each view style was last left at, so going back to one returns
     /// to where it was.
     pub style_cams: BTreeMap<String, ([f32; 2], f32)>,
@@ -52,7 +54,7 @@ impl View {
 
 impl Default for View {
     fn default() -> View {
-        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, vertical: false, snap: false, no_overlap: true, ui_scale: 1.25, style_cams: BTreeMap::new() }
+        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, vertical: false, snap: false, no_overlap: true, ui_scale: 1.25, export_names: true, style_cams: BTreeMap::new() }
     }
 }
 

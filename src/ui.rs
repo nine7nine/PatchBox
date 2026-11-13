@@ -97,12 +97,13 @@ impl UiState {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool, ui_scale: f32, grid: bool, snap: bool, undo: (bool, bool)) {
+    pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool, ui_scale: f32, grid: bool, snap: bool, undo: (bool, bool), export: bool) {
         let items = vec![
             MenuItem::new(format!("Interface scale: {:.0} % …", ui_scale * 100.0), Action::ScaleMenu(Rect::new(under.x, under.bottom() + 2.0, 0.0, 0.0))),
             MenuItem::new("Event log (xruns, server, clients)", Action::EventLog),
             MenuItem::new("Find a block or port (Ctrl+F)", Action::Find),
             MenuItem::new("Connection rules…", Action::RulesPage),
+            MenuItem::new("Export our names to JACK (pretty-name)", Action::ToggleExportNames).checked(export),
             MenuItem::new("Undo (Ctrl+Z)", Action::Undo).enabled(undo.0),
             MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo).enabled(undo.1),
             MenuItem::new("Show sidebar", Action::ToggleSidebar).checked(sidebar),

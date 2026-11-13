@@ -9,6 +9,7 @@ mod canvas;
 mod csd;
 mod dialog;
 mod events;
+mod export;
 mod gfx;
 mod layout;
 mod model;
@@ -540,6 +541,8 @@ fn main() {
         }
     }
     app.save_layout();
+    // Our names leave JACK's metadata with us.
+    app.export_withdraw();
     if stats {
         let t = started.elapsed().as_secs_f32();
         eprintln!("[stats] wakes: {wakes:?}");

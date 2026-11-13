@@ -348,6 +348,11 @@ impl Client {
     }
 
     /// Set a metadata property on one of this process's subjects (test tools: pretty names).
+    pub fn remove_property(&self, subject: u64, key: &str) -> bool {
+        let Ok(k) = CString::new(key) else { return false };
+        unsafe { ffi::jack_remove_property(self.raw, subject, k.as_ptr()) == 0 }
+    }
+
     pub fn set_property(&self, subject: u64, key: &str, value: &str) -> bool {
         let (Ok(k), Ok(v)) = (CString::new(key), CString::new(value)) else { return false };
         unsafe { ffi::jack_set_property(self.raw, subject, k.as_ptr(), v.as_ptr(), ptr::null()) == 0 }

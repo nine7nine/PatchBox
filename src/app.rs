@@ -71,6 +71,8 @@ pub enum Action {
     Align(crate::canvas::Align),
     /// Nothing (a click that a control keeps to itself).
     Noop,
+    /// Our names to JACK's metadata on/off.
+    ToggleExportNames,
     /// The find bar (Ctrl+F): open, close, go to a result.
     Find,
     SearchGo(usize),
@@ -188,6 +190,8 @@ pub struct App {
     pub rules: Vec<pbx_session::rules::Rule>,
     /// The find bar, while open.
     pub search: Option<crate::canvas::Search>,
+    /// Our names in JACK's metadata.
+    pub export: crate::export::Export,
     /// Installed applications (.desktop), scanned when first needed.
     pub apps: Option<Vec<crate::session::App>>,
     pub log: Vec<LogLine>,
@@ -240,6 +244,7 @@ impl App {
             preset_saving: None,
             rules: Vec::new(),
             search: None,
+            export: Default::default(),
             apps: None,
             jack: None,
             waker,
@@ -434,6 +439,7 @@ impl App {
             self.redraw = true;
         }
         if let Some(reason) = lost {
+            self.export_reset();
             self.jack = None;
             if self.source == Source::Jack {
                 self.graph = Graph::default();
@@ -467,6 +473,14 @@ impl App {
             }
             if self.jack.is_none() {
                 at(self.retry_at);
+            }
+        }
+        if let Some(due) = self.export.due {
+            if now >= due {
+                self.export.due = self.export_names();
+            }
+            if let Some(t) = self.export.due {
+                at(t);
             }
         }
         if let Some(due) = self.graph_due {
@@ -725,6 +739,7 @@ impl App {
         self.refresh_hover();
         // The rules page says which rules are connected now.
         self.refresh_rules_page();
+        self.export_soon();
         self.redraw = true;
     }
 
@@ -1421,7 +1436,8 @@ impl App {
                 let ui_scale = self.layout.view.ui_scale;
                 let (grid, snap) = (self.layout.view.grid, self.layout.view.snap);
                 let undo = (self.history.can_undo(), self.history.can_redo());
-                self.ui.open_app_menu(r, labels, sidebar, ui_scale, grid, snap, undo)
+                let export = self.layout.view.export_names;
+                self.ui.open_app_menu(r, labels, sidebar, ui_scale, grid, snap, undo, export)
             }
             Action::SetBufferSize(n) => {
                 if let Some(c) = &self.jack
@@ -1456,6 +1472,11 @@ impl App {
             }
             Action::Align(how) => self.align(how),
             Action::Noop => {}
+            Action::ToggleExportNames => {
+                self.layout.view.export_names = !self.layout.view.export_names;
+                self.layout_changed();
+                self.export_soon();
+            }
             Action::Find => {
                 self.search = if self.search.is_some() { None } else { Some(Default::default()) };
                 self.redraw = true;
@@ -1754,6 +1775,7 @@ impl App {
                 self.model = Model::build(&self.graph, &self.layout, &own);
                 self.refresh_matrices();
                 self.layout_changed();
+                self.export_soon();
             }
             Action::Sess(a) => self.session_action(a),
             Action::Quit => self.quit = true,
