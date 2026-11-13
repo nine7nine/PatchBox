@@ -1,0 +1,27 @@
+[package]
+name = "pbx-session"
+version = "0.1.0"
+edition = "2024"
+description = "PatchBox's session manager: patchboxd (NSM server, client supervisor, connection memory) and its control protocol"
+license = "GPL-2.0-or-later"
+publish = false
+
+[dependencies]
+pbx-jack = { path = "../pbx-jack" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1.1"
+libc = "0.2"
+
+[[bin]]
+name = "patchboxd"
+path = "src/bin/patchboxd.rs"
+
+[[bin]]
+name = "patchbox-ctl"
+path = "src/bin/patchbox-ctl.rs"
+
+[[bin]]
+# Test tool: an NSM client that announces, saves a file and registers JACK ports.
+name = "pbx-fake-nsm"
+path = "src/bin/pbx-fake-nsm.rs"

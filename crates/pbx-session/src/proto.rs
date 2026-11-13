@@ -1,0 +1,209 @@
+//! The control protocol between patchboxd and its front ends (the GUI, patchbox-ctl): JSON lines
+//! over a Unix stream socket. A front end sends `Request`s; the daemon answers each with a
+//! `Reply`, and pushes `Push::State` to subscribers whenever anything changes (the state is
+//! small: one session, a handful of clients).
+
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+pub enum Request {
+    /// Get pushed the state now and on every change, and log lines.
+    Subscribe,
+    State,
+    ListSessions,
+    New { name: String },
+    Open { name: String },
+    Save,
+    Close,
+    /// Close without saving.
+    Abort,
+    Duplicate { name: String },
+    Rename { name: String },
+    SetNotes { notes: String },
+    /// Add a client and start it. `nsm`: speaks NSM (else a plain program, stopped with SIGTERM).
+    Add { exe: String, #[serde(default)] args: Vec<String>, nsm: bool, #[serde(default)] label: String },
+    Start { id: String },
+    Stop { id: String },
+    Kill { id: String },
+    SaveClient { id: String },
+    ShowGui { id: String },
+    HideGui { id: String },
+    /// Move a stopped client to the trash.
+    Trash { id: String },
+    Restore { id: String },
+    /// Forget a trashed client (its files stay).
+    Forget { id: String },
+    SetLabel { id: String, label: String },
+    /// JACK connections, through the daemon's own client (scripts, tests).
+    Connect { src: String, dst: String },
+    Disconnect { src: String, dst: String },
+    /// The current connections, one "src -> dst" per line.
+    Graph,
+    Quit,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum Reply {
+    Ok { msg: String },
+    Error { msg: String },
+    Sessions { root: String, sessions: Vec<SessionEntry> },
+    State(State),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "push", rename_all = "snake_case")]
+pub enum Push {
+    State(State),
+    Log { text: String, bad: bool },
+}
+
+/// One line from the daemon: a reply or a push.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum FromDaemon {
+    Push(Push),
+    Reply(Reply),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct SessionEntry {
+    /// Relative to the sessions root.
+    pub name: String,
+    /// Seconds since the epoch the session file was written.
+    pub modified: u64,
+    pub clients: usize,
+    pub notes: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    #[default]
+    Stopped,
+    /// Started, not announced yet.
+    Launching,
+    /// Announced; /nsm/client/open sent.
+    Opening,
+    Ready,
+    Saving,
+    Stopping,
+    /// A plain program, running.
+    Running,
+    /// Never announced: run as a plain program.
+    NoAnnounce,
+    Error,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct ClientState {
+    pub id: String,
+    /// The application's name (from its announce, else the executable).
+    pub name: String,
+    pub label: String,
+    pub exe: String,
+    pub args: Vec<String>,
+    pub nsm: bool,
+    pub status: Status,
+    pub pid: Option<u32>,
+    /// None: the client doesn't report it (no :dirty:).
+    pub dirty: Option<bool>,
+    /// None: no optional GUI.
+    pub gui: Option<bool>,
+    pub progress: f32,
+    pub message: String,
+    pub capabilities: String,
+    /// The JACK client name it was given (NSM clients).
+    pub jack_name: String,
+    /// Started when the session opens.
+    pub autostart: bool,
+    pub last_save: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct State {
+    pub root: String,
+    /// The open session (name relative to the root) and its folder.
+    pub session: Option<String>,
+    pub path: Option<String>,
+    pub notes: String,
+    pub clients: Vec<ClientState>,
+    pub trash: Vec<ClientState>,
+    /// An operation in progress ("Saving…", "Opening…").
+    pub busy: Option<String>,
+    /// The NSM_URL clients get.
+    pub nsm_url: String,
+    /// Saved connections and how many are present.
+    pub connections_saved: usize,
+    pub connections_present: usize,
+}
+
+/// $XDG_RUNTIME_DIR/patchbox/daemon.sock (PATCHBOX_SOCKET overrides).
+pub fn socket_path() -> PathBuf {
+    if let Some(p) = std::env::var_os("PATCHBOX_SOCKET") {
+        return PathBuf::from(p);
+    }
+    let base = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(format!("/tmp/patchbox-{}", unsafe { libc::getuid() }))
+    });
+    base.join("patchbox").join("daemon.sock")
+}
+
+/// Where sessions live: PATCHBOX_SESSIONS, else ~/PatchBox Sessions.
+pub fn sessions_root() -> PathBuf {
+    if let Some(p) = std::env::var_os("PATCHBOX_SESSIONS") {
+        return PathBuf::from(p);
+    }
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp")).join("PatchBox Sessions")
+}
+
+/// A connected front end (blocking): requests and their replies, pushes in between.
+pub struct Conn {
+    stream: std::os::unix::net::UnixStream,
+    reader: std::io::BufReader<std::os::unix::net::UnixStream>,
+}
+
+impl Conn {
+    pub fn connect() -> std::io::Result<Conn> {
+        let stream = std::os::unix::net::UnixStream::connect(socket_path())?;
+        let reader = std::io::BufReader::new(stream.try_clone()?);
+        Ok(Conn { stream, reader })
+    }
+
+    pub fn send(&mut self, r: &Request) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut line = serde_json::to_vec(r).map_err(std::io::Error::other)?;
+        line.push(b'\n');
+        self.stream.write_all(&line)
+    }
+
+    /// The next line from the daemon.
+    pub fn recv(&mut self) -> std::io::Result<FromDaemon> {
+        use std::io::BufRead;
+        let mut line = String::new();
+        if self.reader.read_line(&mut line)? == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "daemon closed the connection"));
+        }
+        serde_json::from_str(&line).map_err(std::io::Error::other)
+    }
+
+    /// Send a request and wait for its reply (pushes before it are dropped).
+    pub fn call(&mut self, r: &Request) -> std::io::Result<Reply> {
+        self.send(r)?;
+        loop {
+            if let FromDaemon::Reply(rep) = self.recv()? {
+                return Ok(rep);
+            }
+        }
+    }
+
+    pub fn try_clone_stream(&self) -> std::io::Result<std::os::unix::net::UnixStream> {
+        self.stream.try_clone()
+    }
+
+    pub fn into_parts(self) -> (std::os::unix::net::UnixStream, std::io::BufReader<std::os::unix::net::UnixStream>) {
+        (self.stream, self.reader)
+    }
+}

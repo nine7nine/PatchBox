@@ -1,5 +1,6 @@
 [workspace]
-members = [".", "crates/pbx-jack"]
+members = [".", "crates/pbx-jack", "crates/pbx-session"]
+default-members = [".", "crates/pbx-jack", "crates/pbx-session"]
 resolver = "3"
 
 [package]
