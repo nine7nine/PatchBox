@@ -1,0 +1,30 @@
+# A style a graph has never shown (Matrix chosen while on PipeWire): back on JACK it is arranged
+# and fitted, not given another style's or graph's camera.
+wait 2500
+click bar:zoom\+
+wait 300
+cam A
+action pipewire
+wait 2000
+click bar:matrix
+wait 800
+click bar:zoom\+
+click bar:zoom\+
+wait 300
+cam D
+action jack
+wait 1500
+cam Jm
+click bar:zoomfit
+wait 400
+cam =Jm
+click bar:ports
+wait 600
+cam =A
+action pipewire
+wait 1500
+cam P
+click bar:matrix
+wait 600
+cam =D
+quit

@@ -1,0 +1,16 @@
+# Part 2 of 2 (same config): the style and every camera came back.
+wait 2500
+cam =B
+click bar:ports
+wait 600
+cam =A
+action pipewire
+wait 2000
+cam =C
+click bar:matrix
+wait 600
+cam =D
+action jack
+wait 1500
+cam =B
+quit

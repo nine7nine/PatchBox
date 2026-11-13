@@ -10,6 +10,9 @@
 //!   key <name>                     a key: 1-4, l, f, e, space, enter, escape, f9
 //!   type <text>                    typed text (`+` for a space)
 //!   shot <path.png>                write the next frame
+//!   cam [label]                    log the graph, the view style, the camera, and a fingerprint of
+//!                                  the shown block positions and of the matrices'
+//!   action pipewire|jack           open PipeWire's graph / back to JACK's
 //!   quit
 //! Points (`+` stands for a space): `x,y` (window pixels), `node:<id>`, `out:<id>`, `in:<id>` (node ids as in the layout
 //! file, e.g. `M:ardour`, `S:system`), `cell:<matrix key substring>:<col>:<row>`, `empty` (a
@@ -29,6 +32,8 @@ pub struct Script {
     next_at: Instant,
     pub shot: Option<String>,
     pub done: bool,
+    /// App actions to apply (steps that are not input events).
+    pub actions: Vec<crate::app::Action>,
 }
 
 pub struct Synth {
@@ -62,7 +67,7 @@ impl Script {
     pub fn from_env() -> Option<Script> {
         let s = std::env::var("PATCHBOX_TEST").ok()?;
         let steps = s.split(';').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
-        Some(Script { steps, next_at: Instant::now(), shot: None, done: false })
+        Some(Script { steps, next_at: Instant::now(), shot: None, done: false, actions: Vec::new() })
     }
 
     pub fn next_at(&self) -> Option<Instant> {
@@ -201,6 +206,35 @@ impl Script {
                 }
                 Some("shot") => {
                     self.shot = w.get(1).map(|s| s.to_string());
+                    eprintln!("[test] {step}");
+                    return out;
+                }
+                Some("cam") => {
+                    let v = &app.layout.view;
+                    let src = if app.source == crate::app::Source::PipeWire { "pipewire" } else { "jack" };
+                    let label = w.get(1).copied().unwrap_or("-");
+                    let print = |m: &std::collections::BTreeMap<String, [f32; 2]>| {
+                        // FNV-1a over "id x y", to a tenth of a point.
+                        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+                        for (k, p) in m {
+                            for b in format!("{k} {:.1} {:.1};", p[0], p[1]).bytes() {
+                                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+                            }
+                        }
+                        format!("{}:{:08x}", m.len(), h as u32)
+                    };
+                    eprintln!(
+                        "[test] cam {label} {src} {} cam=({:.1},{:.1}) zoom={:.4} blocks={} mats={}",
+                        v.style(), v.cam[0], v.cam[1], v.zoom, print(&app.layout.nodes), print(&app.layout.matrices)
+                    );
+                    continue;
+                }
+                Some("action") => {
+                    match w.get(1).copied() {
+                        Some("pipewire") => self.actions.push(crate::app::Action::OpenPipeWire),
+                        Some("jack") => self.actions.push(crate::app::Action::BackToJack),
+                        _ => eprintln!("[test] unknown action: {step}"),
+                    }
                     eprintln!("[test] {step}");
                     return out;
                 }

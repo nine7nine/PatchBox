@@ -166,6 +166,7 @@ impl Layout {
     /// Write the canvas into a session folder.
     pub fn save_session(&mut self, dir: &std::path::Path) {
         self.version = 1;
+        self.view.style_cams = self.cams();
         let p = dir.join(SESSION_FILE);
         let tmp = dir.join(".patchbox-layout.json.tmp");
         let Ok(body) = serde_json::to_vec_pretty(self) else { return };
@@ -174,16 +175,35 @@ impl Layout {
         }
     }
 
-    /// The camera (where it looks, the zoom, each view style's): one per graph, JACK's and
-    /// PipeWire's, while the rest of the view (style, grid, scale…) is shared.
-    pub fn camera(&self) -> ([f32; 2], f32, BTreeMap<String, ([f32; 2], f32)>) {
-        (self.view.cam, self.view.zoom, self.view.style_cams.clone())
+    /// This canvas's cameras, one per view style, the one shown included (it lives in cam/zoom
+    /// while shown). Every canvas has its own: JACK's, PipeWire's, each session's; the rest of the
+    /// view (style, grid, scale…) is shared.
+    pub fn cams(&self) -> BTreeMap<String, ([f32; 2], f32)> {
+        let mut m = self.view.style_cams.clone();
+        m.insert(self.view.style().to_string(), (self.view.cam, self.view.zoom));
+        m
     }
 
-    pub fn set_camera(&mut self, (cam, zoom, styles): ([f32; 2], f32, BTreeMap<String, ([f32; 2], f32)>)) {
-        self.view.cam = cam;
-        self.view.zoom = zoom;
-        self.view.style_cams = styles;
+    /// Take `cams` as this canvas's cameras and show the current style's. False: none for it yet
+    /// (the caller fits the graph).
+    pub fn set_cams(&mut self, cams: BTreeMap<String, ([f32; 2], f32)>) -> bool {
+        self.view.style_cams = cams;
+        match self.view.style_cams.get(self.view.style()).copied() {
+            Some((c, z)) => {
+                self.view.cam = c;
+                self.view.zoom = z;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `other`'s canvas and cameras with this view's shared settings (style, grid, scale…).
+    pub fn with_view_of(mut other: Layout, view: &View) -> (Layout, bool) {
+        let cams = other.cams();
+        other.view = view.clone();
+        let has = other.set_cams(cams);
+        (other, has)
     }
 
     /// Take the canvas of `other`, keeping our view and window (those stay global).
@@ -207,6 +227,7 @@ impl Layout {
 
     pub fn save_pw(&mut self) {
         self.version = 1;
+        self.view.style_cams = self.cams();
         let Some(p) = path().map(|p| p.with_file_name("layout-pw.json")) else { return };
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -232,6 +253,7 @@ impl Layout {
 
     pub fn save(&mut self) {
         self.version = 1;
+        self.view.style_cams = self.cams();
         let Some(p) = path() else { return };
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);

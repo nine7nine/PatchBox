@@ -1,0 +1,26 @@
+# Part 1 of 2: cameras set in both graphs and styles; quits while on PipeWire, in Matrix.
+wait 2500
+click bar:zoom\+
+click bar:zoom\+
+wait 300
+cam A
+click bar:matrix
+wait 800
+click bar:zoom-
+wait 300
+cam B
+action pipewire
+wait 2000
+click bar:zoom\+
+wait 300
+cam D
+click bar:ports
+wait 800
+click bar:zoom\+
+click bar:zoom\+
+wait 300
+cam C
+click bar:matrix
+wait 600
+cam =D
+quit

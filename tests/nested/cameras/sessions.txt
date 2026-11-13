@@ -1,0 +1,47 @@
+# Each session canvas keeps its own camera; sessions opened/closed while on PipeWire change
+# JACK's canvas (set aside), never PipeWire's.
+wait 2500
+click bar:zoom\+
+click bar:zoom\+
+wait 300
+cam A
+click bar:sess-new
+wait 300
+type S
+key enter
+wait 2000
+click bar:zoom-
+click bar:zoom-
+click bar:zoom-
+wait 300
+cam E
+click bar:sess-close
+wait 2000
+cam =A
+click bar:sess-open
+wait 800
+click dlg:S
+wait 2000
+cam =E
+action pipewire
+wait 2000
+click bar:zoom\+
+wait 300
+cam C
+click bar:sess-close
+wait 2000
+cam =C
+action jack
+wait 1500
+cam =A
+action pipewire
+wait 1500
+click bar:sess-open
+wait 800
+click dlg:S
+wait 2500
+cam =C
+action jack
+wait 1500
+cam =E
+quit

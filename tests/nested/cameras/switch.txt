@@ -1,0 +1,73 @@
+# Each graph (JACK, PipeWire) keeps, per view style (Ports, vertical Ports, Matrix), its camera
+# and its block positions, across style and graph switches; Fit in one graph leaves the other's.
+wait 2500
+click bar:zoom\+
+click bar:zoom\+
+drag node:M:ardour 700,300
+wait 400
+cam A
+click bar:matrix
+wait 800
+click bar:zoom-
+wait 300
+cam B
+click bar:ports
+wait 600
+cam =A
+click bar:ports
+wait 800
+click bar:zoom\+
+drag node:M:Carla 600,500
+wait 400
+cam V
+click bar:ports
+wait 600
+cam =A
+action pipewire
+wait 2000
+click bar:zoomfit
+wait 300
+click bar:zoom\+
+click bar:zoom\+
+click bar:zoom\+
+drag node:M:firefox 650,350
+wait 400
+cam C
+click bar:matrix
+wait 800
+click bar:zoom\+
+wait 300
+cam D
+click bar:ports
+wait 600
+cam =C
+click bar:ports
+wait 800
+click bar:zoom-
+wait 300
+cam W
+action jack
+wait 1500
+cam =V
+click bar:matrix
+wait 600
+cam =B
+click bar:ports
+wait 600
+cam =V
+click bar:ports
+wait 600
+cam =A
+action pipewire
+wait 1500
+cam =C
+click bar:ports
+wait 600
+cam =W
+click bar:matrix
+wait 600
+cam =D
+action jack
+wait 1500
+cam =B
+quit

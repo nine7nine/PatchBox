@@ -1,0 +1,50 @@
+# Styles inside sessions: a session's canvas keeps its own camera and positions per style,
+# separate from the global canvas's and PipeWire's.
+wait 2500
+click bar:zoom\+
+wait 300
+cam A
+click bar:matrix
+wait 800
+cam B
+click bar:ports
+wait 600
+click bar:sess-new
+wait 300
+type S
+key enter
+wait 2000
+click bar:zoom-
+drag node:M:ardour 500,250
+wait 400
+cam E
+click bar:matrix
+wait 800
+click bar:zoom\+
+click bar:zoom\+
+wait 300
+cam SM
+click bar:sess-close
+wait 2000
+cam =B
+click bar:ports
+wait 600
+cam =A
+click bar:sess-open
+wait 800
+click dlg:S
+wait 2000
+cam =E
+click bar:matrix
+wait 600
+cam =SM
+action pipewire
+wait 1500
+cam P
+click bar:sess-close
+wait 2000
+cam =P
+action jack
+wait 1500
+cam =B
+quit

@@ -159,8 +159,16 @@ tests/nested/run.sh /tmp/x.png PATCHBOX_SNAPSHOT_DELAY_MS=600000 \
   "PATCHBOX_TEST=wait 300; click cell:Dragonfly+Room+Reverb>K:system:0:2 shift; wait 300; shot /tmp/a.png; quit"
 ```
 
+`tests/nested/cameras.sh` checks that each graph (JACK, PipeWire) and each session canvas keeps,
+per view style (Ports, vertical Ports, Matrix), its own camera and block/matrix positions across
+style and graph switches, Fit, sessions (opened or closed while on PipeWire) and restarts (scripts
+in `tests/nested/cameras/`; every `cam =X` must equal `cam X`). It fails on the code before the fix
+it came with.
+
 `tests/session/run.sh` drives patchboxd end to end (sessions, an NSM client, connection memory)
-against a private jackd in its own namespace. `PB_JACKDBUS=1` makes the nested harness run
+against a private jackd in its own namespace. `PB_OLD_DAEMON=<patchboxd>` (with `PB_OLD_SETUP`)
+starts the nested harness against an older daemon already running; `PB_KEEP_CFG=1` keeps the last
+run's PatchBox config. `PB_JACKDBUS=1` makes the nested harness run
 jackdbus (scratch HOME) instead of jackd; `PB_PIPEWIRE=1` adds a private PipeWire beside it,
 `PB_PIPEWIRE=bridge` one on top of it (module-jack-tunnel, with stand-in session manager
 metadata). PatchBox gets a scratch XDG config home there.

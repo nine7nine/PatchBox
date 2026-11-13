@@ -30,7 +30,8 @@ k=$!
 for i in $(seq 100); do [ -S "$XDG_RUNTIME_DIR/pb-nested" ] && break; sleep 0.1; done
 [ -S "$XDG_RUNTIME_DIR/pb-nested" ] || { echo "nested kwin did not start"; cat "$W/kwin.log"; kill $k; exit 1; }
 export WAYLAND_DISPLAY=pb-nested
-CFG=$W/config; rm -rf "$CFG"; mkdir -p "$CFG"
+# PB_KEEP_CFG=1: keep the last run's PatchBox config (layout files), to test what persists.
+CFG=$W/config; [ -z "${PB_KEEP_CFG:-}" ] && rm -rf "$CFG"; mkdir -p "$CFG"
 [ -n "${PB_LAYOUT:-}" ] && cp "$PB_LAYOUT" "$CFG/layout.json"
 unshare --user --map-user="$(id -u)" --map-group="$(id -g)" --keep-caps --mount --ipc --pid --fork --mount-proc \
   sh -c 'mount -t tmpfs -o size=256m,mode=1777 pb-test-shm /dev/shm && exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all "$@"' \

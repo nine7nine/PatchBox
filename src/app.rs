@@ -555,23 +555,36 @@ impl App {
         self.layout.view.kind = self.kind.label().to_string();
         if self.source == Source::PipeWire {
             self.layout.save_pw();
+            // JACK's canvas, set aside: on disk too, with the shared settings as they are now and
+            // its own cameras.
+            if let Some(j) = self.jack_canvas.clone() {
+                let (mut j, _) = Layout::with_view_of(j, &self.layout.view);
+                j.window = self.layout.window;
+                self.write_jack_canvas(&mut j);
+            }
             self.layout_dirty = None;
             return;
         }
+        let mut l = std::mem::take(&mut self.layout);
+        self.write_jack_canvas(&mut l);
+        self.layout = l;
+        self.layout_dirty = None;
+    }
+
+    /// Write a JACK canvas: the open session's into its folder (the shared view, and the canvas
+    /// left for it, stay global), else the global one.
+    fn write_jack_canvas(&self, l: &mut Layout) {
         match &self.layout_dir {
-            // A session's canvas goes with it; the view (and the canvas we left) stays global.
             Some(dir) => {
                 if dir.is_dir() {
-                    self.layout.save_session(dir);
+                    l.save_session(dir);
                 }
-                let mut global = self.global_canvas.clone().unwrap_or_default();
-                global.view = self.layout.view.clone();
-                global.window = self.layout.window;
+                let (mut global, _) = Layout::with_view_of(self.global_canvas.clone().unwrap_or_default(), &l.view);
+                global.window = l.window;
                 global.save();
             }
-            None => self.layout.save(),
+            None => l.save(),
         }
-        self.layout_dirty = None;
     }
 
     /// The open session changed (or closed): switch the canvas to its own, keeping the view.
@@ -583,26 +596,53 @@ impl App {
         if self.layout_dirty.is_some() || self.layout_dir.is_some() {
             self.save_layout();
         }
-        match (&self.layout_dir, &dir) {
-            (None, Some(_)) => self.global_canvas = Some(self.layout.clone()),
-            (Some(_), None) => {
-                if let Some(g) = self.global_canvas.take() {
-                    self.layout.take_canvas(g);
-                }
+        if self.source == Source::PipeWire {
+            // A session's canvas is JACK's: switch the one set aside, not PipeWire's on screen.
+            if let Some(j) = self.jack_canvas.take() {
+                let (mut j, _) = Layout::with_view_of(j, &self.layout.view);
+                self.switch_session_canvas(&mut j, &dir);
+                self.jack_canvas = Some(j);
             }
-            _ => {}
+            self.layout_dir = dir;
+            self.redraw = true;
+            return;
         }
-        if let Some(d) = &dir {
-            // A session opened for the first time starts from the current arrangement.
-            if let Some(l) = crate::layout::Layout::load_session(d) {
-                self.layout.take_canvas(l);
-            }
+        let mut l = std::mem::take(&mut self.layout);
+        if !self.switch_session_canvas(&mut l, &dir) {
+            self.fit_pending = true;
         }
+        self.layout = l;
         self.layout_dir = dir;
         if self.jack.is_some() {
             self.rebuild();
         }
         self.redraw = true;
+    }
+
+    /// Give JACK's canvas `l` the one of the session in `dir` (None: the global one back), each
+    /// with its own cameras. False: the canvas has no camera for the current style yet.
+    fn switch_session_canvas(&mut self, l: &mut Layout, dir: &Option<std::path::PathBuf>) -> bool {
+        let mut has = true;
+        match (&self.layout_dir, dir) {
+            (None, Some(_)) => self.global_canvas = Some(l.clone()),
+            (Some(_), None) => {
+                if let Some(g) = self.global_canvas.take() {
+                    let cams = g.cams();
+                    l.take_canvas(g);
+                    has = l.set_cams(cams);
+                }
+            }
+            _ => {}
+        }
+        if let Some(d) = dir {
+            // A session opened for the first time starts from the current arrangement and view.
+            if let Some(s) = crate::layout::Layout::load_session(d) {
+                let cams = s.cams();
+                l.take_canvas(s);
+                has = l.set_cams(cams);
+            }
+        }
+        has
     }
 
     pub fn layout_changed(&mut self) {
@@ -1788,11 +1828,14 @@ impl App {
                 }
                 self.save_layout();
                 let pw_canvas = Layout::load_pw();
-                // PipeWire's graph has its own camera (its file's; fitted when it has none yet).
-                let pw_cam = pw_canvas.camera();
+                // PipeWire's graph has its own cameras, one per view style (its file's; the graph
+                // is fitted for a style it has none for yet).
+                let pw_cams = pw_canvas.cams();
                 self.jack_canvas = Some(self.layout.clone());
                 self.layout.take_canvas(pw_canvas);
-                self.layout.set_camera(pw_cam);
+                if !self.layout.set_cams(pw_cams) {
+                    self.fit_pending = true;
+                }
                 self.source = Source::PipeWire;
                 self.history = Default::default();
                 if !self.kinds().contains(&self.kind) {
@@ -1807,10 +1850,13 @@ impl App {
                 }
                 self.layout.save_pw();
                 if let Some(j) = self.jack_canvas.take() {
-                    // JACK's camera back as it was left.
-                    let jack_cam = j.camera();
+                    // JACK's cameras back as they were left, the current style's shown (none for
+                    // it yet, the style having changed meanwhile: fitted).
+                    let jack_cams = j.cams();
                     self.layout.take_canvas(j);
-                    self.layout.set_camera(jack_cam);
+                    if !self.layout.set_cams(jack_cams) {
+                        self.fit_pending = true;
+                    }
                 }
                 self.source = Source::Jack;
                 self.history = Default::default();

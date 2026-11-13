@@ -198,6 +198,10 @@ fn main() {
                 for syn in s.run(&app, density) {
                     events.push((syn.ev, Some((syn.ctrl, syn.shift))));
                 }
+                for a in std::mem::take(&mut s.actions) {
+                    app.apply(a);
+                    app.redraw = true;
+                }
                 if s.shot.is_some() {
                     app.redraw = true;
                 }
