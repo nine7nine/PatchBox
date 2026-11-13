@@ -28,7 +28,7 @@ puts it in the graph.
 | | |
 |---|---|
 | Title bar | window buttons, ☰ menu (views, scale, grid, undo…), the session's name |
-| Toolbar | Luluda-style tiles, an icon over a label: session (New, Open, Save; dropped first when narrow), transport (rewind, play/pause, stop, time and BBT), port type (AUDIO / MIDI / CV / OSC, keys 1–4), view (Ports, its icon showing the flow: click again to switch left-to-right and top-to-bottom (V); Matrix (M)), JACK readouts (rate and latency, buffer size menu, xruns: click to reset, DSP load) |
+| Toolbar | Luluda-style tiles, an icon over a label: session (New, Open, Save; dropped first when narrow), transport (rewind, play/pause, stop, time and BBT), port type (AUDIO / MIDI / CV / OSC, keys 1–4), view (Ports, its icon showing the flow: click again to switch left-to-right and top-to-bottom (V); Matrix (M)), JACK readouts (rate and latency, buffer size menu, xruns: click to reset, right-click for the event log, DSP load) |
 | Views | **Ports** (default): each block shows its ports of the current type, inputs left, outputs right, a wire per connection; **Matrices** (M): PatchMatrix's view, one wire per client pair through a matrix of their ports, port counts on the blocks. Both keep the AUDIO / MIDI / CV / OSC split. Each view (ports left to right, ports top to bottom, matrices) keeps its own block positions and camera, in the global layout and in each session's, so switching views never rearranges another |
 | Port | drag onto another port: connect / disconnect; onto a block: its first free compatible port; hover: full name, aliases, connections |
 | Wire (ports view) | hover: lights up with its name; drag it by an end: drop on another port or block to move the connection there, on empty canvas to disconnect; right-click: disconnect |
@@ -38,7 +38,7 @@ puts it in the graph.
 | Output handle → node | drag from a node's right handle (or Shift+drag the node) onto another node: open a matrix between them; hold **Ctrl** at the drop to connect 1:1 |
 | Matrix | Ctrl+drag: move; right-click: connect 1:1, disconnect all, remove. Its wires meet at its centre; pull one off its block: onto another block, the connections move there port for port; onto empty canvas, they are disconnected |
 | Canvas | G: grid on/off; Shift+G: snap blocks to the grid; drag or middle-drag: pan; wheel: scroll; zoom: the widget at the bottom right (centre button: fit the graph, −, slider, +, click the % for 100 %), Ctrl+wheel, touchpad pinch, Ctrl+= / Ctrl+− / Ctrl+0; F: fit; L: port names on every matrix (hovering shows a matrix's names anyway); F9: sidebar |
-| Event log | click XRUNS (or the sidebar's log, or ☰ → Event log): xruns with the time, how late and the DSP load, the server's changes, clients, connections, PatchBox's messages (filter: Show); reset the xrun count here and the server's; a second tab shows the end of jackdbus's own log |
+| Event log | right-click XRUNS (a click resets the count), or click the sidebar's log, or ☰ → Event log: xruns with the time, how late and the DSP load, the server's changes, clients, connections, PatchBox's messages (filter: Show); reset the xrun count here and the server's; a second tab shows the end of jackdbus's own log |
 | Interface scale | ☰ menu → Interface scale (default 125 %), or Ctrl+Shift+= / Ctrl+Shift+−: everything in the window except the window buttons, which follow the desktop's scale |
 | Sidebar | clients (click: find; right-click: menu, show hidden ones), log |
 

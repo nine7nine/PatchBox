@@ -652,7 +652,7 @@ impl App {
             let hov = self.hovered(&xr);
             lbutton(g, xr, s, xt, hov, st.xruns > 0, true);
             readout(g, xr, s, &xs, "XRUNS", if st.xruns > 0 { crate::gfx::mix(BAD, TEXT_BRIGHT, 0.2) } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
-            self.add_hit(xr, Action::EventLog);
+            self.add_hit(xr, Action::ResetXruns);
             rx -= xr_w + bgap;
             let br = Rect::new(rx - buf_w, by, buf_w, bh);
             let hov = connected && self.hovered(&br);

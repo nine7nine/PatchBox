@@ -302,6 +302,10 @@ fn main() {
                                 app.zoom_slider_drag(px);
                             }
                         }
+                        // XRUNS: a click resets the count, a right-click opens the event log.
+                        if mouse_btn == MouseButton::Right && matches!(app.hit_action(px, py), Some(Action::ResetXruns)) {
+                            app.apply(Action::EventLog);
+                        }
                         // A client row's menu.
                         if mouse_btn == MouseButton::Right
                             && let Some(Action::CenterNode(id)) = app.hit_action(px, py)
