@@ -12,7 +12,7 @@ if [ -z "${PB_INNER:-}" ]; then
 fi
 [ "$(findmnt -no SOURCE /dev/shm | tail -1)" = "pb-test-shm" ] && [ -z "$(ls -A /dev/shm)" ] || { echo "not isolated; refusing"; exit 1; }
 W=$HOME/.cache/patchbox-work/session-test; rm -rf "$W"; mkdir -p "$W"
-export PATH="$ROOT/target/debug:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOXD_STAY=1 PATCHBOX_TEMPLATES="$W/templates"
+export PATH="$ROOT/target/debug:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOXD_STAY=1 PATCHBOX_TEMPLATES="$W/templates" PATCHBOX_CONFIG_DIR="$W/config"
 jackd --no-realtime -d dummy --rate 48000 --period 256 --capture 2 --playback 2 > "$W/jackd.log" 2>&1 &
 for i in $(seq 50); do ls /dev/shm/jack_default_* >/dev/null 2>&1 && break; sleep 0.1; done; sleep 0.3
 # PB_VALGRIND=1: the daemon under memcheck (invalid reads/writes, uninitialised values in the FFI

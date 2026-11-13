@@ -35,6 +35,8 @@ pub(crate) struct Session {
     pub clients: Vec<Client>,
     pub trash: Vec<ClientEntry>,
     pub loaded: bool,
+    /// When it opened (recent sessions: those open for more than 30 s).
+    pub opened: Instant,
 }
 
 #[derive(Debug)]
@@ -373,7 +375,13 @@ impl Daemon {
                 ok("subscribed")
             }
             Request::State => Reply::State(self.state()),
-            Request::ListSessions => Reply::Sessions { root: self.root.display().to_string(), sessions: store::list(&self.root) },
+            Request::ListSessions => {
+                let sessions = store::list(&self.root);
+                // Recent ones that still exist (and not the one open now).
+                let open = self.session.as_ref().map(|s| s.name.clone());
+                let recent = store::recent::load().into_iter().filter(|n| sessions.iter().any(|s| &s.name == n) && Some(n) != open.as_ref()).collect();
+                Reply::Sessions { root: self.root.display().to_string(), sessions, recent }
+            }
             Request::New { .. } | Request::Open { .. } if self.op.is_some() => busy(),
             Request::New { name, template } => match self.check_new(&name) {
                 Err(e) => Reply::Error { msg: e },
@@ -749,6 +757,9 @@ impl Daemon {
                         self.reserved.push((id, c));
                     }
                     let _ = std::fs::remove_file(s.dir.join(store::LOCK));
+                    if s.opened.elapsed() >= Duration::from_secs(30) {
+                        store::recent::push(&s.name);
+                    }
                     self.log(format!("Closed {}", s.name), false);
                 }
                 self.patch = patch::PatchMem::default();
@@ -817,6 +828,8 @@ impl Daemon {
                         return false;
                     }
                     s.dir = to;
+                    // Its place among the recent sessions follows it.
+                    store::recent::rename(&s.name, &name);
                     s.name = name;
                 }
                 true
@@ -1108,7 +1121,7 @@ impl Daemon {
         self.patch = patch::PatchMem::from_file(&file.connections);
         let clients = file.clients.iter().cloned().map(Client::new).collect();
         let trash = file.trash.clone();
-        self.session = Some(Session { name: name.to_string(), dir, file, clients, trash, loaded: false });
+        self.session = Some(Session { name: name.to_string(), dir, file, clients, trash, loaded: false, opened: Instant::now() });
         self.log(format!("Opened {name}"), false);
         Ok(())
     }

@@ -65,7 +65,13 @@ pub enum Request {
 pub enum Reply {
     Ok { msg: String },
     Error { msg: String },
-    Sessions { root: String, sessions: Vec<SessionEntry> },
+    Sessions {
+        root: String,
+        sessions: Vec<SessionEntry>,
+        /// The sessions last open for a while (over 30 s), newest first, at most 7.
+        #[serde(default)]
+        recent: Vec<String>,
+    },
     Snapshots { snapshots: Vec<SnapshotEntry> },
     Templates { templates: Vec<String> },
     Rules { rules: Vec<crate::rules::Rule> },
@@ -194,6 +200,17 @@ pub fn templates_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("patchbox")
         .join("templates")
+}
+
+/// PatchBox's configuration directory: PATCHBOX_CONFIG_DIR, else ~/.config/patchbox.
+pub fn config_dir() -> Option<PathBuf> {
+    std::env::var_os("PATCHBOX_CONFIG_DIR").map(PathBuf::from).or_else(|| {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .map(|c| c.join("patchbox"))
+    })
 }
 
 /// Where sessions live: PATCHBOX_SESSIONS, else ~/PatchBox Sessions.

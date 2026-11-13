@@ -74,8 +74,9 @@ impl App {
                     self.session_dir_changed(dir);
                 }
                 FromDaemon::Push(Push::Log { text, bad }) => self.say(text, bad),
-                FromDaemon::Reply(Reply::Sessions { sessions, .. }) => {
+                FromDaemon::Reply(Reply::Sessions { sessions, recent, .. }) => {
                     self.sess.sessions = sessions;
+                    self.sess.recent = recent;
                     if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::OpenSession) {
                         let rows = self.open_rows();
                         if let Some(d) = &mut self.dialog {
@@ -139,6 +140,15 @@ impl App {
         let mut rows = Vec::new();
         if self.sess.sessions.is_empty() {
             rows.push(Row::info("No sessions yet", "create one with New"));
+        }
+        // Recent ones first (left open for a while), then all of them.
+        let recent: Vec<&pbx_session::proto::SessionEntry> = self.sess.recent.iter().filter_map(|n| self.sess.sessions.iter().find(|s| &s.name == n)).collect();
+        if !recent.is_empty() {
+            rows.push(Row::header("Recent"));
+            for s in recent {
+                rows.push(Row { id: format!("session:{}", s.name), label: s.name.clone(), help: String::new(), control: Control::Link(ago(s.modified)), modified: false });
+            }
+            rows.push(Row::header("All sessions"));
         }
         for s in &self.sess.sessions {
             let when = ago(s.modified);

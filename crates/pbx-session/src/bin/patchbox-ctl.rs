@@ -95,8 +95,11 @@ fn main() {
             eprintln!("error: {msg}");
             std::process::exit(1);
         }
-        Ok(Reply::Sessions { root, sessions }) => {
+        Ok(Reply::Sessions { root, sessions, recent }) => {
             println!("# {root}");
+            if !recent.is_empty() {
+                println!("# recent: {}", recent.join(", "));
+            }
             for s in sessions {
                 println!("{}\t{} clients\t{}", s.name, s.clients, s.notes);
             }

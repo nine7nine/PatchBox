@@ -15,6 +15,8 @@ pub struct SessionLink {
     pub state: State,
     pub sessions: Vec<SessionEntry>,
     pub snapshots: Vec<pbx_session::proto::SnapshotEntry>,
+    /// Recent sessions, newest first.
+    pub recent: Vec<String>,
     pub templates: Vec<String>,
     pub connected: bool,
     retry_at: Instant,
@@ -41,6 +43,7 @@ impl SessionLink {
             state: State::default(),
             sessions: Vec::new(),
             snapshots: Vec::new(),
+            recent: Vec::new(),
             templates: Vec::new(),
             connected: false,
             retry_at: Instant::now(),

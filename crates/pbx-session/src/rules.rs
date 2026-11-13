@@ -46,14 +46,7 @@ pub fn glob(pat: &str, name: &str) -> bool {
 }
 
 pub fn path() -> Option<PathBuf> {
-    let dir = std::env::var_os("PATCHBOX_CONFIG_DIR").map(PathBuf::from).or_else(|| {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .map(|c| c.join("patchbox"))
-    })?;
-    Some(dir.join("rules.json"))
+    Some(crate::proto::config_dir()?.join("rules.json"))
 }
 
 impl Rules {

@@ -221,3 +221,62 @@ mod tests {
         assert_eq!(back.connections, s.connections);
     }
 }
+
+/// Recent sessions (RaySession's): those left open for more than 30 s, newest first, at most 7,
+/// in the configuration directory.
+pub mod recent {
+    const KEEP: usize = 7;
+
+    fn path() -> Option<std::path::PathBuf> {
+        Some(crate::proto::config_dir()?.join("recent-sessions.json"))
+    }
+
+    pub fn load() -> Vec<String> {
+        path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    pub fn push(name: &str) {
+        let mut v = load();
+        v.retain(|n| n != name);
+        v.insert(0, name.to_string());
+        v.truncate(KEEP);
+        let Some(p) = path() else { return };
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let tmp = p.with_extension("json.tmp");
+        if let Ok(body) = serde_json::to_vec_pretty(&v) {
+            let _ = std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &p));
+        }
+    }
+
+    /// A session renamed: its place in the list follows it.
+    pub fn rename(from: &str, to: &str) {
+        let mut v = load();
+        if let Some(n) = v.iter_mut().find(|n| *n == from) {
+            *n = to.to_string();
+            v.dedup();
+            if let Some(p) = path() {
+                let _ = serde_json::to_vec_pretty(&v).map(|b| std::fs::write(p, b));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod recent_tests {
+    #[test]
+    fn newest_first_seven_at_most() {
+        let d = std::env::temp_dir().join(format!("pbx-recent-{}", std::process::id()));
+        // SAFETY: tests in this binary that read PATCHBOX_CONFIG_DIR run here only.
+        unsafe { std::env::set_var("PATCHBOX_CONFIG_DIR", &d) };
+        for n in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+            super::recent::push(n);
+        }
+        super::recent::push("c");
+        assert_eq!(super::recent::load(), vec!["c", "h", "g", "f", "e", "d", "b"]);
+        super::recent::rename("h", "h2");
+        assert_eq!(super::recent::load()[1], "h2");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
