@@ -8,7 +8,7 @@
 # Uncommitted changes are not in the package.
 
 pkgname=patchbox
-pkgver=0.1.0.r0.g0
+pkgver=0.1.0.r33.gfaa7a0b
 pkgrel=1
 pkgdesc="JACK patchbay, jackdbus control and NSM session manager (PatchMatrix + RaySession, in SDL3)"
 arch=(x86_64)
@@ -31,6 +31,9 @@ optdepends=(
   'git: session snapshots'
   'xdg-utils: open session folders and configuration files'
 )
+# makepkg's LTO flags would make SDL's C objects GCC LTO bytecode, which Rust's linker (lld)
+# can't read. The Rust side keeps its own LTO (Cargo's release profile: lto = true).
+options=(!lto)
 _sdl_tag=release-3.4.18
 _sdl_commit=829a65d769d935c4852f8159e964312c0957260a
 source=(
