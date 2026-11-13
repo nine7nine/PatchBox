@@ -152,8 +152,8 @@ Sanitizers (nightly Rust): `scripts/sanitize.sh address` (or `thread`) builds in
 `target/<sanitizer>/`; `PB_BIN=$(scripts/sanitize.sh address --bin-dir)` runs the session tests and
 the GUI harness against it (`ASAN_OPTIONS=detect_odr_violation=0` for the GUI: SDL's stb_image and
 miniz hold the same 19-byte table, which the linker merges). ThreadSanitizer:
-`TSAN_OPTIONS=suppressions=$PWD/scripts/tsan.supp` (two lock-order warnings inside libdb and
-libdbus, on our main thread only).
+`TSAN_OPTIONS=suppressions=$PWD/scripts/tsan.supp` (a lock-order warning inside libdb, on our
+main thread only).
 
 `PATCHBOX_STATS=1` prints main-loop wake-ups and frames at exit (idle: the 1 Hz DSP poll, no
 frames).

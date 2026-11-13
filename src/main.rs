@@ -70,6 +70,12 @@ const CORNER_RADIUS: f32 = 6.0;
 fn main() {
     // The Wayland app id: the desktop entry's name (patchbox.desktop), for its icon and grouping.
     sdl3::hint::set("SDL_APP_ID", "patchbox");
+    // SDL keeps the screen awake by default (games, players): a patchbay left open all day must
+    // let it sleep.
+    sdl3::hint::set("SDL_VIDEO_ALLOW_SCREENSAVER", "1");
+    // GL through EGL (Wayland): GLVND's libOpenGL, not libGL.so.1, which also brings GLX and
+    // Xlib into a Wayland-only process. SDL falls back to libGL when it isn't there.
+    sdl3::hint::set("SDL_OPENGL_LIBRARY", "libOpenGL.so.0");
     let sdl = sdl3::init().expect("SDL init");
     let video = sdl.video().expect("SDL video");
     let wake_type = unsafe { sdl3::sys::events::SDL_RegisterEvents(1) };
@@ -143,6 +149,8 @@ fn main() {
     app.redraw = true;
 
     let stats = std::env::var_os("PATCHBOX_STATS").is_some();
+    // How long the first frame took, from the process's start (PATCHBOX_STATS).
+    let mut first_frame: Option<std::time::Duration> = None;
     let mut text_on = false;
     // Test scripts start once JACK was there, and keep running if it goes away.
     let mut ever_connected = false;
@@ -486,6 +494,9 @@ fn main() {
         if app.redraw || snap_now {
             app.redraw = false;
             frames += 1;
+            if first_frame.is_none() {
+                first_frame = Some(process_age());
+            }
             app.layout_regions();
             if app.fit_pending {
                 app.fit_pending = false;
@@ -547,6 +558,29 @@ fn main() {
         let t = started.elapsed().as_secs_f32();
         eprintln!("[stats] wakes: {wakes:?}");
         eprintln!("[stats] {t:.1} s: {loops} loop passes ({:.1}/s), {frames} frames ({:.1}/s)", loops as f32 / t, frames as f32 / t);
+        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        let field = |k: &str| status.lines().find(|l| l.starts_with(k)).map(|l| l[k.len()..].trim().to_string()).unwrap_or_default();
+        eprintln!(
+            "[stats] first frame {:.0} ms after start; memory: {} resident ({} heap and stacks, {} mapped files), peak {}, {} threads",
+            first_frame.map(|d| d.as_secs_f64() * 1000.0).unwrap_or(-1.0),
+            field("VmRSS:"),
+            field("RssAnon:"),
+            field("RssFile:"),
+            field("VmHWM:"),
+            field("Threads:")
+        );
+        // Who they are (names, counted).
+        let mut names: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for t in std::fs::read_dir("/proc/self/task").into_iter().flatten().flatten() {
+            let n = std::fs::read_to_string(t.path().join("comm")).unwrap_or_default().trim().to_string();
+            *names.entry(n).or_default() += 1;
+        }
+        eprintln!("[stats] threads: {names:?}");
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap_or_default();
+        let mut libs: Vec<&str> = maps.lines().filter_map(|l| l.split_whitespace().nth(5)).filter(|p| p.contains(".so")).map(|p| p.rsplit('/').next().unwrap_or(p)).collect();
+        libs.sort();
+        libs.dedup();
+        eprintln!("[stats] {} shared libraries: {}", libs.len(), libs.join(" "));
     }
 }
 
@@ -563,4 +597,14 @@ fn write_png(path: &str, gfx: &gfx::Gfx) {
     if let Ok(mut wr) = enc.write_header() {
         let _ = wr.write_image_data(&px);
     }
+}
+
+/// Time since the process started (from /proc: its start in clock ticks since boot).
+fn process_age() -> std::time::Duration {
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
+    let after = stat.rsplit_once(") ").map(|(_, r)| r).unwrap_or("");
+    let start: f64 = after.split_whitespace().nth(19).and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
+    let up: f64 = std::fs::read_to_string("/proc/uptime").ok().and_then(|u| u.split_whitespace().next()?.parse().ok()).unwrap_or(0.0);
+    std::time::Duration::from_secs_f64((up - start / hz.max(1.0)).max(0.0))
 }

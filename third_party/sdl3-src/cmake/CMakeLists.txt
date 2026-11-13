@@ -58,10 +58,13 @@ patchbox_sdl(SDL_RENDER_GPU OFF)
 patchbox_sdl(SDL_OPENGL ON)
 patchbox_sdl(SDL_OPENGLES OFF)
 
-# Platform glue. D-Bus stays for now (what the system SDL does: portal settings, screensaver);
-# input methods go through Wayland's text-input-v3, so no IBus. No udev (joystick hotplug),
-# io_uring (the async I/O API), libthai/fribidi (X11 message boxes), audio backends.
-patchbox_sdl(SDL_DBUS ON)
+# Platform glue. No D-Bus: with the cursor-shape protocol (KWin, GNOME 46+) the compositor draws
+# the cursors, so SDL's portal lookup of the cursor theme isn't used; input methods go through
+# Wayland's text-input-v3; we let the screensaver be (SDL_VIDEO_ALLOW_SCREENSAVER) and use
+# neither the colour-scheme portal nor SDL_OpenURL. So libdbus isn't loaded at all. No IBus, udev
+# (joystick hotplug), io_uring (the async I/O API), libthai/fribidi (X11 message boxes), audio
+# backends.
+patchbox_sdl(SDL_DBUS OFF)
 patchbox_sdl(SDL_IBUS OFF)
 patchbox_sdl(SDL_LIBUDEV OFF)
 patchbox_sdl(SDL_LIBURING OFF)
@@ -73,5 +76,9 @@ patchbox_sdl(SDL_ALSA OFF)
 patchbox_sdl(SDL_JACK OFF)
 patchbox_sdl(SDL_SNDIO OFF)
 patchbox_sdl(SDL_OSS OFF)
+
+# A section per function and per datum: the linker drops what PatchBox never calls (blitters,
+# image loading, YUV, the render API's core…) instead of whole files.
+string(APPEND CMAKE_C_FLAGS " -ffunction-sections -fdata-sections")
 
 add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../SDL" sdl)

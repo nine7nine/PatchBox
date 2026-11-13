@@ -57,3 +57,8 @@ opt-level = 2
 opt-level = 3
 lto = true
 strip = true
+# One unit: LTO sees everything (smaller and faster). Abort on panic: no unwinding tables or
+# landing pads, and a thread that panics takes the program down loudly rather than leaving it
+# half working.
+codegen-units = 1
+panic = "abort"
