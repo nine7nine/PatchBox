@@ -26,7 +26,6 @@ pub struct Glyph {
     pub tex: [u16; 4],
     /// Offset of the bitmap's top-left from the pen position on the baseline, in pixels.
     pub off: [f32; 2],
-    pub advance: f32,
 }
 
 pub struct Fonts {
@@ -126,12 +125,12 @@ impl Fonts {
         if let Some(g) = self.glyphs.get(&key) {
             return (*g, kern, advance);
         }
-        let g = self.rasterise(face, id, scale, advance);
+        let g = self.rasterise(face, id, scale);
         self.glyphs.insert(key, g);
         (g, kern, advance)
     }
 
-    fn rasterise(&mut self, face: Face, id: GlyphId, scale: PxScale, advance: f32) -> Option<Glyph> {
+    fn rasterise(&mut self, face: Face, id: GlyphId, scale: PxScale) -> Option<Glyph> {
         let outlined = self.font(face).outline_glyph(id.with_scale_and_position(scale, point(0.0, 0.0)))?;
         let b = outlined.px_bounds();
         let (w, h) = (b.width().ceil() as usize + 1, b.height().ceil() as usize + 1);
@@ -147,7 +146,7 @@ impl Fonts {
             // Full: start over. Glyphs already emitted this frame point at cleared texels.
             self.reset();
             self.overflowed = true;
-            return self.rasterise(face, id, scale, advance);
+            return self.rasterise(face, id, scale);
         }
         let (x0, y0) = (self.shelf_x, self.shelf_y);
         let pixels = &mut self.pixels;
@@ -163,6 +162,6 @@ impl Fonts {
             Some((a, z)) => (a.min(y0), z.max(y0 + h)),
             None => (y0, y0 + h),
         });
-        Some(Glyph { tex: [x0 as u16, y0 as u16, w as u16, h as u16], off: [b.min.x, b.min.y], advance })
+        Some(Glyph { tex: [x0 as u16, y0 as u16, w as u16, h as u16], off: [b.min.x, b.min.y] })
     }
 }

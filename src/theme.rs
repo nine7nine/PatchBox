@@ -15,7 +15,6 @@ pub const HANDLE: Color = rgb(191, 71, 255);
 pub const TOGGLE: Color = rgb(151, 255, 71);
 
 // nuklear's dark style, as PatchMatrix's nodes and buttons used it.
-pub const NODE_FILL: Color = rgb(40, 40, 40);
 pub const MATRIX_FILL: Color = rgb(50, 50, 50);
 pub const TEXT: Color = rgb(175, 175, 175);
 pub const TEXT_BRIGHT: Color = rgb(225, 225, 225);
@@ -34,14 +33,17 @@ pub const BTN_FACE: Color = rgb(34, 36, 39);
 pub const TINT_GREEN: Color = rgb(0x00, 0xe6, 0x76);
 pub const TINT_AMBER: Color = rgb(0xff, 0xa7, 0x26);
 pub const TINT_BLUE: Color = rgb(0x64, 0xb5, 0xf6);
-pub const TINT_PURPLE: Color = rgb(0xba, 0x68, 0xc8);
 pub const TINT_TEAL: Color = rgb(0x4d, 0xd0, 0xe1);
 pub const TINT_RED: Color = rgb(0xef, 0x53, 0x50);
 pub const TINT_GREY: Color = rgb(0x9e, 0x9e, 0xa4);
 pub const PANEL_LINE: Color = rgb(52, 52, 56);
 pub const BUTTON: Color = rgb(45, 45, 45);
 pub const BUTTON_HOVER: Color = rgb(58, 58, 60);
-pub const MENU_BG: Color = rgb(36, 36, 38);
+pub const MENU_BG: Color = rgb(21, 22, 25);
+/// Menus' hovered row.
+pub const MENU_HOVER: Color = rgb(36, 42, 50);
+/// The outline of menus, tooltips, pages' cards and fields: a soft, dark blue.
+pub const LINE_SOFT: Color = rgb(44, 66, 88);
 pub const TOOLTIP_BG: Color = rgb(20, 20, 22);
 pub const OK: Color = rgb(151, 255, 71);
 pub const WARN: Color = rgb(255, 165, 48);
@@ -78,19 +80,16 @@ pub const WIRE_ALPHA: f32 = 0.78;
 // Sizes, in points (× the interface scale for pixels; × zoom too on the canvas).
 pub const FONT: f32 = 13.0;
 pub const FONT_SMALL: f32 = 11.0;
-pub const TOPBAR_H: f32 = 34.0;
 /// The title bar (desktop scale) and the toolbar row under it (interface scale), points.
 pub const TITLE_H: f32 = 30.0;
-pub const TOOLBAR_H: f32 = 46.0;
+pub const TOOLBAR_H: f32 = 62.0;
 pub const SIDEBAR_W: f32 = 250.0;
 pub const NODE_W: f32 = 200.0;
 pub const NODE_H: f32 = 24.0;
-pub const NODE_RADIUS: f32 = 4.0;
 pub const CELL: f32 = 16.0;
 /// A port row in an expanded node, and the padding around the rows.
 pub const PORT_ROW: f32 = 16.0;
 pub const BODY_PAD: f32 = 4.0;
-pub const BODY_FILL: crate::gfx::Color = rgb(28, 28, 30);
 pub const HANDLE_R: f32 = 4.0;
 pub const GRID: f32 = 28.0;
 pub const WIRE_BEND: f32 = 50.0;

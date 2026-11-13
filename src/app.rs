@@ -110,7 +110,6 @@ pub enum WindowCmd {
 
 /// A transient message for the sidebar's log.
 pub struct LogLine {
-    pub at: Instant,
     pub text: String,
     pub bad: bool,
 }
@@ -227,7 +226,7 @@ impl App {
     pub fn say(&mut self, text: impl Into<String>, bad: bool) {
         let text = text.into();
         eprintln!("[patchbox] {text}");
-        self.log.push(LogLine { at: Instant::now(), text, bad });
+        self.log.push(LogLine { text, bad });
         if self.log.len() > 50 {
             self.log.remove(0);
         }
@@ -884,10 +883,6 @@ impl App {
         ins.iter().enumerate().map(|(r, &p)| (p, r, 0)).chain(outs.iter().enumerate().map(|(r, &p)| (p, r, 1))).collect()
     }
 
-    pub fn body_ports(&self, i: usize) -> Vec<usize> {
-        self.body_layout(i).into_iter().map(|(p, _, _)| p).collect()
-    }
-
     /// The vertical ports layout is on (it applies to the ports view).
     pub fn vertical(&self) -> bool {
         self.layout.view.vertical && !self.layout.view.matrices
@@ -1308,7 +1303,8 @@ impl App {
                 let sidebar = self.layout.view.sidebar;
                 let ui_scale = self.layout.view.ui_scale;
                 let (grid, snap) = (self.layout.view.grid, self.layout.view.snap);
-                self.ui.open_app_menu(r, labels, sidebar, ui_scale, grid, snap)
+                let undo = (self.history.can_undo(), self.history.can_redo());
+                self.ui.open_app_menu(r, labels, sidebar, ui_scale, grid, snap, undo)
             }
             Action::SetBufferSize(n) => {
                 if let Some(c) = &self.jack
@@ -1636,10 +1632,15 @@ impl App {
                 (v, None) => Control::Text(v.show()),
             };
             let label = if p.short.is_empty() { p.name.clone() } else { p.short.clone() };
-            Row { id, label, help: if p.long.is_empty() { p.short.clone() } else { p.long.clone() }, control, modified: p.is_set }
+            let about = if p.long.is_empty() { p.short.clone() } else { p.long.clone() };
+            let default = p.default.show();
+            let help = if default.is_empty() { about } else { format!("{about} (default: {default})") };
+            Row { id, label, help, control, modified: p.is_set }
         };
         rows.push(Row::header(format!("Master driver: {}", cfg.driver)));
         rows.extend(cfg.driver_params.iter().map(to_row));
+        rows.push(Row::header("Engine"));
+        rows.extend(cfg.engine.iter().filter(|p| p.name != "driver" && p.name != "slave-drivers").map(to_row));
         // Slave drivers: any other driver can run beside the master (alsarawmidi for MIDI,
         // a second card…): added live while the server runs.
         rows.push(Row::header("Slave drivers"));
@@ -1677,8 +1678,6 @@ impl App {
             rows.push(Row::header(format!("Internal client: {name}")));
             rows.extend(ps.iter().map(to_row));
         }
-        rows.push(Row::header("Engine"));
-        rows.extend(cfg.engine.iter().filter(|p| p.name != "driver" && p.name != "slave-drivers").map(to_row));
         rows.push(Row::header("Service"));
         rows.push(link("act:exit", "Quit jackdbus", "stops the server; the session bus starts jackdbus again when asked"));
         rows

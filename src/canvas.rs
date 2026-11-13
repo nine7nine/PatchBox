@@ -852,18 +852,20 @@ impl App {
         let px = FONT * z;
         let lh = g.line_height(Face::Regular, px);
         let dx = 4.0 * z;
-        let dw = 1.5 * lh;
+        // PatchMatrix's port counts either side, in the matrix view only: the ports view shows
+        // the ports themselves.
+        let counts = self.layout.view.matrices;
+        let dw = if counts { 1.5 * lh } else { 0.0 };
         let ww = r.w - 2.0 * (dx + dw);
         let ty = r.cy() - lh / 2.0;
         let tw = g.measure(Face::Regular, px, &n.title).min(ww);
         g.text_fit(Face::Regular, px, r.cx() - tw / 2.0, ty, ww, alpha(BLOCK_TEXT, f), &n.title);
-        // PatchMatrix's port counts for the current type, either side.
-        if nout > 0 {
+        if counts && nout > 0 {
             let s = format!("{nout:02}");
             let w = g.measure(Face::Regular, px, &s);
             g.text(Face::Regular, px, r.right() - w - dx - lw, ty, alpha(BLOCK_TEXT, f * 0.85), &s);
         }
-        if nin > 0 {
+        if counts && nin > 0 {
             let s = format!("{nin:02}");
             g.text(Face::Regular, px, r.x + dx + lw, ty, alpha(BLOCK_TEXT, f * 0.85), &s);
         }

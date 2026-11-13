@@ -150,10 +150,6 @@ impl Dialog {
         self.scroll = (self.scroll + d).clamp(0.0, (self.content_h - self.content.h).max(0.0));
     }
 
-    pub fn contains(&self, x: f32, y: f32) -> bool {
-        self.panel.contains(x, y)
-    }
-
     /// Finish a text edit: the value goes to its row (text rows keep it themselves too).
     pub fn commit(&mut self) -> Option<Event> {
         let (i, text) = self.editing.take()?;
@@ -308,7 +304,7 @@ impl Dialog {
             let p = Rect::new((area.cx() - w / 2.0).round(), (area.cy() - h / 2.0).round(), w.round(), h.round());
             g.rrect(Rect::new(p.x + 4.0 * s, p.y + 6.0 * s, p.w, p.h), 6.0 * s, [0.0, 0.0, 0.0, 0.4]);
             g.rrect(p, 6.0 * s, PANEL_BG);
-            g.rrect_stroke(p, 6.0 * s, s.max(1.0), alpha(BORDER, 0.8));
+            g.rrect_stroke(p, 6.0 * s, s.max(1.0), LINE_SOFT);
             p
         };
         self.panel = panel;
@@ -361,7 +357,7 @@ impl Dialog {
             let editing = self.editing.as_ref().filter(|(e, _)| *e == i).map(|(_, t)| t.clone());
             let field = |g: &mut Gfx, r: Rect, text: &str, active: bool| {
                 g.rrect(r, 3.0 * s, if active { BUTTON_HOVER } else { BUTTON });
-                g.rrect_stroke(r, 3.0 * s, s.max(1.0), if active { HILIGHT } else { alpha(BORDER, 0.6) });
+                g.rrect_stroke(r, 3.0 * s, s.max(1.0), if active { HILIGHT } else { LINE_SOFT });
                 // An edit shows its caret (a bar: the font has no ▏) after the text.
                 let (shown, caret) = match text.strip_suffix('▏') {
                     Some(t) => (t, true),
@@ -391,7 +387,7 @@ impl Dialog {
                     let tw = 40.0 * s;
                     let tr = Rect::new(cr.x, cr.cy() - 9.0 * s, tw, 18.0 * s);
                     g.rrect(tr, 9.0 * s, if *on { alpha(TOGGLE, 0.55) } else { BUTTON });
-                    g.rrect_stroke(tr, 9.0 * s, s.max(1.0), if hov(&tr) { HILIGHT } else { alpha(BORDER, 0.6) });
+                    g.rrect_stroke(tr, 9.0 * s, s.max(1.0), if hov(&tr) { HILIGHT } else { LINE_SOFT });
                     let kx = if *on { tr.right() - 9.0 * s } else { tr.x + 9.0 * s };
                     g.circle([kx, tr.cy()], 6.5 * s, if *on { TEXT_BRIGHT } else { TEXT });
                     g.text(Face::Regular, px, tr.right() + 10.0 * s, rr.cy() - lh / 2.0, TEXT, if *on { "on" } else { "off" });
@@ -415,7 +411,7 @@ impl Dialog {
                         g.text(Face::Regular, px, ar.right() - 18.0 * s, ar.cy() - lh / 2.0, TEXT, "▼");
                     } else {
                         g.rrect(ar, 3.0 * s, if hov(&ar) { BUTTON_HOVER } else { BUTTON });
-                        g.rrect_stroke(ar, 3.0 * s, s.max(1.0), alpha(BORDER, 0.6));
+                        g.rrect_stroke(ar, 3.0 * s, s.max(1.0), LINE_SOFT);
                         g.text_center(Face::Regular, px, ar, TEXT, "▼");
                     }
                     self.hits.push((ar, Hit::Row(i, Part::Choice)));
@@ -427,7 +423,7 @@ impl Dialog {
                     let er = Rect::new(mr.right() + 4.0 * s, cr.y, cr.w - 2.0 * bw - 8.0 * s, cr.h);
                     for (r, t, part) in [(mr, "−", Part::Minus), (pr, "+", Part::Plus)] {
                         g.rrect(r, 3.0 * s, if hov(&r) { BUTTON_HOVER } else { BUTTON });
-                        g.rrect_stroke(r, 3.0 * s, s.max(1.0), alpha(BORDER, 0.6));
+                        g.rrect_stroke(r, 3.0 * s, s.max(1.0), LINE_SOFT);
                         g.text_center(Face::Regular, px, r, TEXT_BRIGHT, t);
                         self.hits.push((r, Hit::Row(i, part)));
                     }

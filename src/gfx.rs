@@ -295,10 +295,6 @@ impl Gfx {
         self.batches.push(Batch { clip: self.clips.last().copied(), start: self.verts.len(), erase: false });
     }
 
-    pub fn clip(&self) -> Option<Rect> {
-        self.clips.last().copied()
-    }
-
     /// Round the window's corners: clear the area outside a radius-`r` arc in each corner.
     pub fn erase_corners(&mut self, r: f32) {
         if r < 0.5 {

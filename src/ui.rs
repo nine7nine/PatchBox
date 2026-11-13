@@ -4,6 +4,7 @@
 
 use crate::app::{Action, App};
 use crate::csd::{Button, Csd};
+use pbx_jack::PortKind;
 use crate::gfx::{Gfx, Rect, alpha};
 use crate::text::Face;
 use crate::theme::*;
@@ -95,11 +96,12 @@ impl UiState {
         self.open_menu([at.x, at.y], items);
     }
 
-    pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool, ui_scale: f32, grid: bool, snap: bool) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool, ui_scale: f32, grid: bool, snap: bool, undo: (bool, bool)) {
         let items = vec![
             MenuItem::new(format!("Interface scale: {:.0} % …", ui_scale * 100.0), Action::ScaleMenu(Rect::new(under.x, under.bottom() + 2.0, 0.0, 0.0))),
-            MenuItem::new("Undo (Ctrl+Z)", Action::Undo),
-            MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo),
+            MenuItem::new("Undo (Ctrl+Z)", Action::Undo).enabled(undo.0),
+            MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo).enabled(undo.1),
             MenuItem::new("Show sidebar", Action::ToggleSidebar).checked(sidebar),
             MenuItem::new("Views…", Action::ViewsPage),
             MenuItem::new("Matrices (PatchMatrix view, M)", Action::ToggleMatrices),
@@ -117,42 +119,148 @@ impl UiState {
     }
 }
 
+/// A value over a small caption, centred in `r`.
+fn readout(g: &mut Gfx, r: Rect, s: f32, value: &str, caption: &str, col: crate::gfx::Color) {
+    let (px, spx) = (FONT * s, FONT_SMALL * s);
+    let (lh, slh) = (g.line_height(Face::Regular, px), g.line_height(Face::Regular, spx));
+    let y0 = (r.cy() - (lh + slh) / 2.0).round();
+    let w = g.measure(Face::Regular, px, value);
+    g.text(Face::Regular, px, (r.cx() - w / 2.0).round(), y0, col, value);
+    let cw = g.measure(Face::Regular, spx, caption);
+    g.text(Face::Regular, spx, (r.cx() - cw / 2.0).round(), y0 + lh, TEXT_DIM, caption);
+}
+
+/// The toolbar's icons, drawn (the fonts have no such glyphs).
+#[derive(Clone, Copy)]
+pub enum Icon {
+    New,
+    Open,
+    Save,
+    Audio,
+    Midi,
+    Cv,
+    Osc,
+    PortsH,
+    PortsV,
+    Matrix,
+}
+
+/// Draw `icon` centred on `c`, about 20 points across.
+pub fn draw_icon(g: &mut Gfx, icon: Icon, c: [f32; 2], s: f32, col: crate::gfx::Color) {
+    let lw = (1.5 * s).max(1.0);
+    let p = |x: f32, y: f32| [c[0] + x * s, c[1] + y * s];
+    match icon {
+        Icon::New => {
+            g.polyline(&[p(-6.0, -8.0), p(2.0, -8.0), p(6.0, -4.0), p(6.0, 8.0), p(-6.0, 8.0)], lw, col, true);
+            g.polyline(&[p(2.0, -8.0), p(2.0, -4.0), p(6.0, -4.0)], lw, col, false);
+            g.line(p(-3.0, 2.5), p(3.0, 2.5), lw, col);
+            g.line(p(0.0, -0.5), p(0.0, 5.5), lw, col);
+        }
+        Icon::Open => {
+            g.polyline(&[p(-9.0, -7.0), p(-3.0, -7.0), p(-1.0, -5.0), p(8.0, -5.0), p(8.0, 7.0), p(-9.0, 7.0)], lw, col, true);
+            g.line(p(-9.0, -2.0), p(8.0, -2.0), lw, col);
+        }
+        Icon::Save => {
+            g.polyline(&[p(-8.0, -8.0), p(5.0, -8.0), p(8.0, -5.0), p(8.0, 8.0), p(-8.0, 8.0)], lw, col, true);
+            g.rect(Rect::new(c[0] - 4.0 * s, c[1] - 8.0 * s, 7.0 * s, 5.0 * s), col);
+            g.rrect_stroke(Rect::new(c[0] - 5.0 * s, c[1] + 1.5 * s, 10.0 * s, 6.5 * s), 1.0 * s, lw, col);
+        }
+        Icon::Audio => {
+            let pts: Vec<[f32; 2]> = (0..=40)
+                .map(|i| {
+                    let t = i as f32 / 40.0;
+                    p(-10.0 + 20.0 * t, -6.0 * (t * std::f32::consts::TAU * 1.5).sin())
+                })
+                .collect();
+            g.polyline(&pts, lw * 1.1, col, false);
+        }
+        Icon::Midi => {
+            // A 5-pin DIN socket.
+            g.arc(c, 8.5 * s, 0.0, std::f32::consts::TAU, lw, col);
+            for a in [0.5f32, 0.625, 0.75, 0.875, 1.0] {
+                let t = a * std::f32::consts::TAU;
+                g.circle([c[0] + 5.0 * s * t.cos(), c[1] + 5.0 * s * t.sin()], 1.4 * s, col);
+            }
+            g.rect(Rect::new(c[0] - 1.5 * s, c[1] + 6.0 * s, 3.0 * s, 2.5 * s), col);
+        }
+        Icon::Cv => {
+            // An envelope: attack, decay, sustain, release.
+            g.polyline(&[p(-10.0, 7.0), p(-6.0, -7.0), p(-2.0, -1.0), p(5.0, -1.0), p(10.0, 7.0)], lw * 1.1, col, false);
+        }
+        Icon::Osc => {
+            // Three hosts on a network.
+            let (a, b, d) = (p(-7.0, 5.0), p(0.0, -6.0), p(7.0, 5.0));
+            for (u, v) in [(a, b), (b, d), (a, d)] {
+                g.line(u, v, lw, col);
+            }
+            for q in [a, b, d] {
+                g.circle(q, 2.8 * s, col);
+            }
+        }
+        Icon::PortsH | Icon::PortsV => {
+            // A block with ports on its edges and wires leaving them: the flow.
+            let v = matches!(icon, Icon::PortsV);
+            let q = |x: f32, y: f32| if v { p(y, x) } else { p(x, y) };
+            let (bw, bh) = if v { (14.0, 9.0) } else { (9.0, 14.0) };
+            g.rrect_stroke(Rect::centered(c[0], c[1], bw * s, bh * s), 1.5 * s, lw, col);
+            for y in [-3.0f32, 3.0] {
+                for x in [-4.5f32, 4.5] {
+                    let m = q(x, y);
+                    g.rect(Rect::centered(m[0], m[1], 3.0 * s, 3.0 * s), col);
+                }
+                g.line(q(-10.0, y), q(-6.0, y), lw, col);
+                g.line(q(6.0, y), q(10.0, y), lw, col);
+            }
+        }
+        Icon::Matrix => {
+            let k = 5.0 * s;
+            let o = [c[0] - 1.5 * k, c[1] - 1.5 * k];
+            for i in 0..=3 {
+                let f = i as f32 * k;
+                g.line([o[0] + f, o[1]], [o[0] + f, o[1] + 3.0 * k], lw * 0.8, col);
+                g.line([o[0], o[1] + f], [o[0] + 3.0 * k, o[1] + f], lw * 0.8, col);
+            }
+            for (cx, cy) in [(0.0f32, 0.0f32), (1.0, 1.0), (2.0, 2.0)] {
+                g.rect(Rect::new(o[0] + cx * k + 1.5 * s, o[1] + cy * k + 1.5 * s, k - 3.0 * s, k - 3.0 * s), col);
+            }
+        }
+    }
+}
+
 /// Luluda's button: a dark face with a highlight along its top and a shade along its bottom,
 /// the border tinted by what the button does; hovering and being active warm the face with the
 /// tint and brighten the border.
 pub fn lbutton(g: &mut Gfx, r: Rect, s: f32, tint: crate::gfx::Color, hover: bool, active: bool, enabled: bool) {
+    use crate::gfx::mix;
     let rad = 4.0 * s;
     let face = if active {
-        crate::gfx::mix(BTN_FACE, tint, 0.20)
+        mix(BTN_FACE, tint, 0.13)
     } else if hover && enabled {
-        crate::gfx::mix(BTN_FACE, tint, 0.10)
+        mix(BTN_FACE, tint, 0.06)
     } else {
         BTN_FACE
     };
     g.rrect(r, rad, if enabled { face } else { alpha(face, 0.55) });
     let lw = s.max(1.0);
-    g.rect(Rect::new(r.x + rad, r.y + lw, r.w - 2.0 * rad, lw), [1.0, 1.0, 1.0, if enabled { 0.08 } else { 0.03 }]);
+    g.rect(Rect::new(r.x + rad, r.y + lw, r.w - 2.0 * rad, lw), [1.0, 1.0, 1.0, if enabled { 0.06 } else { 0.02 }]);
     g.rect(Rect::new(r.x + rad, r.bottom() - 2.0 * lw, r.w - 2.0 * rad, lw), [0.0, 0.0, 0.0, 0.35]);
-    let border = if !enabled {
-        alpha(tint, 0.18)
-    } else if active {
-        tint
-    } else if hover {
-        alpha(tint, 0.9)
-    } else {
-        alpha(tint, 0.5)
-    };
+    // Luluda dims the border of an idle button to about three quarters of its tint; softer
+    // still here, full only on the active one.
+    let border = mix(BTN_FACE, tint, if !enabled { 0.14 } else if active { 0.72 } else if hover { 0.55 } else { 0.38 });
     g.rrect_stroke(r, rad, (1.2 * s).max(1.0), border);
 }
 
 /// The text colour on an `lbutton`.
 pub fn lbutton_text(tint: crate::gfx::Color, hover: bool, active: bool, enabled: bool) -> crate::gfx::Color {
+    use crate::gfx::mix;
     if !enabled {
         TEXT_DIM
-    } else if active || hover {
-        TEXT_BRIGHT
+    } else if active {
+        mix(TEXT_BRIGHT, tint, 0.18)
+    } else if hover {
+        mix(TEXT, TEXT_BRIGHT, 0.6)
     } else {
-        crate::gfx::mix(TEXT, tint, 0.22)
+        mix(TEXT, tint, 0.16)
     }
 }
 
@@ -269,7 +377,7 @@ impl App {
         let w = bw * 3.0 + track_w + pw + 5.0 * 6.0 * s;
         let panel = Rect::new(a.right() - w - 12.0 * s, a.bottom() - h - 12.0 * s, w, h);
         g.rrect(panel, 4.0 * s, alpha(PANEL_BG, 0.92));
-        g.rrect_stroke(panel, 4.0 * s, s.max(1.0), alpha(BORDER, 0.5));
+        g.rrect_stroke(panel, 4.0 * s, s.max(1.0), LINE_SOFT);
         let mut x = panel.x + 6.0 * s;
         // Centre: fit the whole graph in the window (F), as qjackctl's and RaySession's do.
         let fit = Rect::new(x, panel.y, bw, h);
@@ -368,20 +476,6 @@ impl App {
         g.rrect_stroke(r, 4.0 * s, s.max(1.0), PANEL_LINE);
     }
 
-    fn tool_button(&mut self, g: &mut Gfx, r: Rect, label: &str, active: bool, enabled: bool, a: Action) {
-        self.tool_button_tint(g, r, label, tint_for(label), active, enabled, a);
-    }
-
-    fn tool_button_tint(&mut self, g: &mut Gfx, r: Rect, label: &str, tint: crate::gfx::Color, active: bool, enabled: bool, a: Action) {
-        let s = self.scale;
-        let hov = enabled && self.hovered(&r);
-        lbutton(g, r, s, tint, hov, active, enabled || active);
-        g.text_center(Face::Regular, FONT * s, r, lbutton_text(tint, hov, active, enabled || active), label);
-        if enabled {
-            self.add_hit(r, a);
-        }
-    }
-
     fn draw_toolbar(&mut self, g: &mut Gfx) {
         let s = self.scale;
         let top = self.ui.title_h;
@@ -394,29 +488,40 @@ impl App {
         let bh = gh - 2.0 * 3.0 * s;
         let by = gy + 3.0 * s;
         let px = FONT * s;
-        let tw = |g: &Gfx, t: &str| g.measure(Face::Regular, px, t) + 12.0 * s;
+        let spx = FONT_SMALL * s;
         let st = self.stats;
         let connected = self.jack.is_some();
+        // Luluda's tiles: an icon over a small label, all of a group the same width.
+        let tile_w = |g: &Gfx, labels: &[&str]| labels.iter().map(|l| g.measure(Face::Regular, spx, l)).fold(0.0f32, f32::max).max(30.0 * s) + 18.0 * s;
+        let bgap = 4.0 * s;
+        let group_w = |n: usize, w: f32| n as f32 * w + (n as f32 - 1.0) * bgap + 8.0 * s;
+        // A readout tile: a value over a caption.
+        let read_w = |g: &Gfx, v: &str, c: &str| g.measure(Face::Regular, px, v).max(g.measure(Face::Regular, spx, c)) + 20.0 * s;
 
         // Widths first, so groups drop out right to left of priority when the window is narrow.
-        let sess_labels = ["New", "Open", "Save"];
-        let sess_w = sess_labels.iter().map(|l| tw(g, l)).sum::<f32>() + 2.0 * 4.0 * s + 8.0 * s;
-        let lcd_w = 128.0 * s;
-        let trans_w = 3.0 * bh + 2.0 * 4.0 * s + 6.0 * s + lcd_w + 8.0 * s;
+        let sess_tw = tile_w(g, &["New", "Open", "Save"]);
+        let sess_w = group_w(3, sess_tw);
+        let lcd_w = 136.0 * s;
+        let trans_w = 3.0 * bh + 2.0 * bgap + 6.0 * s + lcd_w + 8.0 * s;
         let kinds = self.kinds();
-        let kinds_w = kinds.iter().map(|k| tw(g, k.label()) + 10.0 * s).sum::<f32>() + 8.0 * s;
-        let flow_w = 16.0 * s;
-        let views_w = tw(g, "Ports") + flow_w + tw(g, "Matrix") + 2.0 * s + 8.0 * s;
-        let sr = if connected {
-            let ms = st.buffer_size as f32 * 1000.0 / st.sample_rate.max(1) as f32;
-            format!("{} Hz  {:.1} ms{}", st.sample_rate, ms, if st.freewheel { "  FREEWHEEL" } else { "" })
+        let kind_tw = tile_w(g, &["AUDIO", "MIDI", "CV", "OSC"]);
+        let kinds_w = group_w(kinds.len(), kind_tw);
+        let view_tw = tile_w(g, &["Ports", "Matrix"]);
+        let views_w = group_w(2, view_tw);
+        let ms = st.buffer_size as f32 * 1000.0 / st.sample_rate.max(1) as f32;
+        let (rate_v, rate_c) = if connected {
+            (format!("{} Hz", st.sample_rate), if st.freewheel { "FREEWHEEL".to_string() } else { format!("{ms:.1} ms") })
         } else {
-            "JACK offline".into()
+            ("offline".to_string(), "JACK".to_string())
         };
         let bs = if connected { format!("{} ▼", st.buffer_size) } else { "– ▼".into() };
-        let xs = format!("Xruns {}", st.xruns);
-        let dsp_w = 92.0 * s;
-        let jack_w = tw(g, &sr) + tw(g, &bs) + tw(g, &xs) + dsp_w + 4.0 * 6.0 * s;
+        let xs = st.xruns.to_string();
+        let dsp = if connected { format!("{:.1} %", st.dsp) } else { "–".into() };
+        let rate_w = read_w(g, &rate_v, &rate_c);
+        let buf_w = read_w(g, &bs, "BUFFER");
+        let xr_w = read_w(g, "0000", "XRUNS");
+        let dsp_w = read_w(g, "100.0 %", "DSP LOAD").max(84.0 * s);
+        let jack_w = rate_w + buf_w + xr_w + dsp_w + 3.0 * bgap + 8.0 * s;
         let gap = 8.0 * s;
         let avail = bar.w - 2.0 * pad;
         let need_all = sess_w + trans_w + kinds_w + views_w + jack_w + 4.0 * gap;
@@ -430,14 +535,13 @@ impl App {
             self.group(g, r);
             let mut bx = r.x + 4.0 * s;
             let open = self.sess.state.session.is_some();
-            for (l, a, on) in [
-                ("New", crate::sessui::SessAction::New, true),
-                ("Open", crate::sessui::SessAction::Open, true),
-                ("Save", crate::sessui::SessAction::Save, open),
+            for (l, icon, a, on) in [
+                ("New", Icon::New, crate::sessui::SessAction::New, true),
+                ("Open", Icon::Open, crate::sessui::SessAction::Open, true),
+                ("Save", Icon::Save, crate::sessui::SessAction::Save, open),
             ] {
-                let w = tw(g, l);
-                self.tool_button(g, Rect::new(bx, by, w, bh), l, false, on, Action::Sess(a));
-                bx += w + 4.0 * s;
+                self.tile(g, Rect::new(bx, by, sess_tw, bh), l, icon, tint_for(l), None, false, on, Action::Sess(a));
+                bx += sess_tw + bgap;
             }
             x += sess_w + gap;
         }
@@ -450,16 +554,16 @@ impl App {
             let mut bx = r.x + 4.0 * s;
             for (i, act) in [Action::TransportRewind, Action::TransportToggle, Action::TransportStop].into_iter().enumerate() {
                 let b = Rect::new(bx, by, bh, bh);
-                bx += bh + 4.0 * s;
+                bx += bh + bgap;
                 let tint = [TINT_BLUE, TINT_GREEN, TINT_GREY][i];
                 let hov = connected && self.hovered(&b);
                 lbutton(g, b, s, tint, hov, i == 1 && playing, connected);
-                let (cx, cy, k) = (b.cx(), b.cy(), 5.5 * s);
-                let col = if !connected { TEXT_DIM } else if i == 1 && playing { TEXT_BRIGHT } else { crate::gfx::mix(TEXT_BRIGHT, tint, 0.5) };
+                let (cx, cy, k) = (b.cx(), b.cy(), 7.0 * s);
+                let col = if !connected { TEXT_DIM } else { crate::gfx::mix(lbutton_text(tint, hov, i == 1 && playing, true), tint, 0.35) };
                 match i {
                     0 => {
-                        g.rect(Rect::new(cx - k, cy - k, 1.8 * s, 2.0 * k), col);
-                        g.triangle([cx + k, cy - k], [cx + k, cy + k], [cx - k + 2.0 * s, cy], col);
+                        g.rect(Rect::new(cx - k, cy - k, 2.0 * s, 2.0 * k), col);
+                        g.triangle([cx + k, cy - k], [cx + k, cy + k], [cx - k + 2.5 * s, cy], col);
                     }
                     1 if playing => {
                         g.rect(Rect::new(cx - k * 0.8, cy - k, k * 0.6, 2.0 * k), col);
@@ -473,25 +577,25 @@ impl App {
                 }
             }
             // The time display (Luluda's LCD): time, and bars|beats|ticks and tempo below.
-            let lcd = Rect::new(bx + 4.0 * s, by, lcd_w, bh);
+            let lcd = Rect::new(bx + 2.0 * s, by, lcd_w, bh);
             g.rrect(lcd, 3.0 * s, LCD_BG);
+            g.rrect_stroke(lcd, 3.0 * s, s.max(1.0), PANEL_LINE);
             let secs = t.frame as f64 / t.rate.max(1) as f64;
             let time = format!("{}:{:02}:{:04.1}", (secs / 3600.0) as u32, ((secs / 60.0) as u32) % 60, secs % 60.0);
-            let tcol = if playing { kind_color(pbx_jack::PortKind::Osc) } else { alpha(kind_color(pbx_jack::PortKind::Osc), 0.75) };
-            match t.bbt {
-                Some((bar_n, beat, tick, bpm, _, _)) => {
-                    let lh = g.line_height(Face::Regular, px);
-                    let spx = FONT_SMALL * s;
-                    let slh = g.line_height(Face::Regular, spx);
-                    let y0 = lcd.cy() - (lh + slh) / 2.0;
-                    let w = g.measure(Face::Regular, px, &time);
-                    g.text(Face::Regular, px, lcd.cx() - w / 2.0, y0, tcol, &time);
-                    let sub = format!("{bar_n}|{beat}|{tick:04}  {bpm:.1} BPM");
-                    let sw = g.measure(Face::Regular, spx, &sub);
-                    g.text(Face::Regular, spx, lcd.cx() - sw / 2.0, y0 + lh, TEXT_DIM, &sub);
-                }
-                None => g.text_center(Face::Regular, px * 1.1, lcd, tcol, &time),
-            }
+            let lcd_col = crate::gfx::mix(kind_color(pbx_jack::PortKind::Osc), TEXT, 0.25);
+            let tcol = if playing { lcd_col } else { alpha(lcd_col, 0.75) };
+            let tpx = px * 1.2;
+            let lh = g.line_height(Face::Regular, tpx);
+            let slh = g.line_height(Face::Regular, spx);
+            let sub = match t.bbt {
+                Some((bar_n, beat, tick, bpm, _, _)) => format!("{bar_n}|{beat}|{tick:04}  {bpm:.1} BPM"),
+                None => "TIME".to_string(),
+            };
+            let y0 = lcd.cy() - (lh + slh) / 2.0;
+            let w = g.measure(Face::Regular, tpx, &time);
+            g.text(Face::Regular, tpx, lcd.cx() - w / 2.0, y0, tcol, &time);
+            let sw = g.measure(Face::Regular, spx, &sub);
+            g.text(Face::Regular, spx, lcd.cx() - sw / 2.0, y0 + lh, TEXT_DIM, &sub);
             x += trans_w + gap;
         }
         // Graph: the port types, then the view.
@@ -500,16 +604,14 @@ impl App {
             self.group(g, r);
             let mut bx = r.x + 4.0 * s;
             for k in kinds {
-                let w = tw(g, k.label()) + 10.0 * s;
-                let b = Rect::new(bx, by, w, bh);
-                let active = self.kind == k;
-                let b = Rect::new(b.x, b.y, b.w - 4.0 * s, b.h);
-                let hov = self.hovered(&b);
-                lbutton(g, b, s, kind_color(k), hov, active, true);
-                g.circle([b.x + 9.0 * s, b.cy()], 3.2 * s, kind_color(k));
-                g.text_center(Face::Regular, FONT * s, Rect::new(b.x + 12.0 * s, b.y, b.w - 12.0 * s, b.h), lbutton_text(kind_color(k), hov, active, true), k.label());
-                self.add_hit(b, Action::SetKind(k));
-                bx += w;
+                let icon = match k {
+                    PortKind::Audio => Icon::Audio,
+                    PortKind::Midi => Icon::Midi,
+                    PortKind::Cv => Icon::Cv,
+                    _ => Icon::Osc,
+                };
+                self.tile(g, Rect::new(bx, by, kind_tw, bh), k.label(), icon, kind_color(k), Some(kind_color(k)), self.kind == k, true, Action::SetKind(k));
+                bx += kind_tw + bgap;
             }
             x += kinds_w + gap;
         }
@@ -518,27 +620,12 @@ impl App {
             self.group(g, r);
             let bx = r.x + 4.0 * s;
             let (matrices, vertical) = (self.layout.view.matrices, self.layout.view.vertical);
-            // Ports, with its flow drawn after the label: clicking it again switches between
-            // left-to-right and top-to-bottom.
-            let pr = Rect::new(bx, by, tw(g, "Ports") + flow_w - 2.0 * s, bh);
-            let hov = self.hovered(&pr);
-            lbutton(g, pr, s, TINT_TEAL, hov, !matrices, true);
-            let col = lbutton_text(TINT_TEAL, hov, !matrices, true);
-            let lr = Rect::new(pr.x, pr.y, pr.w - flow_w + 2.0 * s, pr.h);
-            g.text_center(Face::Regular, FONT * s, lr, col, "Ports");
-            let (cx, cy, k) = ((pr.right() - flow_w / 2.0 - 3.0 * s).round(), pr.cy().round(), 4.5 * s);
-            let t = (1.5 * s).max(1.0).round();
-            let tip = alpha(col, if matrices { 0.6 } else { 1.0 });
-            if vertical {
-                g.rect(Rect::new(cx - (t / 2.0).floor(), cy - k, t, 2.0 * k - 2.5 * s), tip);
-                g.triangle([cx - 3.0 * s, cy + k - 3.5 * s], [cx + 3.0 * s, cy + k - 3.5 * s], [cx, cy + k], tip);
-            } else {
-                g.rect(Rect::new(cx - k, cy - (t / 2.0).floor(), 2.0 * k - 2.5 * s, t), tip);
-                g.triangle([cx + k - 3.5 * s, cy - 3.0 * s], [cx + k - 3.5 * s, cy + 3.0 * s], [cx + k, cy], tip);
-            }
-            self.add_hit(pr, Action::PortsStyle);
-            let mr = Rect::new(pr.right() + 2.0 * s, by, tw(g, "Matrix") - 2.0 * s, bh);
-            self.tool_button_tint(g, mr, "Matrix", TINT_TEAL, matrices, !matrices, Action::SetStyle(true, vertical));
+            // Ports: its icon shows the flow; clicking it again switches between left to right
+            // and top to bottom.
+            let icon = if vertical { Icon::PortsV } else { Icon::PortsH };
+            self.tile(g, Rect::new(bx, by, view_tw, bh), "Ports", icon, TINT_TEAL, None, !matrices, true, Action::PortsStyle);
+            let mr = Rect::new(bx + view_tw + bgap, by, view_tw, bh);
+            self.tile(g, mr, "Matrix", Icon::Matrix, TINT_TEAL, None, matrices, !matrices, Action::SetStyle(true, vertical));
         }
         // JACK, right-aligned: rate and latency, buffer size, xruns, DSP load.
         {
@@ -550,22 +637,53 @@ impl App {
             if connected {
                 let frac = (st.dsp / 100.0).clamp(0.0, 1.0);
                 let col = if st.dsp < 50.0 { OK } else if st.dsp < 80.0 { WARN } else { BAD };
-                g.rrect(Rect::new(dr.x, dr.y, (dr.w * frac).max(2.0 * s), dr.h), 3.0 * s, alpha(col, 0.45));
+                g.rrect(Rect::new(dr.x, dr.y, (dr.w * frac).max(2.0 * s), dr.h), 3.0 * s, alpha(col, 0.35));
             }
-            let dsp = if connected { format!("DSP {:>4.1}%", st.dsp) } else { "DSP  –".into() };
-            g.text_center(Face::Regular, px, dr, TEXT_BRIGHT, &dsp);
-            rx -= dsp_w + 6.0 * s;
-            let xw = tw(g, &xs);
-            self.tool_button_tint(g, Rect::new(rx - xw, by, xw, bh), &xs, if st.xruns > 0 { TINT_RED } else { TINT_GREY }, st.xruns > 0, true, Action::ResetXruns);
-            rx -= xw + 6.0 * s;
-            let bw = tw(g, &bs);
-            let br = Rect::new(rx - bw, by, bw, bh);
-            self.tool_button_tint(g, br, &bs, TINT_AMBER, false, connected, Action::BufferMenu(br));
-            rx -= bw + 6.0 * s;
-            let col = if connected { if st.freewheel { WARN } else { TEXT } } else { BAD };
-            let sw = g.measure(Face::Regular, px, &sr);
-            let lh = g.line_height(Face::Regular, px);
-            g.text(Face::Regular, px, rx - sw - 6.0 * s, r.cy() - lh / 2.0, col, &sr);
+            g.rrect_stroke(dr, 3.0 * s, s.max(1.0), PANEL_LINE);
+            readout(g, dr, s, &dsp, "DSP LOAD", TEXT_BRIGHT);
+            rx -= dsp_w + bgap;
+            let xr = Rect::new(rx - xr_w, by, xr_w, bh);
+            let xt = if st.xruns > 0 { TINT_RED } else { TINT_GREY };
+            let hov = self.hovered(&xr);
+            lbutton(g, xr, s, xt, hov, st.xruns > 0, true);
+            readout(g, xr, s, &xs, "XRUNS", lbutton_text(xt, hov, st.xruns > 0, true));
+            self.add_hit(xr, Action::ResetXruns);
+            rx -= xr_w + bgap;
+            let br = Rect::new(rx - buf_w, by, buf_w, bh);
+            let hov = connected && self.hovered(&br);
+            lbutton(g, br, s, TINT_AMBER, hov, false, connected);
+            readout(g, br, s, &bs, "BUFFER", lbutton_text(TINT_AMBER, hov, false, connected));
+            if connected {
+                self.add_hit(br, Action::BufferMenu(br));
+            }
+            rx -= buf_w + bgap;
+            let rr = Rect::new(rx - rate_w, by, rate_w, bh);
+            let col = if connected { if st.freewheel { WARN } else { TEXT_BRIGHT } } else { BAD };
+            readout(g, rr, s, &rate_v, &rate_c, col);
+        }
+    }
+
+    /// A toolbar tile (Luluda): an icon over its label. `icon_col` colours the icon (else it
+    /// takes the label's colour).
+    #[allow(clippy::too_many_arguments)]
+    fn tile(&mut self, g: &mut Gfx, r: Rect, label: &str, icon: Icon, tint: crate::gfx::Color, icon_col: Option<crate::gfx::Color>, active: bool, enabled: bool, a: Action) {
+        let s = self.scale;
+        let hov = enabled && self.hovered(&r);
+        let shown = enabled || active;
+        lbutton(g, r, s, tint, hov, active, shown);
+        let col = lbutton_text(tint, hov, active, shown);
+        let spx = FONT_SMALL * s;
+        let slh = g.line_height(Face::Regular, spx);
+        let ly = r.bottom() - slh - 4.0 * s;
+        let ic = match icon_col {
+            Some(c) if shown => crate::gfx::mix(c, col, if active || hov { 0.15 } else { 0.35 }),
+            _ => col,
+        };
+        draw_icon(g, icon, [r.cx().round(), ((r.y + ly) / 2.0 + 1.0 * s).round()], s, ic);
+        let w = g.measure(Face::Regular, spx, label);
+        g.text(Face::Regular, spx, (r.cx() - w / 2.0).round(), ly, col, label);
+        if enabled {
+            self.add_hit(r, a);
         }
     }
 
@@ -709,25 +827,25 @@ impl App {
         menu.rows.clear();
         g.rrect(Rect::new(rect.x + 3.0 * s, rect.y + 4.0 * s, rect.w, rect.h), 5.0 * s, [0.0, 0.0, 0.0, 0.35]);
         g.rrect(rect, 5.0 * s, MENU_BG);
-        g.rrect_stroke(rect, 5.0 * s, s.max(1.0), alpha(BORDER, 0.7));
+        g.rrect_stroke(rect, 5.0 * s, s.max(1.0), LINE_SOFT);
         for (i, item) in menu.items.iter().enumerate() {
             let rr = Rect::new(rect.x + pad / 2.0, rect.y + pad + i as f32 * row_h, rect.w - pad, row_h);
             menu.rows.push(rr);
             let active = item.enabled && item.action.is_some();
             if active && rr.contains(mx, my) {
                 menu.hover = Some(i);
-                g.rrect(rr, 3.0 * s, BUTTON_HOVER);
+                g.rrect(rr, 3.0 * s, MENU_HOVER);
             }
             let col = if item.action.is_none() {
-                HILIGHT
+                crate::gfx::mix(HILIGHT, TEXT, 0.3)
             } else if item.enabled {
-                TEXT_BRIGHT
+                crate::gfx::mix(TEXT, TEXT_BRIGHT, 0.55)
             } else {
                 TEXT_DIM
             };
             let face = if item.action.is_none() { Face::Bold } else { Face::Regular };
             if item.checked == Some(true) {
-                g.circle([rr.x + pad + 5.0 * s, rr.cy()], 3.5 * s, TOGGLE);
+                g.circle([rr.x + pad + 5.0 * s, rr.cy()], 3.5 * s, crate::gfx::mix(TOGGLE, TEXT, 0.3));
             } else if item.checked == Some(false) {
                 g.arc([rr.x + pad + 5.0 * s, rr.cy()], 3.5 * s, 0.0, std::f32::consts::TAU, s.max(1.0), TEXT_DIM);
             }
@@ -762,7 +880,7 @@ impl App {
         }
         let r = Rect::new(x, y, w, h);
         g.rrect(r, 4.0 * s, alpha(TOOLTIP_BG, 0.95));
-        g.rrect_stroke(r, 4.0 * s, s.max(1.0), alpha(BORDER, 0.6));
+        g.rrect_stroke(r, 4.0 * s, s.max(1.0), LINE_SOFT);
         for (k, (t, c)) in lines.iter().enumerate() {
             g.text_fit(Face::Regular, px, r.x + pad, r.y + pad + k as f32 * lh, w - 2.0 * pad, *c, t);
         }
