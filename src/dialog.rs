@@ -471,9 +471,9 @@ impl Dialog {
             bx -= bw;
             let br = Rect::new(bx, fy + (foot_h - bh) / 2.0, bw, bh);
             let hv = br.contains(mouse[0], mouse[1]);
-            g.rrect(br, 3.0 * s, if hv { BUTTON_HOVER } else { BUTTON });
-            g.rrect_stroke(br, 3.0 * s, s.max(1.0), if bi == self.buttons.len() - 1 { HILIGHT } else { alpha(BORDER, 0.8) });
-            g.text_center(Face::Regular, px, br, TEXT_BRIGHT, label);
+            let tint = crate::ui::tint_for(label);
+            crate::ui::lbutton(g, br, s, tint, hv, false, true);
+            g.text_center(Face::Regular, px, br, crate::ui::lbutton_text(tint, hv, false, true), label);
             self.hits.push((br, Hit::Button(bi)));
             bx -= 8.0 * s;
         }

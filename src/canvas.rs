@@ -861,11 +861,11 @@ impl App {
         if nout > 0 {
             let s = format!("{nout:02}");
             let w = g.measure(Face::Regular, px, &s);
-            g.text(Face::Regular, px, r.right() - w - dx - lw, ty, alpha(BLOCK_TEXT, f * 0.7), &s);
+            g.text(Face::Regular, px, r.right() - w - dx - lw, ty, alpha(BLOCK_TEXT, f * 0.85), &s);
         }
         if nin > 0 {
             let s = format!("{nin:02}");
-            g.text(Face::Regular, px, r.x + dx + lw, ty, alpha(BLOCK_TEXT, f * 0.7), &s);
+            g.text(Face::Regular, px, r.x + dx + lw, ty, alpha(BLOCK_TEXT, f * 0.85), &s);
         }
         if let Some(sub) = &n.sub {
             let spx = FONT_SMALL * z;
@@ -987,7 +987,7 @@ impl App {
                 }
                 let label = &self.model.labels[p];
                 let max_w = row.w - q - 8.0 * z;
-                let col = alpha(if hovered { BLOCK_TEXT } else { mix(BLOCK_TEXT, TEXT_BRIGHT, 0.15) }, fa);
+                let col = alpha(BLOCK_TEXT, if hovered { fa } else { fa * 0.92 });
                 if input {
                     g.text_fit(Face::Regular, px, tx, row.cy() - lh / 2.0, max_w, col, label);
                 } else {
@@ -1018,7 +1018,7 @@ impl App {
             }
             let label = &self.model.labels[p];
             let max_w = row.w - 22.0 * z;
-            let col = alpha(if hovered { BLOCK_TEXT } else { mix(BLOCK_TEXT, TEXT_BRIGHT, 0.15) }, fa);
+            let col = alpha(BLOCK_TEXT, if hovered { fa } else { fa * 0.92 });
             if input {
                 g.text_fit(Face::Regular, px, dot[0] + 6.0 * z, row.cy() - lh / 2.0, max_w, col, label);
             } else {

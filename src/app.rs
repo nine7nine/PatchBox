@@ -31,6 +31,9 @@ pub enum Action {
     /// Ports on the blocks with a wire per connection, or PatchMatrix's matrices.
     ToggleMatrices,
     ToggleVertical,
+    /// Show a view style: (matrices, vertical).
+    SetStyle(bool, bool),
+    PortsStyle,
     /// Remove one connection (by port names).
     Disconnect(String, String),
     /// Copy (or cut) the connections of a port ("port:<name>") or a node (its id), current type.
@@ -525,6 +528,37 @@ impl App {
                 d.set_rows(rows);
             }
         }
+    }
+
+    /// The view style's name, for its own block positions.
+    /// Change the view style (matrices; vertical, which applies to the ports view only and is
+    /// remembered while the matrices show). Each style keeps its own block positions and camera:
+    /// the shown ones go aside, the new style's come back, or (first time) the graph is
+    /// arranged for it and fitted.
+    pub fn set_style(&mut self, matrices: bool, vertical: bool) {
+        let v = &mut self.layout.view;
+        let old = v.style();
+        v.style_cams.insert(old.to_string(), (v.cam, v.zoom));
+        v.matrices = matrices;
+        v.vertical = vertical;
+        let new = v.style();
+        if new == old {
+            return;
+        }
+        let cam = v.style_cams.get(new).copied();
+        self.layout.settle();
+        self.canvas.drag = crate::canvas::Drag::None;
+        let first = self.layout.nodes.is_empty();
+        self.place_new_nodes(false);
+        self.refresh_matrices();
+        match cam {
+            Some((c, z)) if !first => {
+                self.layout.view.cam = c;
+                self.layout.view.zoom = z;
+            }
+            _ => self.fit_pending = true,
+        }
+        self.layout_changed();
     }
 
     /// The ports a clipboard action is about: one port, or a node's ports of the current type.
@@ -1112,22 +1146,21 @@ impl App {
                 self.layout_changed();
             }
             Action::ToggleVertical => {
-                self.layout.view.vertical = !self.layout.view.vertical;
-                if self.layout.view.vertical {
-                    self.layout.view.matrices = false;
-                }
-                self.canvas.drag = crate::canvas::Drag::None;
-                // The flow turns: lay the graph out again for it.
-                self.place_new_nodes(true);
-                self.refresh_matrices();
-                self.fit_pending = true;
-                self.layout_changed();
+                // Vertical is a ports-view style: from the matrix view it goes to ports, vertical.
+                let (m, v) = if self.layout.view.matrices { (false, true) } else { (false, !self.layout.view.vertical) };
+                self.set_style(m, v);
+            }
+            Action::SetStyle(m, v) => self.set_style(m, v),
+            Action::PortsStyle => {
+                // The Ports button: back to the ports view, or (already there) switch its flow.
+                let v = &self.layout.view;
+                let vertical = if v.matrices { v.vertical } else { !v.vertical };
+                self.set_style(false, vertical);
             }
             Action::ToggleMatrices => {
-                self.layout.view.matrices = !self.layout.view.matrices;
-                self.canvas.drag = crate::canvas::Drag::None;
-                self.refresh_matrices();
-                self.layout_changed();
+                let m = !self.layout.view.matrices;
+                let v = self.layout.view.vertical;
+                self.set_style(m, v);
             }
             Action::Disconnect(o, i) => self.disconnect_names(&o, &i),
             Action::ViewsPage => {
@@ -1160,6 +1193,10 @@ impl App {
             }
             Action::RecallView(name) => {
                 let Some(v) = self.layout.views.get(&name).cloned() else { return };
+                let (m, vv) = (v.matrix_view, v.vertical && !v.matrix_view);
+                if (m, vv) != (self.layout.view.matrices, self.layout.view.vertical) {
+                    self.set_style(m, vv);
+                }
                 // Blocks the view doesn't know keep their place.
                 self.layout.nodes.extend(v.nodes);
                 self.layout.matrices.extend(v.matrices);
@@ -1167,8 +1204,6 @@ impl App {
                 self.layout.expanded = v.expanded;
                 self.layout.view.cam = v.cam;
                 self.layout.view.zoom = v.zoom;
-                self.layout.view.matrices = v.matrix_view;
-                self.layout.view.vertical = v.vertical;
                 self.kind = kind_from(&v.kind);
                 self.dialog = None;
                 self.refresh_matrices();

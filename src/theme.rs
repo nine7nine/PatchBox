@@ -22,11 +22,22 @@ pub const TEXT_BRIGHT: Color = rgb(225, 225, 225);
 pub const TEXT_DIM: Color = rgb(110, 110, 110);
 
 // Window chrome.
-pub const BAR_BG: Color = rgb(24, 24, 26);
-pub const TITLE_BG: Color = rgb(16, 16, 18);
-pub const GROUP_BG: Color = rgb(31, 31, 34);
-pub const LCD_BG: Color = rgb(10, 10, 12);
-pub const PANEL_BG: Color = rgb(30, 30, 32);
+/// The window's top (title bar and toolbar, one dark grey), its control groups, the sidebar and
+/// pages (the old toolbar grey), the LCD.
+pub const BAR_BG: Color = rgb(19, 20, 22);
+pub const TITLE_BG: Color = BAR_BG;
+pub const GROUP_BG: Color = rgb(13, 14, 16);
+pub const LCD_BG: Color = rgb(8, 9, 10);
+pub const PANEL_BG: Color = rgb(24, 24, 26);
+/// Luluda's buttons: a dark face, a border tinted by what the button does.
+pub const BTN_FACE: Color = rgb(34, 36, 39);
+pub const TINT_GREEN: Color = rgb(0x00, 0xe6, 0x76);
+pub const TINT_AMBER: Color = rgb(0xff, 0xa7, 0x26);
+pub const TINT_BLUE: Color = rgb(0x64, 0xb5, 0xf6);
+pub const TINT_PURPLE: Color = rgb(0xba, 0x68, 0xc8);
+pub const TINT_TEAL: Color = rgb(0x4d, 0xd0, 0xe1);
+pub const TINT_RED: Color = rgb(0xef, 0x53, 0x50);
+pub const TINT_GREY: Color = rgb(0x9e, 0x9e, 0xa4);
 pub const PANEL_LINE: Color = rgb(52, 52, 56);
 pub const BUTTON: Color = rgb(45, 45, 45);
 pub const BUTTON_HOVER: Color = rgb(58, 58, 60);
@@ -51,10 +62,10 @@ pub fn kind_color(k: PortKind) -> Color {
 
 // Luluda's blocks: a light fill, black text, a border in the node type's colour with a dark
 // inset line inside it (src/ui/block.cpp).
-pub const BLOCK_FILL: Color = rgb(0x86, 0x86, 0x86);
-pub const BLOCK_FILL_HOT: Color = rgb(0x9c, 0x9c, 0x9c);
-pub const BLOCK_BODY: Color = rgb(0x6c, 0x6c, 0x6e);
-pub const BLOCK_TEXT: Color = rgb(0x0a, 0x0a, 0x0a);
+pub const BLOCK_FILL: Color = rgb(0xaa, 0xaa, 0xaa);
+pub const BLOCK_FILL_HOT: Color = rgb(0xbe, 0xbe, 0xbe);
+pub const BLOCK_BODY: Color = rgb(0x96, 0x96, 0x98);
+pub const BLOCK_TEXT: Color = rgb(0x00, 0x00, 0x00);
 pub const BLOCK_INSET: Color = [0.0, 0.0, 0.0, 0.6];
 /// Node types: hardware audio, MIDI devices, the PipeWire bridge, applications.
 pub const NODE_HW: Color = rgb(0x00, 0xe6, 0x76);

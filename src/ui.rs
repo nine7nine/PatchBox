@@ -7,7 +7,6 @@ use crate::csd::{Button, Csd};
 use crate::gfx::{Gfx, Rect, alpha};
 use crate::text::Face;
 use crate::theme::*;
-use pbx_jack::PortKind;
 
 pub struct MenuItem {
     pub label: String,
@@ -118,6 +117,58 @@ impl UiState {
     }
 }
 
+/// Luluda's button: a dark face with a highlight along its top and a shade along its bottom,
+/// the border tinted by what the button does; hovering and being active warm the face with the
+/// tint and brighten the border.
+pub fn lbutton(g: &mut Gfx, r: Rect, s: f32, tint: crate::gfx::Color, hover: bool, active: bool, enabled: bool) {
+    let rad = 4.0 * s;
+    let face = if active {
+        crate::gfx::mix(BTN_FACE, tint, 0.20)
+    } else if hover && enabled {
+        crate::gfx::mix(BTN_FACE, tint, 0.10)
+    } else {
+        BTN_FACE
+    };
+    g.rrect(r, rad, if enabled { face } else { alpha(face, 0.55) });
+    let lw = s.max(1.0);
+    g.rect(Rect::new(r.x + rad, r.y + lw, r.w - 2.0 * rad, lw), [1.0, 1.0, 1.0, if enabled { 0.08 } else { 0.03 }]);
+    g.rect(Rect::new(r.x + rad, r.bottom() - 2.0 * lw, r.w - 2.0 * rad, lw), [0.0, 0.0, 0.0, 0.35]);
+    let border = if !enabled {
+        alpha(tint, 0.18)
+    } else if active {
+        tint
+    } else if hover {
+        alpha(tint, 0.9)
+    } else {
+        alpha(tint, 0.5)
+    };
+    g.rrect_stroke(r, rad, (1.2 * s).max(1.0), border);
+}
+
+/// The text colour on an `lbutton`.
+pub fn lbutton_text(tint: crate::gfx::Color, hover: bool, active: bool, enabled: bool) -> crate::gfx::Color {
+    if !enabled {
+        TEXT_DIM
+    } else if active || hover {
+        TEXT_BRIGHT
+    } else {
+        crate::gfx::mix(TEXT, tint, 0.22)
+    }
+}
+
+/// What a button does, as Luluda colours it.
+pub fn tint_for(label: &str) -> crate::gfx::Color {
+    match label {
+        "Stop" | "Kill" | "Quit" => TINT_RED,
+        "Start" | "Create" | "Add command" | "Save the current view" | "Take" => TINT_GREEN,
+        "Restart" | "Save" | "Rename" | "Duplicate" => TINT_AMBER,
+        "Settings" | "Open" => TINT_BLUE,
+        "New" | "+ Application" => TINT_GREEN,
+        l if l.starts_with("Trash") => TINT_RED,
+        _ => TINT_GREY,
+    }
+}
+
 /// Break `text` into lines no wider than `max_w`: at spaces, or (a long name with none) anywhere
 /// after a ':' '/' '_' '-' or, failing that, mid-word.
 pub fn wrap(g: &Gfx, px: f32, text: &str, max_w: f32) -> Vec<String> {
@@ -188,9 +239,9 @@ impl App {
     fn button(&mut self, g: &mut Gfx, r: Rect, label: &str, active: bool, action: Action) {
         let s = self.scale;
         let hov = self.hovered(&r);
-        g.rrect(r, 3.0 * s, if hov { BUTTON_HOVER } else { BUTTON });
-        g.rrect_stroke(r, 3.0 * s, s.max(1.0), if active { HILIGHT } else { alpha(BORDER, 0.8) });
-        g.text_center(Face::Regular, FONT * s, r, if active { TEXT_BRIGHT } else { TEXT }, label);
+        let tint = tint_for(label);
+        lbutton(g, r, s, tint, hov, active, true);
+        g.text_center(Face::Regular, FONT * s, r, lbutton_text(tint, hov, active, true), label);
         self.add_hit(r, action);
     }
 
@@ -215,11 +266,33 @@ impl App {
         let track_w = 120.0 * s;
         let pct = format!("{:.0} %", self.layout.view.zoom * 100.0);
         let pw = g.measure(Face::Regular, FONT * s, "400 %") + 12.0 * s;
-        let w = bw * 2.0 + track_w + pw + 4.0 * 6.0 * s;
+        let w = bw * 3.0 + track_w + pw + 5.0 * 6.0 * s;
         let panel = Rect::new(a.right() - w - 12.0 * s, a.bottom() - h - 12.0 * s, w, h);
-        g.rrect(panel, 4.0 * s, alpha(BAR_BG, 0.9));
+        g.rrect(panel, 4.0 * s, alpha(PANEL_BG, 0.92));
         g.rrect_stroke(panel, 4.0 * s, s.max(1.0), alpha(BORDER, 0.5));
         let mut x = panel.x + 6.0 * s;
+        // Centre: fit the whole graph in the window (F), as qjackctl's and RaySession's do.
+        let fit = Rect::new(x, panel.y, bw, h);
+        x += bw + 6.0 * s;
+        {
+            let hov = self.hovered(&fit);
+            if hov {
+                g.rrect(fit.inset(3.0 * s), 3.0 * s, BUTTON_HOVER);
+            }
+            let col = if hov { TEXT_BRIGHT } else { TEXT };
+            let (cx, cy) = (fit.cx().round(), fit.cy().round());
+            let (l, gap, t) = ((7.0 * s).round(), (3.0 * s).round(), (1.6 * s).max(1.0).round());
+            // Four corner brackets around a dot.
+            for (dx, dy) in [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                let (ex, ey) = (cx + dx * l, cy + dy * l);
+                let hx = if dx < 0.0 { ex } else { ex - gap };
+                let vy = if dy < 0.0 { ey } else { ey - gap };
+                g.rect(Rect::new(hx, if dy < 0.0 { ey } else { ey - t }, gap, t), col);
+                g.rect(Rect::new(if dx < 0.0 { ex } else { ex - t }, vy, t, gap), col);
+            }
+            g.circle([cx, cy], 2.0 * s, col);
+            self.add_hit(fit, Action::FitAll);
+        }
         let minus = Rect::new(x, panel.y, bw, h);
         x += bw + 6.0 * s;
         let track = Rect::new(x, panel.y, track_w, h);
@@ -296,15 +369,14 @@ impl App {
     }
 
     fn tool_button(&mut self, g: &mut Gfx, r: Rect, label: &str, active: bool, enabled: bool, a: Action) {
+        self.tool_button_tint(g, r, label, tint_for(label), active, enabled, a);
+    }
+
+    fn tool_button_tint(&mut self, g: &mut Gfx, r: Rect, label: &str, tint: crate::gfx::Color, active: bool, enabled: bool, a: Action) {
         let s = self.scale;
         let hov = enabled && self.hovered(&r);
-        if active {
-            g.rrect(r, 3.0 * s, BUTTON_HOVER);
-            g.rrect_stroke(r, 3.0 * s, s.max(1.0), HILIGHT);
-        } else if hov {
-            g.rrect(r, 3.0 * s, BUTTON_HOVER);
-        }
-        g.text_center(Face::Regular, FONT * s, r, if active || hov { TEXT_BRIGHT } else if !enabled { TEXT_DIM } else { TEXT }, label);
+        lbutton(g, r, s, tint, hov, active, enabled || active);
+        g.text_center(Face::Regular, FONT * s, r, lbutton_text(tint, hov, active, enabled || active), label);
         if enabled {
             self.add_hit(r, a);
         }
@@ -330,11 +402,11 @@ impl App {
         let sess_labels = ["New", "Open", "Save"];
         let sess_w = sess_labels.iter().map(|l| tw(g, l)).sum::<f32>() + 2.0 * 4.0 * s + 8.0 * s;
         let lcd_w = 128.0 * s;
-        let trans_w = 3.0 * bh + 2.0 * 2.0 * s + 6.0 * s + lcd_w + 8.0 * s;
+        let trans_w = 3.0 * bh + 2.0 * 4.0 * s + 6.0 * s + lcd_w + 8.0 * s;
         let kinds = self.kinds();
         let kinds_w = kinds.iter().map(|k| tw(g, k.label()) + 10.0 * s).sum::<f32>() + 8.0 * s;
-        let views = ["Ports", "Matrix", "Vertical"];
-        let views_w = views.iter().map(|l| tw(g, l)).sum::<f32>() + 8.0 * s;
+        let flow_w = 16.0 * s;
+        let views_w = tw(g, "Ports") + flow_w + tw(g, "Matrix") + 2.0 * s + 8.0 * s;
         let sr = if connected {
             let ms = st.buffer_size as f32 * 1000.0 / st.sample_rate.max(1) as f32;
             format!("{} Hz  {:.1} ms{}", st.sample_rate, ms, if st.freewheel { "  FREEWHEEL" } else { "" })
@@ -378,12 +450,12 @@ impl App {
             let mut bx = r.x + 4.0 * s;
             for (i, act) in [Action::TransportRewind, Action::TransportToggle, Action::TransportStop].into_iter().enumerate() {
                 let b = Rect::new(bx, by, bh, bh);
-                bx += bh + 2.0 * s;
-                if connected && self.hovered(&b) {
-                    g.rrect(b, 3.0 * s, BUTTON_HOVER);
-                }
+                bx += bh + 4.0 * s;
+                let tint = [TINT_BLUE, TINT_GREEN, TINT_GREY][i];
+                let hov = connected && self.hovered(&b);
+                lbutton(g, b, s, tint, hov, i == 1 && playing, connected);
                 let (cx, cy, k) = (b.cx(), b.cy(), 5.5 * s);
-                let col = if !connected { TEXT_DIM } else if i == 1 && playing { OK } else { TEXT_BRIGHT };
+                let col = if !connected { TEXT_DIM } else if i == 1 && playing { TEXT_BRIGHT } else { crate::gfx::mix(TEXT_BRIGHT, tint, 0.5) };
                 match i {
                     0 => {
                         g.rect(Rect::new(cx - k, cy - k, 1.8 * s, 2.0 * k), col);
@@ -431,8 +503,11 @@ impl App {
                 let w = tw(g, k.label()) + 10.0 * s;
                 let b = Rect::new(bx, by, w, bh);
                 let active = self.kind == k;
-                self.tool_button(g, Rect::new(b.x + 10.0 * s, b.y, b.w - 10.0 * s, b.h), k.label(), active, true, Action::SetKind(k));
+                let b = Rect::new(b.x, b.y, b.w - 4.0 * s, b.h);
+                let hov = self.hovered(&b);
+                lbutton(g, b, s, kind_color(k), hov, active, true);
                 g.circle([b.x + 9.0 * s, b.cy()], 3.2 * s, kind_color(k));
+                g.text_center(Face::Regular, FONT * s, Rect::new(b.x + 12.0 * s, b.y, b.w - 12.0 * s, b.h), lbutton_text(kind_color(k), hov, active, true), k.label());
                 self.add_hit(b, Action::SetKind(k));
                 bx += w;
             }
@@ -441,21 +516,29 @@ impl App {
         if show_views {
             let r = Rect::new(x, gy, views_w, gh);
             self.group(g, r);
-            let mut bx = r.x + 4.0 * s;
-            let v = &self.layout.view;
-            let (ports, matrix, vertical) = (!v.matrices && !v.vertical, v.matrices, !v.matrices && v.vertical);
-            for (l, active) in [("Ports", ports), ("Matrix", matrix), ("Vertical", vertical)] {
-                let w = tw(g, l);
-                let a = match l {
-                    "Ports" if matrix => Action::ToggleMatrices,
-                    "Ports" if vertical => Action::ToggleVertical,
-                    "Matrix" if !matrix => Action::ToggleMatrices,
-                    "Vertical" if !vertical => Action::ToggleVertical,
-                    _ => Action::FitAll,
-                };
-                self.tool_button(g, Rect::new(bx, by, w, bh), l, active, !active, a);
-                bx += w;
+            let bx = r.x + 4.0 * s;
+            let (matrices, vertical) = (self.layout.view.matrices, self.layout.view.vertical);
+            // Ports, with its flow drawn after the label: clicking it again switches between
+            // left-to-right and top-to-bottom.
+            let pr = Rect::new(bx, by, tw(g, "Ports") + flow_w - 2.0 * s, bh);
+            let hov = self.hovered(&pr);
+            lbutton(g, pr, s, TINT_TEAL, hov, !matrices, true);
+            let col = lbutton_text(TINT_TEAL, hov, !matrices, true);
+            let lr = Rect::new(pr.x, pr.y, pr.w - flow_w + 2.0 * s, pr.h);
+            g.text_center(Face::Regular, FONT * s, lr, col, "Ports");
+            let (cx, cy, k) = ((pr.right() - flow_w / 2.0 - 3.0 * s).round(), pr.cy().round(), 4.5 * s);
+            let t = (1.5 * s).max(1.0).round();
+            let tip = alpha(col, if matrices { 0.6 } else { 1.0 });
+            if vertical {
+                g.rect(Rect::new(cx - (t / 2.0).floor(), cy - k, t, 2.0 * k - 2.5 * s), tip);
+                g.triangle([cx - 3.0 * s, cy + k - 3.5 * s], [cx + 3.0 * s, cy + k - 3.5 * s], [cx, cy + k], tip);
+            } else {
+                g.rect(Rect::new(cx - k, cy - (t / 2.0).floor(), 2.0 * k - 2.5 * s, t), tip);
+                g.triangle([cx + k - 3.5 * s, cy - 3.0 * s], [cx + k - 3.5 * s, cy + 3.0 * s], [cx + k, cy], tip);
             }
+            self.add_hit(pr, Action::PortsStyle);
+            let mr = Rect::new(pr.right() + 2.0 * s, by, tw(g, "Matrix") - 2.0 * s, bh);
+            self.tool_button_tint(g, mr, "Matrix", TINT_TEAL, matrices, !matrices, Action::SetStyle(true, vertical));
         }
         // JACK, right-aligned: rate and latency, buffer size, xruns, DSP load.
         {
@@ -473,11 +556,11 @@ impl App {
             g.text_center(Face::Regular, px, dr, TEXT_BRIGHT, &dsp);
             rx -= dsp_w + 6.0 * s;
             let xw = tw(g, &xs);
-            self.tool_button(g, Rect::new(rx - xw, by, xw, bh), &xs, st.xruns > 0, true, Action::ResetXruns);
+            self.tool_button_tint(g, Rect::new(rx - xw, by, xw, bh), &xs, if st.xruns > 0 { TINT_RED } else { TINT_GREY }, st.xruns > 0, true, Action::ResetXruns);
             rx -= xw + 6.0 * s;
             let bw = tw(g, &bs);
             let br = Rect::new(rx - bw, by, bw, bh);
-            self.tool_button(g, br, &bs, false, connected, Action::BufferMenu(br));
+            self.tool_button_tint(g, br, &bs, TINT_AMBER, false, connected, Action::BufferMenu(br));
             rx -= bw + 6.0 * s;
             let col = if connected { if st.freewheel { WARN } else { TEXT } } else { BAD };
             let sw = g.measure(Face::Regular, px, &sr);
@@ -717,6 +800,9 @@ impl App {
                 Action::ZoomBy(f) => (name == "zoom+" && *f > 1.0) || (name == "zoom-" && *f < 1.0),
                 Action::ZoomSlider(_) => name == "zoomtrack",
                 Action::ZoomTo(_) => name == "zoompct",
+                Action::FitAll => name == "zoomfit",
+                Action::PortsStyle => name == "ports",
+                Action::SetStyle(true, _) => name == "matrix",
                 Action::TransportToggle => name == "play",
                 Action::TransportStop => name == "tstop",
                 Action::TransportRewind => name == "rew",

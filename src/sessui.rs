@@ -3,7 +3,7 @@
 
 use crate::app::{Action, App};
 use crate::dialog::{Control, Dialog, Event, Kind, Row};
-use crate::gfx::{Gfx, Rect, alpha};
+use crate::gfx::{Gfx, Rect};
 use crate::text::Face;
 use crate::theme::*;
 use crate::ui::MenuItem;
@@ -418,7 +418,7 @@ impl App {
             if on {
                 self.sbutton(g, br, label, Action::Sess(act));
             } else {
-                g.rrect(br, 3.0 * s, alpha(BUTTON, 0.5));
+                crate::ui::lbutton(g, br, s, crate::ui::tint_for(label), false, false, false);
                 g.text_center(Face::Regular, px, br, TEXT_DIM, label);
             }
             bx += bw + 4.0 * s;
@@ -492,15 +492,15 @@ impl App {
     fn sbutton(&mut self, g: &mut Gfx, r: Rect, label: &str, a: Action) {
         let s = self.scale;
         let hov = r.contains(self.ui.mouse[0], self.ui.mouse[1]) && self.ui.menu.is_none() && self.dialog.is_none();
-        g.rrect(r, 3.0 * s, if hov { BUTTON_HOVER } else { BUTTON });
-        g.rrect_stroke(r, 3.0 * s, s.max(1.0), alpha(BORDER, 0.8));
+        let tint = crate::ui::tint_for(label);
+        crate::ui::lbutton(g, r, s, tint, hov, false, true);
         if label == "⋯" {
             // The font has no ⋯: three dots.
             for k in -1..=1 {
                 g.circle([r.cx() + k as f32 * 5.0 * s, r.cy()], 1.6 * s, TEXT_BRIGHT);
             }
         } else {
-            g.text_center(Face::Regular, FONT * s, r, TEXT_BRIGHT, label);
+            g.text_center(Face::Regular, FONT * s, r, crate::ui::lbutton_text(tint, hov, false, true), label);
         }
         self.add_hit_pub(r, a);
     }

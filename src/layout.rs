@@ -32,11 +32,27 @@ pub struct View {
     /// Interface scale for the window's contents (top bar, sidebar, canvas at zoom 1), on top of
     /// the desktop's scale. The window buttons follow the desktop's scale only.
     pub ui_scale: f32,
+    /// The camera (cam, zoom) each view style was last left at, so going back to one returns
+    /// to where it was.
+    pub style_cams: BTreeMap<String, ([f32; 2], f32)>,
+}
+
+impl View {
+    /// The view style: "ports" (horizontal flow), "vertical" (ports, top to bottom), "matrix".
+    pub fn style(&self) -> &'static str {
+        if self.matrices {
+            "matrix"
+        } else if self.vertical {
+            "vertical"
+        } else {
+            "ports"
+        }
+    }
 }
 
 impl Default for View {
     fn default() -> View {
-        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, vertical: false, snap: false, no_overlap: true, ui_scale: 1.25 }
+        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, vertical: false, snap: false, no_overlap: true, ui_scale: 1.25, style_cams: BTreeMap::new() }
     }
 }
 
@@ -63,6 +79,14 @@ pub struct Layout {
     pub window: Option<[u32; 2]>,
     /// Saved views: name -> what the canvas looked like.
     pub views: BTreeMap<String, SavedView>,
+    /// Block positions of the view styles not in `nodes` ("ports", "vertical", "matrix"): each
+    /// style keeps its own arrangement (a matrix layout and a ports layout don't suit each
+    /// other).
+    pub style_nodes: BTreeMap<String, BTreeMap<String, [f32; 2]>>,
+    /// The style `nodes` belongs to. The view is global and a canvas (a session's, the one
+    /// before an undo) may have been left in another style: `settle` swaps the right positions
+    /// in. Empty in files from before styles kept their own: `nodes` is then its view's.
+    pub nodes_style: String,
 }
 
 /// A saved view: positions, hidden and expanded blocks, the view style and type, the camera.
@@ -98,7 +122,26 @@ impl Layout {
     /// A session's canvas (positions, pins, splits, hidden and expanded nodes), if it has one.
     pub fn load_session(dir: &std::path::Path) -> Option<Layout> {
         let b = std::fs::read(dir.join(SESSION_FILE)).ok()?;
-        serde_json::from_slice(&b).ok()
+        let mut l: Layout = serde_json::from_slice(&b).ok()?;
+        l.settle();
+        Some(l)
+    }
+
+    /// Make `nodes` the positions of the view's style: put the ones there aside under their
+    /// style and take the view's back (none yet: empty, to be arranged).
+    pub fn settle(&mut self) {
+        let want = self.view.style();
+        if self.nodes_style.is_empty() {
+            self.nodes_style = want.to_string();
+        }
+        if self.nodes_style != want {
+            let had = std::mem::replace(&mut self.nodes_style, want.to_string());
+            let nodes = std::mem::take(&mut self.nodes);
+            if !nodes.is_empty() {
+                self.style_nodes.insert(had, nodes);
+            }
+            self.nodes = self.style_nodes.remove(want).unwrap_or_default();
+        }
     }
 
     /// Write the canvas into a session folder.
@@ -115,15 +158,20 @@ impl Layout {
     /// Take the canvas of `other`, keeping our view and window (those stay global).
     pub fn take_canvas(&mut self, other: Layout) {
         let (view, window) = (self.view.clone(), self.window);
+        let mut other = other;
+        other.settle();
         *self = other;
         self.view = view;
         self.window = window;
+        self.settle();
     }
 
     /// PipeWire's canvas (the drill-down), next to the JACK one.
     pub fn load_pw() -> Layout {
         let Some(p) = path().map(|p| p.with_file_name("layout-pw.json")) else { return Layout::default() };
-        std::fs::read(&p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let mut l: Layout = std::fs::read(&p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        l.settle();
+        l
     }
 
     pub fn save_pw(&mut self) {
@@ -140,13 +188,15 @@ impl Layout {
 
     pub fn load() -> Layout {
         let Some(p) = path() else { return Layout::default() };
-        match std::fs::read(&p) {
+        let mut l = match std::fs::read(&p) {
             Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|e| {
                 eprintln!("[layout] {}: {e}; starting fresh", p.display());
                 Layout::default()
             }),
             Err(_) => Layout::default(),
-        }
+        };
+        l.settle();
+        l
     }
 
     pub fn save(&mut self) {
@@ -160,5 +210,58 @@ impl Layout {
         if std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &p)).is_err() {
             eprintln!("[layout] could not write {}", p.display());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(x: f32) -> BTreeMap<String, [f32; 2]> {
+        BTreeMap::from([("M:a".to_string(), [x, 0.0])])
+    }
+
+    /// A canvas saved in one style and opened while the view shows another gets each style's
+    /// own positions; a round trip through the file keeps all of them.
+    #[test]
+    fn styles_keep_their_positions() {
+        let mut saved = Layout::default();
+        saved.nodes = at(1.0);
+        saved.settle();
+        assert_eq!(saved.nodes_style, "ports");
+        saved.view.matrices = true;
+        saved.settle();
+        assert!(saved.nodes.is_empty());
+        saved.nodes = at(2.0);
+        let body = serde_json::to_vec(&saved).unwrap();
+
+        // The global view is in the vertical style.
+        let mut cur = Layout::default();
+        cur.view.vertical = true;
+        cur.settle();
+        cur.nodes = at(3.0);
+        let mut back: Layout = serde_json::from_slice(&body).unwrap();
+        back.settle();
+        cur.take_canvas(back);
+        assert_eq!(cur.nodes_style, "vertical");
+        assert!(cur.nodes.is_empty(), "the session had no vertical arrangement");
+        cur.view.vertical = false;
+        cur.settle();
+        assert_eq!(cur.nodes, at(1.0));
+        cur.view.matrices = true;
+        cur.settle();
+        assert_eq!(cur.nodes, at(2.0));
+        cur.view.matrices = false;
+        cur.settle();
+        assert_eq!(cur.nodes, at(1.0));
+    }
+
+    /// Files from before the styles kept their own positions: `nodes` are their view's.
+    #[test]
+    fn old_files_keep_their_nodes() {
+        let mut l: Layout = serde_json::from_str(r#"{"nodes":{"M:a":[5.0,0.0]},"view":{"matrices":true}}"#).unwrap();
+        l.settle();
+        assert_eq!(l.nodes_style, "matrix");
+        assert_eq!(l.nodes, at(5.0));
     }
 }
