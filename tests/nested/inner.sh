@@ -7,6 +7,9 @@ ROOT=$1 OUT=$2 CFG=$3; shift 3
   || { echo "inner.sh: /dev/shm is not the private, empty tmpfs; refusing"; exit 1; }
 BIN=${PB_BIN:-$ROOT/target/debug}
 L=$HOME/.cache/patchbox-work/nested
+# The session daemon the GUI starts: scratch socket and sessions; test clients on PATH.
+export PATH="$BIN:$PATH" PATCHBOX_SOCKET="$L/daemon.sock" PATCHBOX_SESSIONS="$L/sessions"
+rm -rf "$L/sessions"
 if [ -n "${PB_JACKDBUS:-}" ]; then
   # jackdbus on run.sh's private session bus, with a scratch HOME: its conf.xml and logs never
   # touch the owner's ~/.config/jack.

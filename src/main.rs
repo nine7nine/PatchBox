@@ -12,6 +12,8 @@ mod gfx;
 mod layout;
 mod model;
 mod server;
+mod session;
+mod sessui;
 mod shadow;
 mod text;
 mod testscript;
@@ -265,10 +267,10 @@ fn main() {
                     }
                     // A dialog is modal.
                     if let Some(d) = app.dialog.as_mut() {
-                        if mouse_btn == MouseButton::Left
-                            && let Some(ev) = d.click(px, py)
-                        {
-                            app.dialog_event(ev);
+                        if mouse_btn == MouseButton::Left {
+                            for ev in d.click(px, py) {
+                                app.dialog_event(ev);
+                            }
                         }
                         app.redraw = true;
                         continue;
@@ -343,8 +345,14 @@ fn main() {
                         Keycode::Escape if d.editing.is_some() => d.editing = None,
                         Keycode::Escape => app.dialog = None,
                         Keycode::Return | Keycode::KpEnter => {
+                            // Enter commits a field; in a one-field dialog it also confirms.
+                            let one_field = matches!(d.kind, dialog::Kind::NewSession | dialog::Kind::Rename | dialog::Kind::Duplicate | dialog::Kind::Notes);
+                            let last = d.buttons.len().saturating_sub(1);
                             if let Some(ev) = d.commit() {
                                 app.dialog_event(ev);
+                            }
+                            if one_field && app.dialog.is_some() {
+                                app.dialog_event(dialog::Event::Button(last));
                             }
                         }
                         Keycode::Backspace => d.backspace(),

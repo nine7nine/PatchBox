@@ -25,6 +25,9 @@ pub enum Control {
         max: i64,
     },
     Text(String),
+    /// A row that does something when clicked (open this session, add this application); the
+    /// text is shown on the right.
+    Link(String),
 }
 
 #[derive(Clone, Debug)]
@@ -50,6 +53,12 @@ impl Row {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Kind {
     Server,
+    NewSession,
+    OpenSession,
+    AddApp,
+    Rename,
+    Duplicate,
+    Notes,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -60,6 +69,7 @@ enum Part {
     Plus,
     Edit,
     Reset,
+    Link,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -132,11 +142,52 @@ impl Dialog {
         self.panel.contains(x, y)
     }
 
-    /// Finish a text edit: the value goes to its row.
+    /// Finish a text edit: the value goes to its row (text rows keep it themselves too).
     pub fn commit(&mut self) -> Option<Event> {
         let (i, text) = self.editing.take()?;
-        let row = self.rows.get(i)?;
+        let row = self.rows.get_mut(i)?;
+        if let Control::Text(v) = &mut row.control {
+            *v = text.clone();
+        }
         Some(Event::Set(row.id.clone(), text))
+    }
+
+    /// Edit the text row `id` right away (a dialog that asks for a name).
+    pub fn edit(&mut self, id: &str) {
+        if let Some(i) = self.rows.iter().position(|r| r.id == id)
+            && let Control::Text(v) = &self.rows[i].control
+        {
+            self.editing = Some((i, v.clone()));
+        }
+    }
+
+    /// The current value of row `id` (text being edited included).
+    pub fn value(&self, id: &str) -> Option<String> {
+        let i = self.rows.iter().position(|r| r.id == id)?;
+        if let Some((e, t)) = &self.editing
+            && *e == i
+        {
+            return Some(t.clone());
+        }
+        match &self.rows[i].control {
+            Control::Text(v) | Control::Info(v) | Control::Link(v) => Some(v.clone()),
+            Control::Choice { value, .. } => Some(value.clone()),
+            Control::Toggle(b) => Some(if *b { "on" } else { "off" }.into()),
+            Control::Number { value, .. } => Some(value.to_string()),
+            Control::Header => None,
+        }
+    }
+
+    /// Set a local row's value (dialogs whose rows are a form, not remote state).
+    pub fn set_local(&mut self, id: &str, v: &str) {
+        let Some(row) = self.rows.iter_mut().find(|r| r.id == id) else { return };
+        match &mut row.control {
+            Control::Text(t) => *t = v.to_string(),
+            Control::Toggle(b) => *b = v == "on",
+            Control::Choice { value, .. } => *value = v.to_string(),
+            Control::Number { value, .. } => *value = v.parse().unwrap_or(*value),
+            _ => {}
+        }
     }
 
     pub fn text_input(&mut self, s: &str) {
@@ -151,15 +202,23 @@ impl Dialog {
         }
     }
 
-    pub fn click(&mut self, x: f32, y: f32) -> Option<Event> {
+    /// A click: what it asks of the owner (an edit in progress is committed first).
+    pub fn click(&mut self, x: f32, y: f32) -> Vec<Event> {
         let hit = self.hits.iter().rev().find(|(r, _)| r.contains(x, y)).map(|(r, h)| (*r, *h));
+        let mut out = Vec::new();
         // A click anywhere but the field being edited commits the edit first.
         if self.editing.is_some() && !matches!(hit, Some((_, Hit::Row(i, Part::Edit))) if Some(i) == self.editing.as_ref().map(|e| e.0)) {
-            let e = self.commit();
-            if e.is_some() {
-                return e;
+            out.extend(self.commit());
+            // A click on another row only commits; a button acts too.
+            if !matches!(hit, Some((_, Hit::Button(_)))) {
+                return out;
             }
         }
+        out.extend(self.click_hit(hit));
+        out
+    }
+
+    fn click_hit(&mut self, hit: Option<(Rect, Hit)>) -> Option<Event> {
         let (r, h) = hit?;
         match h {
             Hit::Close => Some(Event::Close),
@@ -169,6 +228,7 @@ impl Dialog {
                 let id = row.id.clone();
                 match (&row.control, part) {
                     (_, Part::Reset) => Some(Event::Reset(id)),
+                    (Control::Link(_), _) => Some(Event::Set(id, "activate".into())),
                     (Control::Toggle(on), _) => Some(Event::Set(id, if *on { "off" } else { "on" }.into())),
                     (Control::Choice { .. }, Part::Choice) => Some(Event::Options(i, r)),
                     (Control::Number { value, min, .. }, Part::Minus) => Some(Event::Set(id, (*value - 1).max(*min).to_string())),
@@ -268,6 +328,15 @@ impl Dialog {
                 Control::Header => {}
                 Control::Info(t) => {
                     g.text_fit(Face::Regular, px, cr.x, rr.cy() - lh / 2.0, cr.w, TEXT_BRIGHT, t);
+                }
+                Control::Link(t) => {
+                    let whole = Rect::new(panel.x + pad / 2.0, rr.y + 1.0, panel.w - pad, rr.h - 2.0);
+                    if hov(&whole) {
+                        g.rrect(whole, 3.0 * s, BUTTON_HOVER);
+                        g.text_fit(Face::Regular, px, label_r.x, rr.cy() - lh / 2.0, label_r.w, HILIGHT, &row.label);
+                    }
+                    g.text_fit(Face::Regular, FONT_SMALL * s, cr.x, rr.cy() - g.line_height(Face::Regular, FONT_SMALL * s) / 2.0, cr.w, TEXT_DIM, t);
+                    self.hits.push((whole, Hit::Row(i, Part::Link)));
                 }
                 Control::Toggle(on) => {
                     let tw = 40.0 * s;

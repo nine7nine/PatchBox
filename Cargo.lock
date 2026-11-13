@@ -570,6 +570,7 @@ dependencies = [
  "glow",
  "libc",
  "pbx-jack",
+ "pbx-session",
  "png",
  "sdl3",
  "sdl3-sys",

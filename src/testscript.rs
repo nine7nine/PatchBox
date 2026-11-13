@@ -7,7 +7,8 @@
 //!   click <pt> [right|middle] [ctrl] [shift] [double]
 //!   drag <pt> <pt> [ctrl] [shift]  press, move in steps, release
 //!   wheel <pt> <dy> [ctrl]
-//!   key <name>                     a key: 1-4, l, f, escape, f9
+//!   key <name>                     a key: 1-4, l, f, e, space, enter, escape, f9
+//!   type <text>                    typed text (`+` for a space)
 //!   shot <path.png>                write the next frame
 //!   quit
 //! Points (`+` stands for a space): `x,y` (window pixels), `node:<id>`, `out:<id>`, `in:<id>` (node ids as in the layout
@@ -154,6 +155,7 @@ impl Script {
                         "f" => Keycode::F,
                         "f9" => Keycode::F9,
                         "space" => Keycode::Space,
+                        "enter" => Keycode::Return,
                         _ => Keycode::Escape,
                     };
                     push(
@@ -169,6 +171,10 @@ impl Script {
                             raw: 0,
                         },
                     );
+                }
+                Some("type") => {
+                    let text = step.splitn(2, ' ').nth(1).unwrap_or("").replace('+', " ");
+                    push(&mut out, Event::TextInput { timestamp: 0, window_id: 0, text });
                 }
                 Some("shot") => {
                     self.shot = w.get(1).map(|s| s.to_string());

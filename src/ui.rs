@@ -119,6 +119,10 @@ impl App {
         self.canvas.area = Rect::new(side_w, bar_h, self.win[0] - side_w, self.win[1] - bar_h);
     }
 
+    pub fn add_hit_pub(&mut self, r: Rect, a: Action) {
+        self.add_hit(r, a);
+    }
+
     fn add_hit(&mut self, r: Rect, a: Action) {
         self.ui.hits.push((r, a));
     }
@@ -372,11 +376,9 @@ impl App {
         g.rect(Rect::new(r.x + pad, y, r.w - 2.0 * pad, s.max(1.0)), PANEL_LINE);
         y += 8.0 * s;
 
-        // Session (phase 3 brings the session manager here).
-        g.text(Face::Bold, px, r.x + pad, y, TEXT_BRIGHT, "Session");
-        y += lh + 4.0 * s;
-        g.text_fit(Face::Regular, FONT_SMALL * s, r.x + pad, y, r.w - 2.0 * pad, TEXT_DIM, "No session (session manager: next phase)");
-        y += lh + 12.0 * s;
+        // The session (patchboxd).
+        y = self.draw_session_panel(g, r, y);
+        y += 4.0 * s;
         g.rect(Rect::new(r.x + pad, y, r.w - 2.0 * pad, s.max(1.0)), PANEL_LINE);
         y += 8.0 * s;
 
@@ -555,6 +557,12 @@ impl App {
                 Action::TransportToggle => name == "play",
                 Action::TransportStop => name == "tstop",
                 Action::TransportRewind => name == "rew",
+                Action::Sess(a) => {
+                    use crate::sessui::SessAction as S;
+                    matches!((a, name), (S::New, "sess-new") | (S::Open, "sess-open") | (S::Save, "sess-save") | (S::Close, "sess-close") | (S::AddApp, "sess-add") | (S::Menu(_), "sess-menu"))
+                        || matches!(a, S::ClientMenu(id, _) if name == format!("client:{id}"))
+                        || matches!(a, S::Start(id) | S::Stop(id) if name == format!("startstop:{id}"))
+                }
                 Action::ServerStart => name == "start",
                 Action::ServerStop => name == "stop",
                 Action::ServerRestart => name == "restart",

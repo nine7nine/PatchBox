@@ -67,6 +67,8 @@ pub enum Action {
     ServerSettings,
     /// A choice picked from a dialog row's options: (row id, value).
     DialogSet(String, String),
+    /// Session manager actions (sessui.rs).
+    Sess(crate::sessui::SessAction),
     Quit,
 }
 
@@ -104,6 +106,9 @@ pub struct App {
     pub ui: crate::ui::UiState,
     pub server: crate::server::Server,
     pub dialog: Option<crate::dialog::Dialog>,
+    pub sess: crate::session::SessionLink,
+    /// Installed applications (.desktop), scanned when first needed.
+    pub apps: Option<Vec<crate::session::App>>,
     pub log: Vec<LogLine>,
     pub redraw: bool,
     graph_due: Option<Instant>,
@@ -131,9 +136,12 @@ impl App {
         let layout = Layout::load();
         let kind = kind_from(&layout.view.kind);
         let server = crate::server::Server::spawn(waker.clone());
+        let sess = crate::session::SessionLink::new(waker.clone());
         App {
             server,
             dialog: None,
+            sess,
+            apps: None,
             jack: None,
             waker,
             graph: Graph::default(),
@@ -213,6 +221,7 @@ impl App {
     /// A worker woke us: JACK notifications and jackdbus replies.
     pub fn on_wake(&mut self) {
         self.on_jack_events();
+        self.on_daemon();
         for r in self.server.take() {
             use crate::server::Reply;
             match r {
@@ -283,6 +292,12 @@ impl App {
         let now = Instant::now();
         let mut next: Option<Instant> = None;
         let mut at = |t: Instant| next = Some(next.map_or(t, |n: Instant| n.min(t)));
+        if let Some(m) = self.sess.tick() {
+            self.say(m, false);
+        }
+        if let Some(t) = self.sess.retry_at() {
+            at(t);
+        }
         if self.jack.is_none() {
             if now >= self.retry_at {
                 self.try_connect();
@@ -875,6 +890,7 @@ impl App {
                 self.dialog = Some(d);
             }
             Action::DialogSet(id, v) => self.dialog_event(crate::dialog::Event::Set(id, v)),
+            Action::Sess(a) => self.session_action(a),
             Action::Quit => self.quit = true,
         }
     }
@@ -1015,6 +1031,7 @@ impl App {
                     _ => self.dialog = None,
                 }
             }
+            (k, ev) => self.session_dialog_event(k, ev),
         }
     }
 

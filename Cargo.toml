@@ -24,6 +24,7 @@ vendored-sdl = ["sdl3/build-from-source-static", "dep:sdl3-sys"]
 
 [dependencies]
 pbx-jack = { path = "crates/pbx-jack" }
+pbx-session = { path = "crates/pbx-session" }
 sdl3 = { version = "0.20", default-features = false }
 # Direct only so build.rs gets DEP_SDL3_OUT_DIR (where sdl3-sys built our SDL) for the link flags.
 # Pinned: our third_party/sdl3-src is SDL 3.4.18, which sdl3-sys 0.7.2 builds (0.7.3 wants 3.4.20).

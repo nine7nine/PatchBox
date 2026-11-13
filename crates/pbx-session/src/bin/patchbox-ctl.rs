@@ -73,7 +73,10 @@ fn main() {
             std::process::exit(1);
         }
     }
-    while watch {
+    if !watch {
+        return;
+    }
+    loop {
         match c.recv() {
             Ok(FromDaemon::Push(Push::Log { text, .. })) => println!("{text}"),
             Ok(FromDaemon::Push(Push::State(st))) => {
