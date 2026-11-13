@@ -74,6 +74,8 @@ pub enum Action {
     /// Ask for a group's name and size, from this port on; break up this port's group.
     GroupPrompt(String),
     Ungroup(String),
+    /// Ask for a new name for this port's group.
+    RenameGroup(String),
     /// Show a client as a block per track / plugin, or as one.
     Tracks(String, bool),
     /// Our names to JACK's metadata on/off.
@@ -1515,6 +1517,16 @@ impl App {
                 self.layout.view.no_overlap = was;
                 self.refresh_matrices();
             }
+            Action::RenameGroup(port) => {
+                use crate::dialog::{Control, Dialog, Kind, Row};
+                let Some(g) = self.layout.port_groups.iter().find(|g| g.ports.contains(&port)) else { return };
+                let mut d = Dialog::new(Kind::GroupName, "Rename the group");
+                d.tag = port.clone();
+                d.rows = vec![Row { id: "name".into(), label: "Name".into(), help: String::new(), control: Control::Text(g.name.clone()), modified: false }];
+                d.buttons = vec!["Cancel".into(), "Rename".into()];
+                d.edit("name");
+                self.dialog = Some(d);
+            }
             Action::Ungroup(port) => {
                 let before = self.layout.port_groups.len();
                 self.layout.port_groups.retain(|g| !g.ports.contains(&port));
@@ -2562,6 +2574,21 @@ impl App {
                 }
             }
             (Kind::Rules, Event::Button(_)) => self.dialog = None,
+            (Kind::GroupName, Event::Set(id, v)) => {
+                if let Some(d) = &mut self.dialog {
+                    d.set_local(&id, &v);
+                }
+            }
+            (Kind::GroupName, Event::Button(b)) => {
+                let Some(d) = self.dialog.take() else { return };
+                let name = d.value("name").unwrap_or_default().trim().to_string();
+                if d.buttons.get(b).map(String::as_str) == Some("Rename") && !name.is_empty()
+                    && let Some(g) = self.layout.port_groups.iter_mut().find(|g| g.ports.contains(&d.tag))
+                {
+                    g.name = name;
+                    self.remodel();
+                }
+            }
             (Kind::PortGroup, Event::Set(id, v)) => {
                 if let Some(d) = &mut self.dialog {
                     d.set_local(&id, &v);

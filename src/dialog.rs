@@ -75,6 +75,8 @@ pub enum Kind {
     Rules,
     /// Group ports: a name and how many.
     PortGroup,
+    /// A new name for a port group.
+    GroupName,
     /// A session client's properties.
     ClientProps,
     /// The name for a client template.
@@ -278,6 +280,8 @@ impl Dialog {
                             Control::Choice { value, .. } | Control::Text(value) => value.clone(),
                             _ => return None,
                         };
+                        // Selected, like a field you click into elsewhere: the first key replaces it.
+                        self.fresh = !text.is_empty();
                         self.editing = Some((i, text));
                         None
                     }
@@ -397,6 +401,7 @@ impl Dialog {
             let cr = Rect::new(ctl_x, rr.y + 3.0 * s, ctl_w - reset_w, rr.h - 6.0 * s);
             let hov = |r: &Rect| r.contains(mouse[0], mouse[1]) && content.contains(mouse[0], mouse[1]);
             let editing = self.editing.as_ref().filter(|(e, _)| *e == i).map(|(_, t)| t.clone());
+            let selected = editing.is_some() && self.fresh;
             let field = |g: &mut Gfx, r: Rect, text: &str, active: bool| {
                 g.rrect(r, 3.0 * s, if active { BUTTON_HOVER } else { BUTTON });
                 g.rrect_stroke(r, 3.0 * s, s.max(1.0), if active { HILIGHT } else { LINE_SOFT });
@@ -405,6 +410,11 @@ impl Dialog {
                     Some(t) => (t, true),
                     None => (text, false),
                 };
+                // Selected (the first key replaces it): the text on a highlight.
+                if caret && selected && !shown.is_empty() {
+                    let sw = g.measure(Face::Regular, px, shown).min(r.w - 16.0 * s);
+                    g.rect(Rect::new(r.x + 7.0 * s, r.cy() - lh / 2.0 - 1.0 * s, sw + 2.0 * s, lh + 2.0 * s), alpha(BORDER, 0.45));
+                }
                 let w = g.text_fit(Face::Regular, px, r.x + 8.0 * s, r.cy() - lh / 2.0, r.w - 16.0 * s, TEXT_BRIGHT, shown);
                 if caret {
                     let cx = (r.x + 8.0 * s + w.min(r.w - 16.0 * s) + 1.0).round();

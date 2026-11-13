@@ -565,7 +565,22 @@ impl App {
         let m = &self.mats[mi];
         let (o, i) = (m.cols[c], m.rows[r]);
         let mut cells = vec![(o, i)];
+        // Shift: both ports in groups of the user's: the whole group, in step from this cell;
+        // else the stereo partners.
         if pair
+            && let (Some(&(go, ko)), Some(&(gi, ki))) = (self.model.group_of.get(&o), self.model.group_of.get(&i))
+        {
+            let (outs, ins) = (&self.model.groups[go].1, &self.model.groups[gi].1);
+            for (a, &po) in outs.iter().enumerate() {
+                let b = a as isize - ko as isize + ki as isize;
+                if let Some(&pi) = usize::try_from(b).ok().and_then(|b| ins.get(b))
+                    && m.cols.contains(&po)
+                    && m.rows.contains(&pi)
+                {
+                    cells.push((po, pi));
+                }
+            }
+        } else if pair
             && let (Some(&po), Some(&pi)) = (self.model.partner.get(&o), self.model.partner.get(&i))
                 && m.cols.contains(&po) && m.rows.contains(&pi) {
                     cells.push((po, pi));
@@ -930,7 +945,10 @@ impl App {
                 items.push(I::header(self.model.labels[p].clone()));
                 items.push(I::new("Rename this port…", Action::Rename(format!("port:{name}"))));
                 match self.model.group_of.get(&p) {
-                    Some(&(gi, _)) => items.push(I::new(format!("Ungroup \"{}\"", self.model.groups[gi].0), Action::Ungroup(name.clone()))),
+                    Some(&(gi, _)) => {
+                        items.push(I::new(format!("Rename the group \"{}\"…", self.model.groups[gi].0), Action::RenameGroup(name.clone())));
+                        items.push(I::new(format!("Ungroup \"{}\"", self.model.groups[gi].0), Action::Ungroup(name.clone())));
+                    }
                     None => items.push(I::new("Group ports from here…", Action::GroupPrompt(name.clone()))),
                 }
                 items.push(I::new("Copy its connections", Action::CopyConns(format!("port:{name}"), false)));
@@ -1466,9 +1484,15 @@ impl App {
                 Rect::new(row.right() - 2.0 * z - sw, row.y + 2.0 * z, sw, row.h - 4.0 * z)
             };
             g.rect(strip, alpha(kind_color(port.kind), fa));
-            // Stereo pairs: the strip continues across both rows.
-            if let Some(&q) = self.model.partner.get(&p)
+            // Stereo pairs: the strip continues across both rows; a group's, across all of them.
+            if let Some(&(gi, 0)) = self.model.group_of.get(&p)
+                && let Some(&last) = self.model.groups[gi].1.last()
+                && let Some((_, lr)) = rows.iter().find(|(n, _)| *n == last)
+            {
+                g.rect(Rect::new(strip.x, strip.bottom(), sw, lr.bottom() - 2.0 * z - strip.bottom()), alpha(mix(kind_color(port.kind), [1.0, 1.0, 1.0, 1.0], 0.25), fa));
+            } else if let Some(&q) = self.model.partner.get(&p)
                 && rows.get(k + 1).is_some_and(|(n, _)| *n == q)
+                && !self.model.group_of.contains_key(&p)
             {
                 g.rect(Rect::new(strip.x, strip.bottom(), sw, 4.0 * z), alpha(kind_color(port.kind), fa * 0.6));
             }
@@ -1517,6 +1541,31 @@ impl App {
                 g.rrect_stroke(sq, 0.5 * HANDLE_R * z, (1.2 * self.scale).max(1.0), kc);
             }
             g.rrect_stroke(sq.inset(-1.0), 0.5 * HANDLE_R * z + 1.0, 1.0, [0.0, 0.0, 0.0, 0.6 * fa]);
+        }
+        // Groups (and stereo pairs): a bar along their squares, on the side away from the
+        // block (above the inputs on top, below the outputs at the bottom).
+        let rows = self.port_rows(xf, i);
+        let at = |p: usize| rows.iter().find(|(q, _)| *q == p).map(|(_, r)| *r);
+        let mut spans: Vec<(usize, usize, bool)> = Vec::new();
+        for (_, ports) in &self.model.groups {
+            if let (Some(&a), Some(&b)) = (ports.first(), ports.last()) {
+                spans.push((a, b, true));
+            }
+        }
+        for (&a, &b) in &self.model.partner {
+            if a < b && !self.model.group_of.contains_key(&a) {
+                spans.push((a, b, false));
+            }
+        }
+        for (a, b, user) in spans {
+            let (Some(ra), Some(rb)) = (at(a), at(b)) else { continue };
+            let port = &self.graph.ports[a];
+            let fa = if port.kind == self.kind { f } else { f * 0.55 };
+            let col = if user { alpha(mix(kind_color(port.kind), [1.0, 1.0, 1.0, 1.0], 0.25), fa) } else { alpha(kind_color(port.kind), fa * 0.6) };
+            let bw = if user { (2.5 * z).max(1.5) } else { (1.2 * z).max(1.0) };
+            let y = if port.is_input() { ra.cy() - q / 2.0 - 3.5 * z - bw } else { ra.cy() + q / 2.0 + 3.5 * z };
+            let (x0, x1) = (ra.cx().min(rb.cx()) - q / 2.0, ra.cx().max(rb.cx()) + q / 2.0);
+            g.rect(Rect::new(x0, y, x1 - x0, bw), col);
         }
     }
 

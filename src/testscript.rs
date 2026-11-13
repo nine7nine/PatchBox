@@ -196,7 +196,7 @@ impl Script {
                     );
                 }
                 Some("type") => {
-                    let text = step.splitn(2, ' ').nth(1).unwrap_or("").replace('+', " ");
+                    let text = plus(step.splitn(2, ' ').nth(1).unwrap_or(""));
                     push(&mut out, Event::TextInput { timestamp: 0, window_id: 0, text });
                 }
                 Some("shot") => {
@@ -220,7 +220,7 @@ impl Script {
 
 /// A point named by what is there (window pixels).
 pub fn resolve(app: &App, p: &str) -> Option<[f32; 2]> {
-    let p = &p.replace('+', " ");
+    let p = &plus(p);
     let xf = app.xf();
     if let Some((x, y)) = p.split_once(',')
         && let (Ok(x), Ok(y)) = (x.parse(), y.parse()) {
@@ -271,4 +271,9 @@ pub fn resolve(app: &App, p: &str) -> Option<[f32; 2]> {
         }
         _ => None,
     }
+}
+
+/// Script words: + is a space, \\+ a plus sign ("bar:zoom\\+").
+fn plus(s: &str) -> String {
+    s.replace("\\+", "\u{1}").replace('+', " ").replace('\u{1}', "+")
 }
