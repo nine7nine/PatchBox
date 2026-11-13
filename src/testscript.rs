@@ -175,6 +175,10 @@ impl Script {
                         "enter" => Keycode::Return,
                         "z" => Keycode::Z,
                         "y" => Keycode::Y,
+                        "a" => Keycode::A,
+                        "down" => Keycode::Down,
+                        "up" => Keycode::Up,
+                        "backspace" => Keycode::Backspace,
                         _ => Keycode::Escape,
                     };
                     push(

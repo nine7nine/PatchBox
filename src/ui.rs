@@ -101,6 +101,7 @@ impl UiState {
         let items = vec![
             MenuItem::new(format!("Interface scale: {:.0} % …", ui_scale * 100.0), Action::ScaleMenu(Rect::new(under.x, under.bottom() + 2.0, 0.0, 0.0))),
             MenuItem::new("Event log (xruns, server, clients)", Action::EventLog),
+            MenuItem::new("Find a block or port (Ctrl+F)", Action::Find),
             MenuItem::new("Connection rules…", Action::RulesPage),
             MenuItem::new("Undo (Ctrl+Z)", Action::Undo).enabled(undo.0),
             MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo).enabled(undo.1),
@@ -364,6 +365,63 @@ impl App {
         }
         if self.jack.is_some() {
             self.draw_zoom(g);
+        }
+        if self.search.is_some() && self.dialog.is_none() {
+            self.draw_search(g);
+        }
+    }
+
+    /// The find bar (Ctrl+F), top centre of the canvas: the text, then the results (Up/Down,
+    /// Enter or a click goes there, Escape closes).
+    fn draw_search(&mut self, g: &mut Gfx) {
+        let s = self.scale;
+        let a = self.canvas.area;
+        let px = FONT * s;
+        let lh = g.line_height(Face::Regular, px);
+        let results = self.search_results();
+        let Some(st) = &self.search else { return };
+        let (text, sel) = (st.text.clone(), st.sel.min(results.len().saturating_sub(1)));
+        let w = (480.0 * s).min(a.w - 24.0 * s);
+        let row_h = (lh + 10.0 * s).round();
+        let field_h = (lh + 14.0 * s).round();
+        let list_h = if results.is_empty() && !text.trim().is_empty() { row_h } else { results.len() as f32 * row_h };
+        let panel = Rect::new((a.cx() - w / 2.0).round(), a.y + 12.0 * s, w, field_h + list_h + 12.0 * s);
+        g.rrect(Rect::new(panel.x + 3.0 * s, panel.y + 4.0 * s, panel.w, panel.h), 6.0 * s, [0.0, 0.0, 0.0, 0.4]);
+        g.rrect(panel, 6.0 * s, MENU_BG);
+        g.rrect_stroke(panel, 6.0 * s, s.max(1.0), LINE_SOFT);
+        // Clicks on the bar's background stay with it (the results, added after, come first).
+        self.add_hit(panel, Action::Noop);
+        let field = Rect::new(panel.x + 6.0 * s, panel.y + 6.0 * s, panel.w - 12.0 * s, field_h);
+        g.rrect(field, 4.0 * s, LCD_BG);
+        g.rrect_stroke(field, 4.0 * s, s.max(1.0), alpha(HILIGHT, 0.7));
+        // A magnifier, then the text and a caret.
+        let (cx, cy) = (field.x + 14.0 * s, field.cy() - 1.0 * s);
+        g.arc([cx, cy], 5.0 * s, 0.0, std::f32::consts::TAU, (1.5 * s).max(1.0), TEXT);
+        g.line([cx + 3.5 * s, cy + 3.5 * s], [cx + 7.5 * s, cy + 7.5 * s], (1.8 * s).max(1.0), TEXT);
+        let tx = field.x + 28.0 * s;
+        let ty = field.cy() - lh / 2.0;
+        if text.is_empty() {
+            g.text(Face::Regular, px, tx, ty, TEXT_DIM, "Find a block or a port…");
+        }
+        let tw = g.text_fit(Face::Regular, px, tx, ty, field.right() - tx - 8.0 * s, TEXT_BRIGHT, &text);
+        let caret_x = if text.is_empty() { tx } else { tx + tw };
+        g.rect(Rect::new(caret_x.round(), ty, (1.5 * s).max(1.0), lh), TEXT_BRIGHT);
+        let mut y = field.bottom() + 4.0 * s;
+        if results.is_empty() && !text.trim().is_empty() {
+            g.text(Face::Regular, px, panel.x + 14.0 * s, y + (row_h - lh) / 2.0, TEXT_DIM, "Nothing by that name");
+        }
+        for (k, (what, kind, _)) in results.iter().enumerate() {
+            let rr = Rect::new(panel.x + 4.0 * s, y, panel.w - 8.0 * s, row_h);
+            let hov = self.hovered(&rr);
+            if k == sel || hov {
+                g.rrect(rr, 3.0 * s, MENU_HOVER);
+            }
+            let spx = FONT_SMALL * s;
+            let kw = g.measure(Face::Regular, spx, kind);
+            g.text_fit(Face::Regular, px, rr.x + 10.0 * s, rr.cy() - lh / 2.0, rr.w - kw - 30.0 * s, if k == sel { TEXT_BRIGHT } else { TEXT }, what);
+            g.text(Face::Regular, spx, rr.right() - kw - 10.0 * s, rr.cy() - g.line_height(Face::Regular, spx) / 2.0, LCD_CAPTION, kind);
+            self.add_hit(rr, Action::SearchGo(k));
+            y += row_h;
         }
     }
 

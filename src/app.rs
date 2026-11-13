@@ -69,6 +69,13 @@ pub enum Action {
     RulesPage,
     /// Line up the selected blocks.
     Align(crate::canvas::Align),
+    /// Nothing (a click that a control keeps to itself).
+    Noop,
+    /// The find bar (Ctrl+F): open, close, go to a result.
+    Find,
+    SearchGo(usize),
+    /// Show a port: its type, its block centred, a ring round it.
+    FindPort(String),
     HideSelected,
     SelectAll,
     ClearSelection,
@@ -179,6 +186,8 @@ pub struct App {
     preset_saving: Option<String>,
     /// Connection rules (patchboxd keeps and applies them).
     pub rules: Vec<pbx_session::rules::Rule>,
+    /// The find bar, while open.
+    pub search: Option<crate::canvas::Search>,
     /// Installed applications (.desktop), scanned when first needed.
     pub apps: Option<Vec<crate::session::App>>,
     pub log: Vec<LogLine>,
@@ -230,6 +239,7 @@ impl App {
             jack_now: None,
             preset_saving: None,
             rules: Vec::new(),
+            search: None,
             apps: None,
             jack: None,
             waker,
@@ -1445,6 +1455,30 @@ impl App {
                 self.ui.open_menu([r.x, r.bottom() + 2.0], items);
             }
             Action::Align(how) => self.align(how),
+            Action::Noop => {}
+            Action::Find => {
+                self.search = if self.search.is_some() { None } else { Some(Default::default()) };
+                self.redraw = true;
+            }
+            Action::SearchGo(k) => {
+                if let Some((_, _, a)) = self.search_results().into_iter().nth(k) {
+                    self.search = None;
+                    self.apply(a);
+                }
+            }
+            Action::FindPort(name) => {
+                let Some(&p) = self.graph.by_name.get(&name) else { return };
+                let kind = self.graph.ports[p].kind;
+                if kind != self.kind && self.kinds().contains(&kind) {
+                    self.apply(Action::SetKind(kind));
+                }
+                if let Some(&ni) = self.model.port_node.get(&p) {
+                    let id = self.model.nodes[ni].key.id();
+                    self.apply(Action::CenterNode(id));
+                }
+                self.canvas.flash_port = Some((name, Instant::now()));
+                self.redraw = true;
+            }
             Action::HideSelected => {
                 let ids: Vec<String> = std::mem::take(&mut self.canvas.selected).into_iter().collect();
                 for id in ids {

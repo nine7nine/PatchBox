@@ -345,6 +345,34 @@ fn main() {
                         app.canvas_wheel(x, y, ctrl);
                     }
                 }
+                Event::TextInput { text, .. } if app.search.is_some() && app.dialog.is_none() => {
+                    if let Some(s) = app.search.as_mut() {
+                        s.text.push_str(&text);
+                        s.sel = 0;
+                    }
+                    app.redraw = true;
+                }
+                // The find bar takes the keys while open (letters are text, not shortcuts).
+                Event::KeyDown { keycode: Some(k), .. } if app.search.is_some() && app.dialog.is_none() => {
+                    let n = app.search_results().len();
+                    let s = app.search.as_mut().unwrap();
+                    match k {
+                        Keycode::Escape => app.search = None,
+                        Keycode::Backspace => {
+                            s.text.pop();
+                            s.sel = 0;
+                        }
+                        Keycode::Down => s.sel = (s.sel + 1).min(n.saturating_sub(1)),
+                        Keycode::Up => s.sel = s.sel.saturating_sub(1),
+                        Keycode::Return | Keycode::KpEnter => {
+                            let k = s.sel;
+                            app.apply(Action::SearchGo(k));
+                        }
+                        Keycode::F if ctrl => app.search = None,
+                        _ => {}
+                    }
+                    app.redraw = true;
+                }
                 Event::TextInput { text, .. } => {
                     if let Some(d) = app.dialog.as_mut() {
                         d.text_input(&text);
@@ -382,6 +410,7 @@ fn main() {
                             Some(Action::ClearSelection)
                         }
                         Keycode::A if ctrl => Some(Action::SelectAll),
+                        Keycode::F if ctrl => Some(Action::Find),
                         Keycode::Z if ctrl && shift => Some(Action::Redo),
                         Keycode::Z if ctrl => Some(Action::Undo),
                         Keycode::Y if ctrl => Some(Action::Redo),
@@ -429,7 +458,7 @@ fn main() {
             break;
         }
         // Typed text only while a field is being edited (an input method is a cost).
-        let want_text = app.dialog.as_ref().is_some_and(|d| d.editing.is_some());
+        let want_text = app.dialog.as_ref().is_some_and(|d| d.editing.is_some()) || (app.search.is_some() && app.dialog.is_none());
         if want_text != text_on {
             text_on = want_text;
             if want_text {

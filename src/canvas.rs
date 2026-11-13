@@ -104,6 +104,46 @@ pub struct CanvasState {
     pub selected: std::collections::BTreeSet<String>,
     /// Where the left button went down (a click on empty canvas clears the selection).
     pub pressed_at: [f32; 2],
+    /// A port found by the search, ringed for a moment.
+    pub flash_port: Option<(String, Instant)>,
+}
+
+/// The find bar (Ctrl+F): what is typed and the result picked.
+#[derive(Default)]
+pub struct Search {
+    pub text: String,
+    pub sel: usize,
+}
+
+impl App {
+    /// Blocks then ports whose names (JACK's, pretty, aliases, ours) hold the text, at most 12:
+    /// (what, where, the action that goes there).
+    pub fn search_results(&self) -> Vec<(String, String, Action)> {
+        let Some(s) = &self.search else { return Vec::new() };
+        let q = s.text.trim().to_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let has = |t: &str| t.to_lowercase().contains(&q);
+        let mut out = Vec::new();
+        for n in &self.model.nodes {
+            if has(&n.title) || has(&n.key.group) || n.sub.as_deref().is_some_and(has) {
+                let what = match &n.sub {
+                    Some(sub) => format!("block · {sub}"),
+                    None => "block".to_string(),
+                };
+                out.push((n.title.clone(), what, Action::CenterNode(n.key.id())));
+            }
+        }
+        for (pi, p) in self.graph.ports.iter().enumerate() {
+            let label = self.model.labels.get(pi).cloned().unwrap_or_default();
+            if has(&p.name) || has(&label) || p.aliases.iter().any(|a| has(a)) || p.pretty.as_deref().is_some_and(has) {
+                out.push((p.name.clone(), format!("{} {}", p.kind.label(), if p.is_input() { "input" } else { "output" }), Action::FindPort(p.name.clone())));
+            }
+        }
+        out.truncate(12);
+        out
+    }
 }
 
 /// World -> screen transform.
@@ -1070,6 +1110,15 @@ impl App {
                 let s = self.scale;
                 g.rrect_stroke(r.inset(-4.0 * s), 5.0 * s, (1.6 * s).max(1.0), alpha(LCD_TEXT, 0.9));
             }
+        }
+        // A port the search found: a ring round it for a moment.
+        if let Some((name, t)) = &self.canvas.flash_port
+            && t.elapsed() < Duration::from_millis(2500)
+            && let Some(&p) = self.graph.by_name.get(name)
+            && let Some(at) = self.port_anchor(&xf, p)
+        {
+            let s = self.scale;
+            g.arc(at, 9.0 * s, 0.0, std::f32::consts::TAU, (2.0 * s).max(1.0), HILIGHT);
         }
         // The selection band.
         if let Drag::Band { from, .. } = &self.canvas.drag {
