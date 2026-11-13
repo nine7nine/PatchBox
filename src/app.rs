@@ -18,6 +18,7 @@ pub struct Stats {
     pub dsp: f32,
     pub realtime: bool,
     pub freewheel: bool,
+    pub transport: pbx_jack::Transport,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +56,11 @@ pub enum Action {
     FitAll,
     Window(Button),
     AppMenu(Rect),
+    /// Play / pause.
+    TransportToggle,
+    /// Stop and go back to the start.
+    TransportStop,
+    TransportRewind,
     ServerStart,
     ServerStop,
     ServerRestart,
@@ -105,6 +111,7 @@ pub struct App {
     retry_at: Instant,
     retry_logged: bool,
     dsp_at: Instant,
+    transport_at: Instant,
     pub quit: bool,
     pub window_cmd: Option<WindowCmd>,
     /// Fit the view to the graph at the next frame (the canvas size is known then).
@@ -149,6 +156,7 @@ impl App {
             retry_at: Instant::now(),
             retry_logged: false,
             dsp_at: Instant::now(),
+            transport_at: Instant::now(),
             quit: false,
             window_cmd: None,
             fit_pending: false,
@@ -177,6 +185,7 @@ impl App {
                     dsp: c.cpu_load(),
                     realtime: c.is_realtime(),
                     freewheel: false,
+                    transport: c.transport(),
                 };
                 self.server.send(crate::server::Cmd::Refresh);
                 let msg = format!(
@@ -302,6 +311,18 @@ impl App {
                 self.dsp_at = now + DSP_POLL;
             }
             at(self.dsp_at);
+            // The transport has no notification for a plain client (a sync callback would make
+            // us a realtime client): poll it, often only while it rolls.
+            if now >= self.transport_at {
+                let t = c.transport();
+                if t != self.stats.transport {
+                    self.stats.transport = t;
+                    self.redraw = true;
+                }
+                let every = if t.rolling || t.starting { 100 } else { 1000 };
+                self.transport_at = now + Duration::from_millis(every);
+            }
+            at(self.transport_at);
         }
         if let Some(t) = self.layout_dirty {
             if now >= t + LAYOUT_SAVE {
@@ -819,6 +840,29 @@ impl App {
                 Button::Minimize => self.window_cmd = Some(WindowCmd::Minimize),
                 Button::Maximize => self.window_cmd = Some(WindowCmd::ToggleMaximize),
             },
+            Action::TransportToggle => {
+                if let Some(c) = &self.jack {
+                    if self.stats.transport.rolling || self.stats.transport.starting {
+                        c.transport_stop();
+                    } else {
+                        c.transport_start();
+                    }
+                    self.transport_at = Instant::now() + Duration::from_millis(30);
+                }
+            }
+            Action::TransportStop => {
+                if let Some(c) = &self.jack {
+                    c.transport_stop();
+                    c.transport_locate(0);
+                    self.transport_at = Instant::now() + Duration::from_millis(30);
+                }
+            }
+            Action::TransportRewind => {
+                if let Some(c) = &self.jack {
+                    c.transport_locate(0);
+                    self.transport_at = Instant::now() + Duration::from_millis(30);
+                }
+            }
             Action::ServerStart => self.server.run(crate::server::Cmd::Start),
             Action::ServerStop => self.server.run(crate::server::Cmd::Stop),
             Action::ServerRestart => self.server.run(crate::server::Cmd::Restart),

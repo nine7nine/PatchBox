@@ -371,6 +371,7 @@ fn main() {
                         Keycode::F => Some(Action::FitAll),
                         Keycode::L => Some(Action::ToggleLabels),
                         Keycode::E => Some(Action::ExpandAll),
+                        Keycode::Space => Some(Action::TransportToggle),
                         Keycode::F9 => Some(Action::ToggleSidebar),
                         Keycode::Q if ctrl => Some(Action::Quit),
                         _ => None,

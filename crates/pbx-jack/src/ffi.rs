@@ -126,6 +126,12 @@ unsafe extern "C" {
     pub fn jack_is_realtime(client: *mut jack_client_t) -> c_int;
     pub fn jack_set_freewheel(client: *mut jack_client_t, onoff: c_int) -> c_int;
 
+    /// `pos`: a jack_position_t (136 bytes, packed; offsets in lib.rs).
+    pub fn jack_transport_query(client: *const jack_client_t, pos: *mut u8) -> c_int;
+    pub fn jack_transport_start(client: *mut jack_client_t);
+    pub fn jack_transport_stop(client: *mut jack_client_t);
+    pub fn jack_transport_locate(client: *mut jack_client_t, frame: jack_nframes_t) -> c_int;
+
     pub fn jack_get_property(subject: jack_uuid_t, key: *const c_char, value: *mut *mut c_char, type_: *mut *mut c_char) -> c_int;
     pub fn jack_set_property(client: *mut jack_client_t, subject: jack_uuid_t, key: *const c_char, value: *const c_char, type_: *const c_char)
     -> c_int;

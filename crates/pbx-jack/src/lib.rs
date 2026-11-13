@@ -49,6 +49,18 @@ impl Event {
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
+/// The transport, as `jack_transport_query` reports it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Transport {
+    pub rolling: bool,
+    pub starting: bool,
+    pub frame: u32,
+    pub rate: u32,
+    /// Bar, beat, tick, beats per minute, beats per bar, beat type — when a timebase master
+    /// provides them.
+    pub bbt: Option<(i32, i32, i32, f64, f32, f32)>,
+}
+
 struct Shared {
     events: Mutex<Vec<Event>>,
     waker: Waker,
@@ -217,6 +229,31 @@ impl Client {
     }
     pub fn set_freewheel(&self, on: bool) -> bool {
         unsafe { ffi::jack_set_freewheel(self.raw, on as c_int) == 0 }
+    }
+
+    /// Query the transport (cheap: it reads shared memory).
+    pub fn transport(&self) -> Transport {
+        // jack_position_t: 136 bytes, packed (jack/types.h); offsets checked with offsetof.
+        let mut buf = [0u64; 17];
+        let p = buf.as_mut_ptr() as *mut u8;
+        let state = unsafe { ffi::jack_transport_query(self.raw, p) };
+        let b = unsafe { std::slice::from_raw_parts(p, 136) };
+        let u32_at = |o: usize| u32::from_ne_bytes(b[o..o + 4].try_into().unwrap());
+        let i32_at = |o: usize| i32::from_ne_bytes(b[o..o + 4].try_into().unwrap());
+        let f32_at = |o: usize| f32::from_ne_bytes(b[o..o + 4].try_into().unwrap());
+        let f64_at = |o: usize| f64::from_ne_bytes(b[o..o + 8].try_into().unwrap());
+        const BBT: u32 = 0x10;
+        let bbt = (u32_at(24) & BBT != 0).then(|| (i32_at(28), i32_at(32), i32_at(36), f64_at(64), f32_at(48), f32_at(52)));
+        Transport { rolling: state == 1, starting: state == 3, frame: u32_at(20), rate: u32_at(16), bbt }
+    }
+    pub fn transport_start(&self) {
+        unsafe { ffi::jack_transport_start(self.raw) }
+    }
+    pub fn transport_stop(&self) {
+        unsafe { ffi::jack_transport_stop(self.raw) }
+    }
+    pub fn transport_locate(&self, frame: u32) {
+        unsafe { ffi::jack_transport_locate(self.raw, frame) };
     }
 
     pub fn connect(&self, source: &str, destination: &str) -> bool {

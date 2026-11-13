@@ -328,6 +328,10 @@ impl Gfx {
 
     // ---- primitives ----
 
+    pub fn triangle(&mut self, a: [f32; 2], b: [f32; 2], c: [f32; 2], color: Color) {
+        self.tri(a, b, c, color);
+    }
+
     fn tri(&mut self, a: [f32; 2], b: [f32; 2], c: [f32; 2], color: Color) {
         for p in [a, b, c] {
             self.verts.push(Vertex { pos: p, uv: WHITE_UV, color });

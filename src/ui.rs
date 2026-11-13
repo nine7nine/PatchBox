@@ -144,7 +144,57 @@ impl App {
         }
         if self.jack.is_some() {
             self.draw_zoom(g);
+            self.draw_transport(g);
         }
+    }
+
+    /// Transport, bottom-left of the canvas (the toolbar row takes it in the UI pass):
+    /// rewind, play/pause, stop; time; bars|beats|ticks and tempo when a timebase master gives them.
+    fn draw_transport(&mut self, g: &mut Gfx) {
+        let s = self.scale;
+        let a = self.canvas.area;
+        let t = self.stats.transport;
+        let h = 26.0 * s;
+        let px = FONT * s;
+        let secs = t.frame as f64 / t.rate.max(1) as f64;
+        let time = format!("{}:{:02}:{:04.1}", (secs / 3600.0) as u32, ((secs / 60.0) as u32) % 60, secs % 60.0);
+        let bbt = t.bbt.map(|(bar, beat, tick, bpm, bpb, bt)| format!("{bar:>3}|{beat}|{tick:04}  {bpm:.1} BPM  {bpb}/{bt}"));
+        let text = match &bbt {
+            Some(b) => format!("{time}   {b}"),
+            None => time,
+        };
+        let tw = g.measure(Face::Regular, px, &text);
+        let bw = h;
+        let w = 3.0 * bw + 3.0 * 4.0 * s + tw + 22.0 * s;
+        let panel = Rect::new(a.x + 12.0 * s, a.bottom() - h - 12.0 * s, w, h);
+        g.rrect(panel, 4.0 * s, alpha(BAR_BG, 0.9));
+        g.rrect_stroke(panel, 4.0 * s, s.max(1.0), alpha(BORDER, 0.5));
+        let mut x = panel.x + 4.0 * s;
+        let playing = t.rolling || t.starting;
+        for (i, act) in [Action::TransportRewind, Action::TransportToggle, Action::TransportStop].into_iter().enumerate() {
+            let r = Rect::new(x, panel.y, bw, h);
+            x += bw + 4.0 * s;
+            if self.hovered(&r) {
+                g.rrect(r.inset(2.0 * s), 3.0 * s, BUTTON_HOVER);
+            }
+            let (cx, cy, k) = (r.cx(), r.cy(), 5.5 * s);
+            let col = if i == 1 && playing { OK } else { TEXT_BRIGHT };
+            match i {
+                0 => {
+                    g.rect(Rect::new(cx - k, cy - k, 1.8 * s, 2.0 * k), col);
+                    g.triangle([cx + k, cy - k], [cx + k, cy + k], [cx - k + 2.0 * s, cy], col);
+                }
+                1 if playing => {
+                    g.rect(Rect::new(cx - k * 0.8, cy - k, k * 0.6, 2.0 * k), col);
+                    g.rect(Rect::new(cx + k * 0.2, cy - k, k * 0.6, 2.0 * k), col);
+                }
+                1 => g.triangle([cx - k * 0.7, cy - k], [cx - k * 0.7, cy + k], [cx + k, cy], col),
+                _ => g.rect(Rect::new(cx - k * 0.85, cy - k * 0.85, k * 1.7, k * 1.7), col),
+            }
+            self.add_hit(r, act);
+        }
+        let lh = g.line_height(Face::Regular, px);
+        g.text(Face::Regular, px, x + 6.0 * s, panel.cy() - lh / 2.0, if playing { TEXT_BRIGHT } else { TEXT }, &text);
     }
 
     /// Zoom controls, bottom-right of the canvas: − [slider] + and the zoom (click: 100 %).
@@ -502,6 +552,9 @@ impl App {
                 Action::ZoomBy(f) => (name == "zoom+" && *f > 1.0) || (name == "zoom-" && *f < 1.0),
                 Action::ZoomSlider(_) => name == "zoomtrack",
                 Action::ZoomTo(_) => name == "zoompct",
+                Action::TransportToggle => name == "play",
+                Action::TransportStop => name == "tstop",
+                Action::TransportRewind => name == "rew",
                 Action::ServerStart => name == "start",
                 Action::ServerStop => name == "stop",
                 Action::ServerRestart => name == "restart",
