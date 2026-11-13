@@ -690,7 +690,7 @@ impl App {
         if let Drag::Port { name } = &drag
             && let Some(&a) = self.graph.by_name.get(name)
         {
-            self.drop_port(a, self.hit(x, y));
+            self.drop_port(a, self.hit(x, y), ctrl);
         }
         if let Drag::Rewire { out, inp, moving_in, from } = &drag
             && let (Some(&o), Some(&i)) = (self.graph.by_name.get(out), self.graph.by_name.get(inp))
@@ -814,7 +814,55 @@ impl App {
 
     /// A port dragged from an expanded node was dropped: onto a port, toggle that connection;
     /// onto a node, connect to its first compatible port not yet connected to this one.
-    fn drop_port(&mut self, a: usize, target: Hover) {
+    /// `n` ports from `b` on, in its block's order, of its direction and type.
+    fn following(&self, b: usize, n: usize) -> Vec<usize> {
+        let Some(&ni) = self.model.port_node.get(&b) else { return vec![b] };
+        let node = &self.model.nodes[ni];
+        let pb = &self.graph.ports[b];
+        let list: Vec<usize> = (if pb.is_input() { &node.ins } else { &node.outs }).iter().copied().filter(|&q| self.graph.ports[q].kind == pb.kind).collect();
+        let at = list.iter().position(|&q| q == b).unwrap_or(0);
+        list.into_iter().skip(at).take(n).collect()
+    }
+
+    /// A port of the user's group dropped (no Ctrl): the whole group connects 1:1, in order, to
+    /// the group (or the ports from) the port it lands on, or a block's first ports; all
+    /// connected already: they are disconnected. False: not a grouped port.
+    fn drop_group(&mut self, a: usize, target: &Hover) -> bool {
+        let Some(&(gi, _)) = self.model.group_of.get(&a) else { return false };
+        let src = self.model.groups[gi].1.clone();
+        let dst: Vec<usize> = match *target {
+            Hover::Port(_, b) if self.compatible(a, b) => match self.model.group_of.get(&b) {
+                Some(&(gj, _)) => self.model.groups[gj].1.clone(),
+                None => self.following(b, src.len()),
+            },
+            Hover::Node(t) | Hover::In(t) | Hover::Out(t) => {
+                let n = &self.model.nodes[t];
+                let cands = if self.graph.ports[a].is_output() { &n.ins } else { &n.outs };
+                cands.iter().copied().filter(|&b| self.compatible(a, b)).take(src.len()).collect()
+            }
+            _ => return true,
+        };
+        let pairs: Vec<(usize, usize)> = src
+            .iter()
+            .zip(&dst)
+            .map(|(&s, &d)| if self.graph.ports[s].is_output() { (s, d) } else { (d, s) })
+            .filter(|&(o, i)| self.compatible(o, i))
+            .collect();
+        let all = !pairs.is_empty() && pairs.iter().all(|&(o, i)| self.graph.connected(o, i));
+        for (o, i) in pairs {
+            if all {
+                self.disconnect(o, i);
+            } else if !self.graph.connected(o, i) {
+                self.connect(o, i);
+            }
+        }
+        true
+    }
+
+    fn drop_port(&mut self, a: usize, target: Hover, ctrl: bool) {
+        if !ctrl && self.drop_group(a, &target) {
+            return;
+        }
         let b = match target {
             Hover::Port(_, b) if self.compatible(a, b) => Some(b),
             Hover::Node(t) | Hover::In(t) | Hover::Out(t) => {
@@ -881,6 +929,10 @@ impl App {
                 let name = self.graph.ports[p].name.clone();
                 items.push(I::header(self.model.labels[p].clone()));
                 items.push(I::new("Rename this port…", Action::Rename(format!("port:{name}"))));
+                match self.model.group_of.get(&p) {
+                    Some(&(gi, _)) => items.push(I::new(format!("Ungroup \"{}\"", self.model.groups[gi].0), Action::Ungroup(name.clone()))),
+                    None => items.push(I::new("Group ports from here…", Action::GroupPrompt(name.clone()))),
+                }
                 items.push(I::new("Copy its connections", Action::CopyConns(format!("port:{name}"), false)));
                 items.push(I::new("Cut its connections", Action::CopyConns(format!("port:{name}"), true)));
                 items.push(I::new("Paste connections", Action::PasteConns(format!("port:{name}"))).enabled(self.clip.is_some()));
@@ -1371,8 +1423,19 @@ impl App {
                     g.rrect_stroke(sq, 0.5 * HANDLE_R * z, (1.2 * self.scale).max(1.0), kc);
                 }
                 g.rrect_stroke(sq.inset(-1.0), 0.5 * HANDLE_R * z + 1.0, 1.0, [0.0, 0.0, 0.0, 0.6 * fa]);
+                // The user's group: a bracket along all its squares, from its first one.
+                if let Some(&(gi, 0)) = self.model.group_of.get(&p)
+                    && let Some(&last) = self.model.groups[gi].1.last()
+                    && let Some((_, lr)) = rows.iter().find(|(n, _)| *n == last)
+                {
+                    let bx = if input { sq.x - 4.5 * z } else { sq.right() + 2.0 * z };
+                    let bw = (2.5 * z).max(1.5);
+                    let col = alpha(mix(kc, [1.0, 1.0, 1.0, 1.0], 0.25), 1.0);
+                    g.rect(Rect::new(bx, row.cy() - bw / 2.0, bw, lr.cy() - row.cy() + bw), col);
+                }
                 if let Some(&q2) = self.model.partner.get(&p)
                     && rows.get(k + 1).is_some_and(|(n, _)| *n == q2)
+                    && !self.model.group_of.contains_key(&p)
                 {
                     // Stereo pair: a bracket joining the two squares.
                     let bx = if input { sq.right() + 1.5 * z } else { sq.x - 2.5 * z };
@@ -1465,6 +1528,10 @@ impl App {
         lines.push((info, kind_color(port.kind)));
         for a in &port.aliases {
             lines.push((format!("alias {a}"), TEXT_DIM));
+        }
+        if let Some(&(gi, k)) = self.model.group_of.get(&p) {
+            let (name, ports) = &self.model.groups[gi];
+            lines.push((format!("group \"{name}\", {} of {} (drag: all of them; Ctrl+drag: this one)", k + 1, ports.len()), LCD_CAPTION));
         }
         // Its latency: how long since the signal was captured, how long until it is played.
         if self.source == crate::app::Source::Jack

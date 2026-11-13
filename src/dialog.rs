@@ -73,6 +73,8 @@ pub enum Kind {
     SavePreset,
     /// Connection rules.
     Rules,
+    /// Group ports: a name and how many.
+    PortGroup,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

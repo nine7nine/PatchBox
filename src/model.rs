@@ -82,6 +82,10 @@ pub struct Model {
     pub labels: Vec<String>,
     /// Graph port index -> its stereo partner (both directions).
     pub partner: HashMap<usize, usize>,
+    /// The user's port groups present now: (name, graph port indices in order).
+    pub groups: Vec<(String, Vec<usize>)>,
+    /// Graph port index -> (its group in `groups`, its place in it).
+    pub group_of: HashMap<usize, (usize, usize)>,
 }
 
 /// a2j's port names: "<Client> [<id>] (capture|playback): <port>".
@@ -247,6 +251,28 @@ impl Model {
         for n in &m.nodes {
             find_pairs(g, &n.outs, n.physical, &mut m.partner);
             find_pairs(g, &n.ins, n.physical, &mut m.partner);
+        }
+        // The user's groups (their ports that exist); one of two is the pair, whatever was
+        // guessed.
+        for pg in &layout.port_groups {
+            let ports: Vec<usize> = pg.ports.iter().filter_map(|n| g.by_name.get(n).copied()).collect();
+            if ports.len() < 2 {
+                continue;
+            }
+            for p in &ports {
+                if let Some(q) = m.partner.remove(p) {
+                    m.partner.remove(&q);
+                }
+            }
+            if let [a, b] = ports[..] {
+                m.partner.insert(a, b);
+                m.partner.insert(b, a);
+            }
+            let gi = m.groups.len();
+            for (k, &p) in ports.iter().enumerate() {
+                m.group_of.insert(p, (gi, k));
+            }
+            m.groups.push((pg.name.clone(), ports));
         }
         m
     }

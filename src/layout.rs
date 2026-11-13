@@ -76,6 +76,9 @@ pub struct Layout {
     pub expanded: BTreeSet<String>,
     /// Names given by the user: node id -> name, "port:<full port name>" -> name.
     pub names: BTreeMap<String, String>,
+    /// Port groups made by the user: a name and its ports (full names, in order). They connect
+    /// as one, 1:1; a group of two is a stereo pair.
+    pub port_groups: Vec<PortGroup>,
     pub view: View,
     /// Window size in points.
     pub window: Option<[u32; 2]>,
@@ -89,6 +92,13 @@ pub struct Layout {
     /// before an undo) may have been left in another style: `settle` swaps the right positions
     /// in. Empty in files from before styles kept their own: `nodes` is then its view's.
     pub nodes_style: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[serde(default)]
+pub struct PortGroup {
+    pub name: String,
+    pub ports: Vec<String>,
 }
 
 /// A saved view: positions, hidden and expanded blocks, the view style and type, the camera.

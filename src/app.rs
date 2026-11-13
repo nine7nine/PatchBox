@@ -71,6 +71,9 @@ pub enum Action {
     Align(crate::canvas::Align),
     /// Nothing (a click that a control keeps to itself).
     Noop,
+    /// Ask for a group's name and size, from this port on; break up this port's group.
+    GroupPrompt(String),
+    Ungroup(String),
     /// Our names to JACK's metadata on/off.
     ToggleExportNames,
     /// The find bar (Ctrl+F): open, close, go to a result.
@@ -1472,6 +1475,32 @@ impl App {
             }
             Action::Align(how) => self.align(how),
             Action::Noop => {}
+            Action::GroupPrompt(port) => {
+                use crate::dialog::{Control, Dialog, Kind, Row};
+                let Some(&p) = self.graph.by_name.get(&port) else { return };
+                let avail = self.port_run(p).len();
+                if avail < 2 {
+                    return self.say("No ports after this one to group it with", true);
+                }
+                let mut d = Dialog::new(Kind::PortGroup, "Group ports");
+                d.tag = port.clone();
+                let sizes: Vec<(String, String)> = [2usize, 3, 4, 5, 6, 8, 16].iter().filter(|&&n| n <= avail).map(|n| (n.to_string(), format!("{n} ports"))).collect();
+                d.rows = vec![
+                    Row { id: "name".into(), label: "Name".into(), help: String::new(), control: Control::Text(if avail >= 2 { "Stereo".into() } else { String::new() }), modified: false },
+                    Row { id: "count".into(), label: "Ports, from this one".into(), help: "This port and the ones after it in its block, of its direction and type".into(), control: Control::Choice { value: "2".into(), options: sizes, editable: false }, modified: false },
+                ];
+                d.buttons = vec!["Cancel".into(), "Group".into()];
+                d.note = format!("From {port}: they connect as one, 1:1 (Ctrl+drag one port alone)");
+                d.edit("name");
+                self.dialog = Some(d);
+            }
+            Action::Ungroup(port) => {
+                let before = self.layout.port_groups.len();
+                self.layout.port_groups.retain(|g| !g.ports.contains(&port));
+                if self.layout.port_groups.len() != before {
+                    self.remodel();
+                }
+            }
             Action::ToggleExportNames => {
                 self.layout.view.export_names = !self.layout.view.export_names;
                 self.layout_changed();
@@ -1783,6 +1812,24 @@ impl App {
     }
 
     // ---- JACK server settings (jackdbus) ----
+
+    /// `p` and the ports after it in its block, of its direction and type.
+    pub fn port_run(&self, p: usize) -> Vec<String> {
+        let Some(&ni) = self.model.port_node.get(&p) else { return Vec::new() };
+        let node = &self.model.nodes[ni];
+        let pp = &self.graph.ports[p];
+        let list: Vec<usize> = (if pp.is_input() { &node.ins } else { &node.outs }).iter().copied().filter(|&q| self.graph.ports[q].kind == pp.kind).collect();
+        let at = list.iter().position(|&q| q == p).unwrap_or(0);
+        list.into_iter().skip(at).map(|q| self.graph.ports[q].name.clone()).collect()
+    }
+
+    /// The model again after the layout's names or groups changed.
+    pub fn remodel(&mut self) {
+        let own = self.jack.as_ref().map(|c| c.name().to_string()).unwrap_or_default();
+        self.model = Model::build(&self.graph, &self.layout, if self.source == Source::Jack { &own } else { "" });
+        self.refresh_matrices();
+        self.layout_changed();
+    }
 
     /// Send the rules to patchboxd (it saves, applies and sends them back).
     pub fn send_rules(&mut self, rules: Vec<pbx_session::rules::Rule>) {
@@ -2488,6 +2535,25 @@ impl App {
                 }
             }
             (Kind::Rules, Event::Button(_)) => self.dialog = None,
+            (Kind::PortGroup, Event::Set(id, v)) => {
+                if let Some(d) = &mut self.dialog {
+                    d.set_local(&id, &v);
+                }
+            }
+            (Kind::PortGroup, Event::Button(b)) => {
+                let Some(d) = self.dialog.take() else { return };
+                if d.buttons.get(b).map(String::as_str) != Some("Group") {
+                    return;
+                }
+                let Some(&p) = self.graph.by_name.get(&d.tag) else { return };
+                let n: usize = d.value("count").and_then(|v| v.parse().ok()).unwrap_or(2);
+                let ports: Vec<String> = self.port_run(p).into_iter().take(n).collect();
+                let name = d.value("name").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| format!("{n} ports"));
+                // A port is in one group at most.
+                self.layout.port_groups.retain(|g| !g.ports.iter().any(|q| ports.contains(q)));
+                self.layout.port_groups.push(crate::layout::PortGroup { name, ports });
+                self.remodel();
+            }
             (Kind::SavePreset, Event::Set(id, v)) => {
                 if let Some(d) = &mut self.dialog {
                     d.set_local(&id, &v);
