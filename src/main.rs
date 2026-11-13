@@ -7,9 +7,11 @@
 mod app;
 mod canvas;
 mod csd;
+mod dialog;
 mod gfx;
 mod layout;
 mod model;
+mod server;
 mod shadow;
 mod text;
 mod testscript;
@@ -128,13 +130,17 @@ fn main() {
     app.redraw = true;
 
     let stats = std::env::var_os("PATCHBOX_STATS").is_some();
+    let mut text_on = false;
+    // Test scripts start once JACK was there, and keep running if it goes away.
+    let mut ever_connected = false;
     let (mut loops, mut frames) = (0u64, 0u64);
     let mut wakes: std::collections::BTreeMap<String, u64> = Default::default();
     'main: loop {
         loops += 1;
         let mut next = app.tick();
+        ever_connected |= app.jack.is_some();
         if let Some(t) = script.as_ref().and_then(|s| s.next_at())
-            && app.jack.is_some() {
+            && ever_connected {
                 let t = t.max(started + Duration::from_millis(800));
                 next = Some(next.map_or(t, |n| n.min(t)));
             }
@@ -167,7 +173,7 @@ fn main() {
         }
         let mut events: Vec<(Event, Option<(bool, bool)>)> = pending.into_iter().map(|e| (e, None)).collect();
         if let Some(s) = script.as_mut()
-            && app.jack.is_some() && started.elapsed() >= Duration::from_millis(800) {
+            && ever_connected && started.elapsed() >= Duration::from_millis(800) {
                 for syn in s.run(&app, density) {
                     events.push((syn.ev, Some((syn.ctrl, syn.shift))));
                 }
@@ -191,7 +197,7 @@ fn main() {
                 }
                 Event::User { type_, .. } if type_ == wake_type => {
                     WAKE_PENDING.store(false, Ordering::Release);
-                    app.on_jack_events();
+                    app.on_wake();
                 }
                 Event::Window { win_event, .. } => match win_event {
                     WindowEvent::PixelSizeChanged(..) | WindowEvent::Resized(..) | WindowEvent::DisplayChanged(..) => {
@@ -227,7 +233,7 @@ fn main() {
                 Event::MouseMotion { x, y, .. } => {
                     let (px, py) = (x * density, y * density);
                     app.ui.mouse = [px, py];
-                    if app.ui.menu.is_some() {
+                    if app.ui.menu.is_some() || app.dialog.is_some() {
                         app.redraw = true;
                         continue;
                     }
@@ -255,6 +261,16 @@ fn main() {
                     app.ui.mouse = [px, py];
                     if app.ui.menu.is_some() {
                         app.menu_click(px, py);
+                        continue;
+                    }
+                    // A dialog is modal.
+                    if let Some(d) = app.dialog.as_mut() {
+                        if mouse_btn == MouseButton::Left
+                            && let Some(ev) = d.click(px, py)
+                        {
+                            app.dialog_event(ev);
+                        }
+                        app.redraw = true;
                         continue;
                     }
                     if mouse_btn == MouseButton::Left
@@ -302,12 +318,37 @@ fn main() {
                 }
                 Event::MouseWheel { x, y, mouse_x, mouse_y, .. } => {
                     let (px, py) = (mouse_x * density, mouse_y * density);
-                    if app.ui.sidebar_rect.contains(px, py) {
+                    if let Some(d) = app.dialog.as_mut() {
+                        d.scroll_by(-y * 40.0 * app.scale);
+                        app.redraw = true;
+                    } else if app.ui.sidebar_rect.contains(px, py) {
                         app.ui.sidebar_scroll -= y * 40.0 * app.scale;
                         app.redraw = true;
                     } else if app.canvas.area.contains(px, py) {
                         app.canvas.mouse = [px, py];
                         app.canvas_wheel(x, y, ctrl);
+                    }
+                }
+                Event::TextInput { text, .. } => {
+                    if let Some(d) = app.dialog.as_mut() {
+                        d.text_input(&text);
+                        app.redraw = true;
+                    }
+                }
+                Event::KeyDown { keycode: Some(k), .. } if app.dialog.is_some() => {
+                    let d = app.dialog.as_mut().unwrap();
+                    app.redraw = true;
+                    match k {
+                        Keycode::Escape if app.ui.menu.is_some() => app.ui.menu = None,
+                        Keycode::Escape if d.editing.is_some() => d.editing = None,
+                        Keycode::Escape => app.dialog = None,
+                        Keycode::Return | Keycode::KpEnter => {
+                            if let Some(ev) = d.commit() {
+                                app.dialog_event(ev);
+                            }
+                        }
+                        Keycode::Backspace => d.backspace(),
+                        _ => {}
                     }
                 }
                 Event::KeyDown { keycode: Some(k), .. } => {
@@ -347,6 +388,16 @@ fn main() {
         if app.quit {
             break;
         }
+        // Typed text only while a field is being edited (an input method is a cost).
+        let want_text = app.dialog.as_ref().is_some_and(|d| d.editing.is_some());
+        if want_text != text_on {
+            text_on = want_text;
+            if want_text {
+                video.text_input().start(&window);
+            } else {
+                video.text_input().stop(&window);
+            }
+        }
         if let Some(cmd) = app.window_cmd.take() {
             match cmd {
                 WindowCmd::Minimize => {
@@ -373,6 +424,16 @@ fn main() {
             gfx.begin(app.win[0] as u32, app.win[1] as u32);
             app.draw_canvas(&mut gfx);
             app.draw_ui(&mut gfx);
+            if let Some(mut d) = app.dialog.take() {
+                d.draw(&mut gfx, app.win, app.scale, app.ui.mouse);
+                let help = d.hover_help.clone();
+                app.dialog = Some(d);
+                if let Some((text, at)) = help
+                    && app.ui.menu.is_none()
+                {
+                    app.draw_tooltip(&mut gfx, at, &[(text, theme::TEXT_BRIGHT)]);
+                }
+            }
             app.draw_menu(&mut gfx);
             if !app.maximized {
                 gfx.erase_corners(CORNER_RADIUS * density);

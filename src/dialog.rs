@@ -1,0 +1,368 @@
+//! Modal dialogs: a title, rows of labelled controls, buttons. Immediate mode like the rest of the
+//! chrome: drawn each frame from the rows, clicks matched against the rectangles of the last
+//! frame. Used by the JACK server settings now, and by the session dialogs next.
+
+use crate::gfx::{Gfx, Rect, alpha};
+use crate::text::Face;
+use crate::theme::*;
+
+#[derive(Clone, Debug)]
+pub enum Control {
+    Header,
+    /// Read-only text.
+    Info(String),
+    Toggle(bool),
+    /// One of `options` (value, label). `editable`: other values may be typed too.
+    Choice {
+        value: String,
+        options: Vec<(String, String)>,
+        editable: bool,
+    },
+    /// An integer with − / + and a typed value.
+    Number {
+        value: i64,
+        min: i64,
+        max: i64,
+    },
+    Text(String),
+}
+
+#[derive(Clone, Debug)]
+pub struct Row {
+    /// What the owner of the dialog knows the row by (e.g. a jackdbus parameter path).
+    pub id: String,
+    pub label: String,
+    pub help: String,
+    pub control: Control,
+    /// Set away from its default (offers a reset).
+    pub modified: bool,
+}
+
+impl Row {
+    pub fn header(label: impl Into<String>) -> Row {
+        Row { id: String::new(), label: label.into(), help: String::new(), control: Control::Header, modified: false }
+    }
+    pub fn info(label: impl Into<String>, text: impl Into<String>) -> Row {
+        Row { id: String::new(), label: label.into(), help: String::new(), control: Control::Info(text.into()), modified: false }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Kind {
+    Server,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Part {
+    Toggle,
+    Choice,
+    Minus,
+    Plus,
+    Edit,
+    Reset,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Hit {
+    Row(usize, Part),
+    Button(usize),
+    Close,
+}
+
+/// What a click in the dialog asks the owner to do.
+#[derive(Clone, Debug)]
+pub enum Event {
+    /// Row `id` gets this value (text form; the owner parses it).
+    Set(String, String),
+    Reset(String),
+    /// Open the options of a choice row under this rectangle.
+    Options(usize, Rect),
+    Button(usize),
+    Close,
+}
+
+pub struct Dialog {
+    pub kind: Kind,
+    pub title: String,
+    pub rows: Vec<Row>,
+    pub buttons: Vec<String>,
+    pub note: String,
+    pub scroll: f32,
+    /// The row whose text is being edited, and the text.
+    pub editing: Option<(usize, String)>,
+    hits: Vec<(Rect, Hit)>,
+    pub panel: Rect,
+    content: Rect,
+    content_h: f32,
+    pub hover_help: Option<(String, [f32; 2])>,
+}
+
+impl Dialog {
+    pub fn new(kind: Kind, title: impl Into<String>) -> Dialog {
+        Dialog {
+            kind,
+            title: title.into(),
+            rows: Vec::new(),
+            buttons: Vec::new(),
+            note: String::new(),
+            scroll: 0.0,
+            editing: None,
+            hits: Vec::new(),
+            panel: Rect::default(),
+            content: Rect::default(),
+            content_h: 0.0,
+            hover_help: None,
+        }
+    }
+
+    /// Replace the rows, keeping the scroll position and an edit in progress on the same row.
+    pub fn set_rows(&mut self, rows: Vec<Row>) {
+        if let Some((i, _)) = &self.editing {
+            let id = self.rows.get(*i).map(|r| r.id.clone());
+            self.editing = self.editing.take().and_then(|(_, t)| Some((rows.iter().position(|r| Some(&r.id) == id.as_ref())?, t)));
+        }
+        self.rows = rows;
+    }
+
+    pub fn scroll_by(&mut self, d: f32) {
+        self.scroll = (self.scroll + d).clamp(0.0, (self.content_h - self.content.h).max(0.0));
+    }
+
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        self.panel.contains(x, y)
+    }
+
+    /// Finish a text edit: the value goes to its row.
+    pub fn commit(&mut self) -> Option<Event> {
+        let (i, text) = self.editing.take()?;
+        let row = self.rows.get(i)?;
+        Some(Event::Set(row.id.clone(), text))
+    }
+
+    pub fn text_input(&mut self, s: &str) {
+        if let Some((_, t)) = &mut self.editing {
+            t.push_str(s);
+        }
+    }
+
+    pub fn backspace(&mut self) {
+        if let Some((_, t)) = &mut self.editing {
+            t.pop();
+        }
+    }
+
+    pub fn click(&mut self, x: f32, y: f32) -> Option<Event> {
+        let hit = self.hits.iter().rev().find(|(r, _)| r.contains(x, y)).map(|(r, h)| (*r, *h));
+        // A click anywhere but the field being edited commits the edit first.
+        if self.editing.is_some() && !matches!(hit, Some((_, Hit::Row(i, Part::Edit))) if Some(i) == self.editing.as_ref().map(|e| e.0)) {
+            let e = self.commit();
+            if e.is_some() {
+                return e;
+            }
+        }
+        let (r, h) = hit?;
+        match h {
+            Hit::Close => Some(Event::Close),
+            Hit::Button(b) => Some(Event::Button(b)),
+            Hit::Row(i, part) => {
+                let row = self.rows.get(i)?;
+                let id = row.id.clone();
+                match (&row.control, part) {
+                    (_, Part::Reset) => Some(Event::Reset(id)),
+                    (Control::Toggle(on), _) => Some(Event::Set(id, if *on { "off" } else { "on" }.into())),
+                    (Control::Choice { .. }, Part::Choice) => Some(Event::Options(i, r)),
+                    (Control::Number { value, min, .. }, Part::Minus) => Some(Event::Set(id, (*value - 1).max(*min).to_string())),
+                    (Control::Number { value, max, .. }, Part::Plus) => Some(Event::Set(id, (*value + 1).min(*max).to_string())),
+                    (c, Part::Edit) => {
+                        let text = match c {
+                            Control::Number { value, .. } => value.to_string(),
+                            Control::Choice { value, .. } | Control::Text(value) => value.clone(),
+                            _ => return None,
+                        };
+                        self.editing = Some((i, text));
+                        None
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Test points: a row's control (by label), or a button (by label).
+    pub fn point(&self, what: &str) -> Option<[f32; 2]> {
+        let center = |r: &Rect| [r.cx(), r.cy()];
+        if let Some(b) = what.strip_prefix("button:") {
+            let bi = self.buttons.iter().position(|l| l == b)?;
+            return self.hits.iter().find(|(_, h)| *h == Hit::Button(bi)).map(|(r, _)| center(r));
+        }
+        let i = self.rows.iter().position(|r| r.label == what)?;
+        self.hits.iter().find(|(_, h)| matches!(h, Hit::Row(j, p) if *j == i && *p != Part::Reset)).map(|(r, _)| center(r))
+    }
+
+    pub fn draw(&mut self, g: &mut Gfx, win: [f32; 2], s: f32, mouse: [f32; 2]) {
+        self.hits.clear();
+        self.hover_help = None;
+        g.rect(Rect::new(0.0, 0.0, win[0], win[1]), [0.0, 0.0, 0.0, 0.45]);
+        let px = FONT * s;
+        let lh = g.line_height(Face::Regular, px);
+        let row_h = (30.0 * s).round();
+        let title_h = (40.0 * s).round();
+        let foot_h = (52.0 * s).round();
+        let pad = 14.0 * s;
+        let w = (640.0 * s).min(win[0] - 40.0 * s);
+        self.content_h = self.rows.iter().map(|r| if matches!(r.control, Control::Header) { row_h * 1.2 } else { row_h }).sum::<f32>() + pad;
+        let h = (title_h + self.content_h + foot_h).min(win[1] - 60.0 * s);
+        let panel = Rect::new(((win[0] - w) / 2.0).round(), ((win[1] - h) / 2.0).round(), w.round(), h.round());
+        self.panel = panel;
+        g.rrect(Rect::new(panel.x + 4.0 * s, panel.y + 6.0 * s, panel.w, panel.h), 6.0 * s, [0.0, 0.0, 0.0, 0.4]);
+        g.rrect(panel, 6.0 * s, PANEL_BG);
+        g.rrect_stroke(panel, 6.0 * s, s.max(1.0), alpha(BORDER, 0.8));
+        // Title.
+        g.text(Face::Bold, px * 1.1, panel.x + pad, panel.y + (title_h - lh * 1.1) / 2.0, TEXT_BRIGHT, &self.title);
+        let close = Rect::new(panel.right() - title_h, panel.y, title_h, title_h);
+        let c = [close.cx(), close.cy()];
+        let k = 5.0 * s;
+        let ccol = if close.contains(mouse[0], mouse[1]) { HILIGHT } else { TEXT };
+        g.line([c[0] - k, c[1] - k], [c[0] + k, c[1] + k], 1.6 * s, ccol);
+        g.line([c[0] - k, c[1] + k], [c[0] + k, c[1] - k], 1.6 * s, ccol);
+        self.hits.push((close, Hit::Close));
+        g.rect(Rect::new(panel.x, panel.y + title_h, panel.w, s.max(1.0)), PANEL_LINE);
+
+        // Rows.
+        let content = Rect::new(panel.x, panel.y + title_h, panel.w, panel.h - title_h - foot_h);
+        self.content = content;
+        self.scroll = self.scroll.clamp(0.0, (self.content_h - content.h).max(0.0));
+        g.push_clip(content);
+        let mut y = content.y + pad * 0.5 - self.scroll;
+        let label_w = w * 0.42;
+        let ctl_x = panel.x + pad + label_w;
+        let ctl_w = panel.right() - pad - ctl_x;
+        for i in 0..self.rows.len() {
+            let row = self.rows[i].clone();
+            let rh = if matches!(row.control, Control::Header) { row_h * 1.2 } else { row_h };
+            let rr = Rect::new(panel.x, y, panel.w, rh);
+            y += rh;
+            if rr.bottom() < content.y || rr.y > content.bottom() {
+                continue;
+            }
+            if let Control::Header = row.control {
+                g.text(Face::Bold, px, panel.x + pad, rr.bottom() - lh - 6.0 * s, HILIGHT, &row.label);
+                g.rect(Rect::new(panel.x + pad, rr.bottom() - 2.0 * s, panel.w - 2.0 * pad, s.max(1.0)), alpha(HILIGHT, 0.4));
+                continue;
+            }
+            let label_r = Rect::new(panel.x + pad, rr.y, label_w - 8.0 * s, rr.h);
+            g.text_fit(Face::Regular, px, label_r.x, rr.cy() - lh / 2.0, label_r.w, TEXT, &row.label);
+            if !row.help.is_empty() && label_r.contains(mouse[0], mouse[1]) && content.contains(mouse[0], mouse[1]) {
+                self.hover_help = Some((row.help.clone(), mouse));
+            }
+            let reset_w = if row.modified { 24.0 * s } else { 0.0 };
+            let cr = Rect::new(ctl_x, rr.y + 3.0 * s, ctl_w - reset_w, rr.h - 6.0 * s);
+            let hov = |r: &Rect| r.contains(mouse[0], mouse[1]) && content.contains(mouse[0], mouse[1]);
+            let editing = self.editing.as_ref().filter(|(e, _)| *e == i).map(|(_, t)| t.clone());
+            let field = |g: &mut Gfx, r: Rect, text: &str, active: bool| {
+                g.rrect(r, 3.0 * s, if active { BUTTON_HOVER } else { BUTTON });
+                g.rrect_stroke(r, 3.0 * s, s.max(1.0), if active { HILIGHT } else { alpha(BORDER, 0.6) });
+                g.text_fit(Face::Regular, px, r.x + 8.0 * s, r.cy() - lh / 2.0, r.w - 16.0 * s, TEXT_BRIGHT, text);
+            };
+            match &row.control {
+                Control::Header => {}
+                Control::Info(t) => {
+                    g.text_fit(Face::Regular, px, cr.x, rr.cy() - lh / 2.0, cr.w, TEXT_BRIGHT, t);
+                }
+                Control::Toggle(on) => {
+                    let tw = 40.0 * s;
+                    let tr = Rect::new(cr.x, cr.cy() - 9.0 * s, tw, 18.0 * s);
+                    g.rrect(tr, 9.0 * s, if *on { alpha(TOGGLE, 0.55) } else { BUTTON });
+                    g.rrect_stroke(tr, 9.0 * s, s.max(1.0), if hov(&tr) { HILIGHT } else { alpha(BORDER, 0.6) });
+                    let kx = if *on { tr.right() - 9.0 * s } else { tr.x + 9.0 * s };
+                    g.circle([kx, tr.cy()], 6.5 * s, if *on { TEXT_BRIGHT } else { TEXT });
+                    g.text(Face::Regular, px, tr.right() + 10.0 * s, rr.cy() - lh / 2.0, TEXT, if *on { "on" } else { "off" });
+                    self.hits.push((tr, Hit::Row(i, Part::Toggle)));
+                }
+                Control::Choice { value, options, editable } => {
+                    let arrow_w = 28.0 * s;
+                    let label = options.iter().find(|(v, _)| v == value).map(|(_, l)| l.clone()).unwrap_or_else(|| value.clone());
+                    match (&editing, editable) {
+                        (Some(t), _) => field(g, Rect::new(cr.x, cr.y, cr.w - arrow_w - 4.0 * s, cr.h), &format!("{t}▏"), true),
+                        (None, true) => {
+                            let er = Rect::new(cr.x, cr.y, cr.w - arrow_w - 4.0 * s, cr.h);
+                            field(g, er, &label, hov(&er));
+                            self.hits.push((er, Hit::Row(i, Part::Edit)));
+                        }
+                        (None, false) => {}
+                    }
+                    let ar = if *editable || editing.is_some() { Rect::new(cr.right() - arrow_w, cr.y, arrow_w, cr.h) } else { cr };
+                    if !*editable && editing.is_none() {
+                        field(g, ar, &label, hov(&ar));
+                        g.text(Face::Regular, px, ar.right() - 18.0 * s, ar.cy() - lh / 2.0, TEXT, "▼");
+                    } else {
+                        g.rrect(ar, 3.0 * s, if hov(&ar) { BUTTON_HOVER } else { BUTTON });
+                        g.rrect_stroke(ar, 3.0 * s, s.max(1.0), alpha(BORDER, 0.6));
+                        g.text_center(Face::Regular, px, ar, TEXT, "▼");
+                    }
+                    self.hits.push((ar, Hit::Row(i, Part::Choice)));
+                }
+                Control::Number { value, .. } => {
+                    let bw = cr.h;
+                    let mr = Rect::new(cr.x, cr.y, bw, cr.h);
+                    let pr = Rect::new(cr.right() - bw, cr.y, bw, cr.h);
+                    let er = Rect::new(mr.right() + 4.0 * s, cr.y, cr.w - 2.0 * bw - 8.0 * s, cr.h);
+                    for (r, t, part) in [(mr, "−", Part::Minus), (pr, "+", Part::Plus)] {
+                        g.rrect(r, 3.0 * s, if hov(&r) { BUTTON_HOVER } else { BUTTON });
+                        g.rrect_stroke(r, 3.0 * s, s.max(1.0), alpha(BORDER, 0.6));
+                        g.text_center(Face::Regular, px, r, TEXT_BRIGHT, t);
+                        self.hits.push((r, Hit::Row(i, part)));
+                    }
+                    match &editing {
+                        Some(t) => field(g, er, &format!("{t}▏"), true),
+                        None => field(g, er, &value.to_string(), hov(&er)),
+                    }
+                    self.hits.push((er, Hit::Row(i, Part::Edit)));
+                }
+                Control::Text(v) => {
+                    match &editing {
+                        Some(t) => field(g, cr, &format!("{t}▏"), true),
+                        None => field(g, cr, if v.is_empty() { "—" } else { v }, hov(&cr)),
+                    }
+                    self.hits.push((cr, Hit::Row(i, Part::Edit)));
+                }
+            }
+            if row.modified {
+                let rr2 = Rect::new(cr.right() + 4.0 * s, cr.y, reset_w - 4.0 * s, cr.h);
+                // Reset to default: a circular arrow (the font has no ↺).
+                let col = if hov(&rr2) { HILIGHT } else { TEXT_DIM };
+                let (c, rad) = ([rr2.cx(), rr2.cy()], 5.5 * s);
+                g.arc(c, rad, -2.2, 2.4, 1.5 * s, col);
+                let a = -2.2f32;
+                let tip = [c[0] + rad * a.cos(), c[1] + rad * a.sin()];
+                g.pie(tip, 3.2 * s, -0.4, 0.9, col);
+                self.hits.push((rr2, Hit::Row(i, Part::Reset)));
+            }
+        }
+        g.pop_clip();
+        // Clicks outside the visible content don't reach rows.
+        self.hits.retain(|(r, h)| !matches!(h, Hit::Row(..)) || content.overlaps(r));
+
+        // Footer.
+        let fy = panel.bottom() - foot_h;
+        g.rect(Rect::new(panel.x, fy, panel.w, s.max(1.0)), PANEL_LINE);
+        let bh = 30.0 * s;
+        let mut bx = panel.right() - pad;
+        for (bi, label) in self.buttons.iter().enumerate().rev() {
+            let bw = g.measure(Face::Regular, px, label) + 28.0 * s;
+            bx -= bw;
+            let br = Rect::new(bx, fy + (foot_h - bh) / 2.0, bw, bh);
+            let hv = br.contains(mouse[0], mouse[1]);
+            g.rrect(br, 3.0 * s, if hv { BUTTON_HOVER } else { BUTTON });
+            g.rrect_stroke(br, 3.0 * s, s.max(1.0), if bi == self.buttons.len() - 1 { HILIGHT } else { alpha(BORDER, 0.8) });
+            g.text_center(Face::Regular, px, br, TEXT_BRIGHT, label);
+            self.hits.push((br, Hit::Button(bi)));
+            bx -= 8.0 * s;
+        }
+        if !self.note.is_empty() {
+            let spx = FONT_SMALL * s;
+            let slh = g.line_height(Face::Regular, spx);
+            g.text_fit(Face::Regular, spx, panel.x + pad, fy + (foot_h - slh) / 2.0, bx - panel.x - 2.0 * pad, TEXT_DIM, &self.note);
+        }
+    }
+}

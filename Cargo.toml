@@ -33,6 +33,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
 png = "0.17"
+# jackdbus (server.rs): the JACK server's start/stop/settings over the session bus.
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
 # Window shadows on KWin (shadow.rs): org_kde_kwin_shadow on SDL's own wl_display/wl_surface.
 wayland-client = { version = "0.31", features = ["system"] }
 wayland-protocols-plasma = { version = "0.3", features = ["client"] }

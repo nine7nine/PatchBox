@@ -224,6 +224,7 @@ pub fn resolve(app: &App, p: &str) -> Option<[f32; 2]> {
         }
         "bar" => app.bar_point(rest),
         "port" => app.port_point(rest),
+        "dlg" => app.dialog.as_ref()?.point(rest),
         "menu" => {
             let m = app.ui.menu.as_ref()?;
             let i = m.items.iter().position(|it| it.label.contains(rest))?;

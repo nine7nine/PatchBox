@@ -55,6 +55,12 @@ pub enum Action {
     FitAll,
     Window(Button),
     AppMenu(Rect),
+    ServerStart,
+    ServerStop,
+    ServerRestart,
+    ServerSettings,
+    /// A choice picked from a dialog row's options: (row id, value).
+    DialogSet(String, String),
     Quit,
 }
 
@@ -90,6 +96,8 @@ pub struct App {
     pub maximized: bool,
     pub canvas: crate::canvas::CanvasState,
     pub ui: crate::ui::UiState,
+    pub server: crate::server::Server,
+    pub dialog: Option<crate::dialog::Dialog>,
     pub log: Vec<LogLine>,
     pub redraw: bool,
     graph_due: Option<Instant>,
@@ -115,7 +123,10 @@ impl App {
     pub fn new(waker: pbx_jack::Waker) -> App {
         let layout = Layout::load();
         let kind = kind_from(&layout.view.kind);
+        let server = crate::server::Server::spawn(waker.clone());
         App {
+            server,
+            dialog: None,
             jack: None,
             waker,
             graph: Graph::default(),
@@ -167,6 +178,7 @@ impl App {
                     realtime: c.is_realtime(),
                     freewheel: false,
                 };
+                self.server.send(crate::server::Cmd::Refresh);
                 let msg = format!(
                     "Connected to JACK as \"{}\" ({} Hz, {} frames{})",
                     c.name(),
@@ -185,6 +197,37 @@ impl App {
                     self.retry_logged = true;
                 }
                 self.retry_at = Instant::now() + RETRY;
+            }
+        }
+    }
+
+    /// A worker woke us: JACK notifications and jackdbus replies.
+    pub fn on_wake(&mut self) {
+        self.on_jack_events();
+        for r in self.server.take() {
+            use crate::server::Reply;
+            match r {
+                Reply::Status(st) => {
+                    if st.started != self.server.status.started || st.available != self.server.status.available {
+                        self.redraw = true;
+                        if st.started && self.jack.is_none() {
+                            self.retry_at = Instant::now();
+                        }
+                    }
+                    self.server.status = st;
+                }
+                Reply::Config(c) => self.server.config = Some(*c),
+                Reply::Done(m) => self.say(m, false),
+                Reply::Error(e) => self.say(e, true),
+            }
+            self.redraw = true;
+        }
+        if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Server) {
+            let rows = self.server_rows();
+            let b = self.server_buttons();
+            if let Some(d) = &mut self.dialog {
+                d.set_rows(rows);
+                d.buttons = b;
             }
         }
     }
@@ -219,6 +262,7 @@ impl App {
             self.graph_due = None;
             self.graph_first = None;
             self.canvas.drag = crate::canvas::Drag::None;
+            self.server.send(crate::server::Cmd::Refresh);
             let r = if reason.is_empty() { "server shut down".to_string() } else { reason };
             self.say(format!("JACK went away: {r}"), true);
             self.retry_at = Instant::now() + Duration::from_millis(500);
@@ -775,7 +819,158 @@ impl App {
                 Button::Minimize => self.window_cmd = Some(WindowCmd::Minimize),
                 Button::Maximize => self.window_cmd = Some(WindowCmd::ToggleMaximize),
             },
+            Action::ServerStart => self.server.run(crate::server::Cmd::Start),
+            Action::ServerStop => self.server.run(crate::server::Cmd::Stop),
+            Action::ServerRestart => self.server.run(crate::server::Cmd::Restart),
+            Action::ServerSettings => {
+                self.server.send(crate::server::Cmd::LoadConfig);
+                let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::Server, "JACK server");
+                d.note = "Driver and engine settings apply when the server (re)starts; jackdbus keeps them.".into();
+                d.set_rows(self.server_rows());
+                d.buttons = self.server_buttons();
+                self.dialog = Some(d);
+            }
+            Action::DialogSet(id, v) => self.dialog_event(crate::dialog::Event::Set(id, v)),
             Action::Quit => self.quit = true,
+        }
+    }
+
+    // ---- JACK server settings (jackdbus) ----
+
+    fn server_buttons(&self) -> Vec<String> {
+        let st = &self.server.status;
+        let mut b = Vec::new();
+        if st.available {
+            b.push(if st.started { "Stop".to_string() } else { "Start".to_string() });
+            b.push("Restart".to_string());
+        }
+        b.push("Close".to_string());
+        b
+    }
+
+    pub fn server_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::{Control, Row};
+        use crate::server::Value;
+        let st = &self.server.status;
+        let mut rows = vec![Row::header("Server")];
+        let state = if !st.available {
+            "jackdbus not available on the session bus".to_string()
+        } else if self.server.busy {
+            "working…".to_string()
+        } else if st.started {
+            format!("running ({} Hz, {} frames)", self.stats.sample_rate, self.stats.buffer_size)
+        } else {
+            "stopped".to_string()
+        };
+        rows.push(Row::info("Status", state));
+        let Some(cfg) = &self.server.config else {
+            if st.available {
+                rows.push(Row::info("Settings", "loading…"));
+            }
+            return rows;
+        };
+        rows.push(Row {
+            id: "engine/driver".into(),
+            label: "Driver".into(),
+            help: "The backend jackd drives: alsa for sound cards, dummy for none, net/netone for network audio…".into(),
+            control: Control::Choice { value: cfg.driver.clone(), options: cfg.drivers.iter().map(|d| (d.clone(), d.clone())).collect(), editable: false },
+            modified: false,
+        });
+        let to_row = |p: &crate::server::Param| -> Row {
+            let id = p.path.join("/");
+            let control = match (&p.value, &p.constraint) {
+                (Value::Bool(b), _) => Control::Toggle(*b),
+                (v, Some(c)) if c.range && c.values.len() == 2 => {
+                    let n = |x: &Value| match x {
+                        Value::I32(i) => *i as i64,
+                        Value::U32(u) => *u as i64,
+                        _ => 0,
+                    };
+                    Control::Number { value: n(v), min: n(&c.values[0].0), max: n(&c.values[1].0) }
+                }
+                (v, Some(c)) => Control::Choice {
+                    value: v.show(),
+                    options: c
+                        .values
+                        .iter()
+                        .map(|(val, label)| {
+                            let shown = if c.fake || label == &val.show() || label.is_empty() {
+                                if label.is_empty() { val.show() } else { label.clone() }
+                            } else {
+                                format!("{} — {label}", val.show())
+                            };
+                            (val.show(), shown)
+                        })
+                        .collect(),
+                    editable: !c.strict,
+                },
+                (Value::U32(u), None) if p.name == "rate" => Control::Choice {
+                    value: u.to_string(),
+                    options: [22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000].iter().map(|r| (r.to_string(), format!("{r} Hz"))).collect(),
+                    editable: true,
+                },
+                (Value::U32(u), None) if p.name == "period" => Control::Choice {
+                    value: u.to_string(),
+                    options: [16, 32, 64, 128, 256, 512, 1024, 2048, 4096].iter().map(|r| (r.to_string(), format!("{r} frames"))).collect(),
+                    editable: true,
+                },
+                (Value::U32(u), None) => Control::Number { value: *u as i64, min: 0, max: u32::MAX as i64 },
+                (Value::I32(i), None) => Control::Number { value: *i as i64, min: i32::MIN as i64, max: i32::MAX as i64 },
+                (v, None) => Control::Text(v.show()),
+            };
+            let label = if p.short.is_empty() { p.name.clone() } else { p.short.clone() };
+            Row { id, label, help: if p.long.is_empty() { p.short.clone() } else { p.long.clone() }, control, modified: p.is_set }
+        };
+        rows.push(Row::header(format!("Driver: {}", cfg.driver)));
+        rows.extend(cfg.driver_params.iter().map(to_row));
+        rows.push(Row::header("Engine"));
+        rows.extend(cfg.engine.iter().filter(|p| p.name != "driver").map(to_row));
+        rows
+    }
+
+    pub fn dialog_event(&mut self, ev: crate::dialog::Event) {
+        use crate::dialog::{Event, Kind};
+        self.redraw = true;
+        let Some(kind) = self.dialog.as_ref().map(|d| d.kind) else { return };
+        match (kind, ev) {
+            (_, Event::Close) => self.dialog = None,
+            (_, Event::Options(row, under)) => {
+                let Some(d) = &self.dialog else { return };
+                let Some(r) = d.rows.get(row) else { return };
+                if let crate::dialog::Control::Choice { value, options, .. } = &r.control {
+                    let items = options
+                        .iter()
+                        .map(|(v, l)| crate::ui::MenuItem::new(l.clone(), Action::DialogSet(r.id.clone(), v.clone())).checked(v == value))
+                        .collect();
+                    self.ui.open_menu([under.x, under.bottom() + 2.0], items);
+                }
+            }
+            (Kind::Server, Event::Set(id, text)) => {
+                let path: Vec<String> = id.split('/').map(str::to_string).collect();
+                let value = if id == "engine/driver" {
+                    Some(crate::server::Value::Str(text.clone()))
+                } else {
+                    self.server
+                        .config
+                        .as_ref()
+                        .and_then(|c| c.engine.iter().chain(&c.driver_params).find(|p| p.path == path))
+                        .and_then(|p| p.value.parse_like(&text))
+                };
+                match value {
+                    Some(v) => self.server.run(crate::server::Cmd::Set(path, v)),
+                    None => self.say(format!("\"{text}\" is not a valid value for {id}"), true),
+                }
+            }
+            (Kind::Server, Event::Reset(id)) => self.server.run(crate::server::Cmd::Reset(id.split('/').map(str::to_string).collect())),
+            (Kind::Server, Event::Button(b)) => {
+                let label = self.dialog.as_ref().and_then(|d| d.buttons.get(b).cloned()).unwrap_or_default();
+                match label.as_str() {
+                    "Start" => self.apply(Action::ServerStart),
+                    "Stop" => self.apply(Action::ServerStop),
+                    "Restart" => self.apply(Action::ServerRestart),
+                    _ => self.dialog = None,
+                }
+            }
         }
     }
 

@@ -292,6 +292,36 @@ impl App {
         let lh = g.line_height(Face::Regular, px);
         let mut y = r.y + pad;
 
+        // The JACK server (jackdbus).
+        let st = self.server.status.clone();
+        let (dot, state) = if !st.available {
+            (TEXT_DIM, "jackdbus not available".to_string())
+        } else if self.server.busy {
+            (WARN, "working…".to_string())
+        } else if st.started {
+            (OK, format!("running · {} Hz · {}", self.stats.sample_rate, self.stats.buffer_size))
+        } else {
+            (BAD, "stopped".to_string())
+        };
+        g.text(Face::Bold, px, r.x + pad, y, TEXT_BRIGHT, "JACK");
+        g.circle([r.x + pad + g.measure(Face::Bold, px, "JACK") + 10.0 * s, y + lh / 2.0], 4.0 * s, dot);
+        g.text_fit(Face::Regular, FONT_SMALL * s, r.x + pad + g.measure(Face::Bold, px, "JACK") + 20.0 * s, y + 1.0 * s, r.w - 80.0 * s, TEXT, &state);
+        y += lh + 8.0 * s;
+        let bh = (lh + 10.0 * s).round();
+        let bw = ((r.w - 2.0 * pad - 12.0 * s) / 3.0).floor();
+        let mut bx = r.x + pad;
+        if st.available {
+            let (label, act) = if st.started { ("Stop", Action::ServerStop) } else { ("Start", Action::ServerStart) };
+            self.button(g, Rect::new(bx, y, bw, bh), label, false, act);
+            bx += bw + 6.0 * s;
+            self.button(g, Rect::new(bx, y, bw, bh), "Restart", false, Action::ServerRestart);
+            bx += bw + 6.0 * s;
+        }
+        self.button(g, Rect::new(bx, y, bw, bh), "Settings", false, Action::ServerSettings);
+        y += bh + 12.0 * s;
+        g.rect(Rect::new(r.x + pad, y, r.w - 2.0 * pad, s.max(1.0)), PANEL_LINE);
+        y += 8.0 * s;
+
         // Session (phase 3 brings the session manager here).
         g.text(Face::Bold, px, r.x + pad, y, TEXT_BRIGHT, "Session");
         y += lh + 4.0 * s;
@@ -472,6 +502,10 @@ impl App {
                 Action::ZoomBy(f) => (name == "zoom+" && *f > 1.0) || (name == "zoom-" && *f < 1.0),
                 Action::ZoomSlider(_) => name == "zoomtrack",
                 Action::ZoomTo(_) => name == "zoompct",
+                Action::ServerStart => name == "start",
+                Action::ServerStop => name == "stop",
+                Action::ServerRestart => name == "restart",
+                Action::ServerSettings => name == "settings",
                 _ => false,
             };
             hit.then(|| [r.cx(), r.cy()])

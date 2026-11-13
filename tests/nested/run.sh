@@ -18,6 +18,8 @@ shift || true
 if [ -z "${PB_IN_BUS:-}" ]; then
   exec env PB_IN_BUS=1 dbus-run-session --config-file="$HERE/bus.conf" -- "$0" "$OUT" "$@"
 fi
+# PB_* assignments configure the harness itself (PB_JACKDBUS=1, PB_NO_FAKES=1, PB_BIN=...).
+for a in "$@"; do case "$a" in PB_*=*) export "$a" ;; esac; done
 W=$HOME/.cache/patchbox-work/nested
 mkdir -p "$W"
 export WAYLAND_DISPLAY=
