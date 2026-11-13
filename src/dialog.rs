@@ -69,6 +69,8 @@ pub enum Kind {
     PipeWire,
     /// The event log and jackdbus's log.
     Log,
+    /// The name for a JACK preset.
+    SavePreset,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

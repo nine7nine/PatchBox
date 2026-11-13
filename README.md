@@ -77,7 +77,10 @@ patchbox-ctl connect SRC DST | disconnect SRC DST | graph | state | watch | quit
 PatchBox is built for jack2dbus-nspa: the server is jackdbus's. The sidebar's JACK · jackdbus
 section starts, stops and restarts it, and Settings (a toggle) edits the driver and engine
 parameters jackdbus offers, with their constraints and descriptions. A session can remember
-them (☰ session menu) and puts them back when it opens. PatchBox never starts jackd itself; with
+them (☰ session menu) and puts them back when it opens. Presets (qjackctl's) name a whole
+configuration, the driver and every parameter set away from its default: the sidebar's
+"Preset ▼" switches between them in one click (the server restarts only when something differs)
+and the settings page saves and deletes them (`~/.config/patchbox/jack-presets.json`). PatchBox never starts jackd itself; with
 a plain jackd the patchbay and transport work, server control doesn't. The transport is in the
 toolbar (Space: play/pause).
 

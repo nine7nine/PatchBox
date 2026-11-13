@@ -59,6 +59,12 @@ pub enum Action {
     ResetXruns,
     /// The event log page (toggles).
     EventLog,
+    /// Put a JACK preset in place (restarts the server when something differs).
+    ApplyPreset(String),
+    /// The presets menu, under this rectangle.
+    PresetMenu(Rect),
+    /// Ask for a name and save the server's settings under it.
+    SavePresetPrompt,
     ToggleFreewheel,
     /// Split (true) or join (false) a client's nodes.
     Split(String, bool),
@@ -155,6 +161,11 @@ pub struct App {
     pub pw_state: Option<crate::pw::PwState>,
     /// The settings page's tab last shown: 0 JACK, 1 PipeWire.
     settings_tab: usize,
+    /// JACK server presets, and the server's settings as a preset would keep them.
+    pub presets: crate::presets::Presets,
+    pub jack_now: Option<pbx_session::jackcfg::JackSettings>,
+    /// A preset to be saved under this name when the server's settings come.
+    preset_saving: Option<String>,
     /// Installed applications (.desktop), scanned when first needed.
     pub apps: Option<Vec<crate::session::App>>,
     pub log: Vec<LogLine>,
@@ -202,6 +213,9 @@ impl App {
             global_canvas: None,
             pw_state: None,
             settings_tab: 0,
+            presets: crate::presets::load(),
+            jack_now: None,
+            preset_saving: None,
             apps: None,
             jack: None,
             waker,
@@ -292,6 +306,9 @@ impl App {
             match r {
                 Reply::Status(st) => {
                     let was = &self.server.status;
+                    if st.available && (st.available != was.available || st.started != was.started) {
+                        self.server.send(crate::server::Cmd::ReadSettings);
+                    }
                     if st.available != was.available {
                         self.events.push(crate::events::Kind::Server, if st.available { "jackdbus is there" } else { "jackdbus went away" }, !st.available);
                     } else if st.started != was.started {
@@ -305,7 +322,21 @@ impl App {
                     }
                     self.server.status = st;
                 }
-                Reply::Config(c) => self.server.config = Some(*c),
+                Reply::Config(c) => {
+                    self.server.config = Some(*c);
+                    // A parameter changed (or the page loaded): the settings a preset would keep.
+                    self.server.send(crate::server::Cmd::ReadSettings);
+                }
+                Reply::Settings(s) => {
+                    if let Some(name) = self.preset_saving.take() {
+                        self.presets.insert(name.clone(), (*s).clone());
+                        match crate::presets::save(&self.presets) {
+                            Ok(()) => self.say(format!("Preset {name} saved: {}", crate::presets::summary(&s)), false),
+                            Err(e) => self.say(format!("Could not save the presets: {e}"), true),
+                        }
+                    }
+                    self.jack_now = Some(*s);
+                }
                 Reply::Stats(st) => self.server.stats = Some(st),
                 Reply::Done(m) => self.say(m, false),
                 Reply::Error(e) => self.say(e, true),
@@ -1379,6 +1410,33 @@ impl App {
             }
             Action::EventLog if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Log) => self.dialog = None,
             Action::EventLog => self.open_log(0),
+            Action::ApplyPreset(name) => match self.presets.get(&name).cloned() {
+                Some(s) => {
+                    self.say(format!("Preset {name}: putting it in place…"), false);
+                    self.server.run(crate::server::Cmd::ApplySettings(Box::new(s), name));
+                }
+                None => self.say(format!("No preset {name}"), true),
+            },
+            Action::PresetMenu(r) => {
+                use crate::ui::MenuItem;
+                let now = self.jack_now.as_ref().and_then(|n| crate::presets::matching(&self.presets, n)).map(str::to_string);
+                let mut items: Vec<MenuItem> = self.presets.keys().map(|n| MenuItem::new(n.clone(), Action::ApplyPreset(n.clone())).checked(now.as_deref() == Some(n))).collect();
+                if items.is_empty() {
+                    items.push(MenuItem::header("No presets yet"));
+                }
+                items.push(MenuItem::new("Save the current settings as a preset…", Action::SavePresetPrompt).enabled(self.jack_now.is_some()));
+                items.push(MenuItem::new("Presets on the settings page", Action::ServerSettings));
+                self.ui.open_menu([r.x, r.bottom() + 2.0], items);
+            }
+            Action::SavePresetPrompt => {
+                use crate::dialog::{Control, Dialog, Kind, Row};
+                let mut d = Dialog::new(Kind::SavePreset, "Save the JACK settings as a preset");
+                d.rows = vec![Row { id: "name".into(), label: "Name".into(), help: String::new(), control: Control::Text(String::new()), modified: false }];
+                d.buttons = vec!["Cancel".into(), "Save".into()];
+                d.note = self.jack_now.as_ref().map(crate::presets::summary).unwrap_or_default();
+                d.edit("name");
+                self.dialog = Some(d);
+            }
             Action::ToggleFreewheel => {
                 if let Some(c) = &self.jack {
                     c.set_freewheel(!self.stats.freewheel);
@@ -2012,6 +2070,39 @@ impl App {
         if st.started {
             rows.push(link("act:switch-master", "Switch master", "make the selected driver the running server's master, no restart"));
         }
+        // Presets: named configurations, applied in one click (also the sidebar's Preset menu).
+        if st.available {
+            rows.push(Row::header("Presets"));
+            let now = self.jack_now.as_ref().and_then(|n| crate::presets::matching(&self.presets, n));
+            if self.presets.is_empty() {
+                rows.push(Row::info("None yet", "set the server up below, then save it here"));
+            }
+            for (name, s) in &self.presets {
+                rows.push(Row {
+                    id: format!("preset:apply:{name}"),
+                    label: if now == Some(name.as_str()) { format!("{name} (in place)") } else { name.clone() },
+                    help: format!("Put {name} in place: the server restarts with it when something differs; parameters it doesn't set go back to their defaults"),
+                    control: Control::Link(crate::presets::summary(s)),
+                    modified: false,
+                });
+            }
+            rows.push(Row {
+                id: "preset:save".into(),
+                label: "Save the current settings as".into(),
+                help: "A name; Enter saves the driver and every parameter set away from its default (an existing name is replaced)".into(),
+                control: Control::Text(String::new()),
+                modified: false,
+            });
+            if !self.presets.is_empty() {
+                rows.push(Row {
+                    id: "preset:delete".into(),
+                    label: "Delete a preset".into(),
+                    help: "Choose the one to delete".into(),
+                    control: Control::Choice { value: String::new(), options: self.presets.keys().map(|n| (n.clone(), n.clone())).collect(), editable: false },
+                    modified: false,
+                });
+            }
+        }
         let Some(cfg) = &self.server.config else {
             if st.available {
                 rows.push(Row::info("Settings", "loading…"));
@@ -2136,6 +2227,19 @@ impl App {
                     self.ui.open_menu([under.x, under.bottom() + 2.0], items);
                 }
             }
+            (Kind::Server, Event::Set(id, v)) if id.starts_with("preset:") => {
+                if let Some(name) = id.strip_prefix("preset:apply:") {
+                    self.apply(Action::ApplyPreset(name.to_string()));
+                } else if id == "preset:save" && !v.trim().is_empty() {
+                    self.preset_saving = Some(v.trim().to_string());
+                    self.server.send(crate::server::Cmd::ReadSettings);
+                } else if id == "preset:delete" && self.presets.remove(&v).is_some() {
+                    match crate::presets::save(&self.presets) {
+                        Ok(()) => self.say(format!("Preset {v} deleted"), false),
+                        Err(e) => self.say(format!("Could not save the presets: {e}"), true),
+                    }
+                }
+            }
             (Kind::Server, Event::Set(id, text)) if id.starts_with("slave:") || id.starts_with("internal:") || id.starts_with("act:") => {
                 use crate::server::Cmd;
                 let on = text == "on";
@@ -2176,6 +2280,19 @@ impl App {
             }
             (Kind::Server | Kind::PipeWire, Event::Tab(t)) => self.open_settings(t),
             (Kind::Log, Event::Tab(t)) => self.open_log(t),
+            (Kind::SavePreset, Event::Set(id, v)) => {
+                if let Some(d) = &mut self.dialog {
+                    d.set_local(&id, &v);
+                }
+            }
+            (Kind::SavePreset, Event::Button(b)) => {
+                let Some(d) = self.dialog.take() else { return };
+                let name = d.value("name").unwrap_or_default().trim().to_string();
+                if d.buttons.get(b).map(String::as_str) == Some("Save") && !name.is_empty() {
+                    self.preset_saving = Some(name);
+                    self.server.send(crate::server::Cmd::ReadSettings);
+                }
+            }
             (Kind::Log, Event::Set(id, v)) => match id.as_str() {
                 "filter" => {
                     self.events.filter = v;

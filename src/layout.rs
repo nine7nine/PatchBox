@@ -104,15 +104,19 @@ pub struct SavedView {
     pub vertical: bool,
 }
 
-fn path() -> Option<PathBuf> {
-    let base = std::env::var_os("PATCHBOX_CONFIG_DIR").map(PathBuf::from).or_else(|| {
+/// PatchBox's configuration directory: PATCHBOX_CONFIG_DIR, else ~/.config/patchbox.
+pub fn config_dir() -> Option<PathBuf> {
+    std::env::var_os("PATCHBOX_CONFIG_DIR").map(PathBuf::from).or_else(|| {
         std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
             .map(|c| c.join("patchbox"))
-    })?;
-    Some(base.join("layout.json"))
+    })
+}
+
+fn path() -> Option<PathBuf> {
+    Some(config_dir()?.join("layout.json"))
 }
 
 /// The file of a session's canvas, in its folder.

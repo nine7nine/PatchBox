@@ -149,12 +149,18 @@ pub enum Cmd {
     Stats,
     /// Quit the jackdbus service (it stops the server).
     Exit,
+    /// Read the driver and the parameters set (for presets).
+    ReadSettings,
+    /// Put these settings in place and (re)start the server: a preset, by name.
+    ApplySettings(Box<pbx_session::jackcfg::JackSettings>, String),
 }
 
 pub enum Reply {
     Status(Status),
     Stats(Stats),
     Config(Box<Config>),
+    /// The driver and the parameters set, as a preset keeps them.
+    Settings(Box<pbx_session::jackcfg::JackSettings>),
     /// A finished action, for the log.
     Done(String),
     Error(String),
@@ -234,6 +240,15 @@ fn worker(rx: Receiver<Cmd>, out: Arc<Mutex<Vec<Reply>>>, waker: pbx_jack::Waker
             Cmd::SwitchMaster => control(c, "SwitchMaster").map(|_| Some("Switched the master driver".to_string())),
             Cmd::ResetXruns => control(c, "ResetXruns").map(|_| Some("Server xruns reset".to_string())),
             Cmd::Exit => control(c, "Exit").map(|_| Some("jackdbus quit".to_string())),
+            Cmd::ReadSettings => pbx_session::jackcfg::read(c).map(|s| {
+                push(Reply::Settings(Box::new(s)));
+                None
+            }),
+            Cmd::ApplySettings(s, name) => pbx_session::jackcfg::apply(c, &s).and_then(|changed| {
+                push(Reply::Config(Box::new(load_config(c)?)));
+                push(Reply::Settings(s));
+                Ok(Some(if changed { format!("Preset {name}: in place, the server restarted") } else { format!("Preset {name}: already in place") }))
+            }),
             Cmd::Slave(name, on) => slave(c, &name, on).and_then(|msg| {
                 let cfg = load_config(c)?;
                 push(Reply::Config(Box::new(cfg)));

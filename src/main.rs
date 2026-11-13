@@ -12,6 +12,7 @@ mod events;
 mod gfx;
 mod layout;
 mod model;
+mod presets;
 mod pw;
 mod pwconf;
 mod server;
@@ -359,7 +360,7 @@ fn main() {
                         Keycode::Escape => app.dialog = None,
                         Keycode::Return | Keycode::KpEnter => {
                             // Enter commits a field; in a one-field dialog it also confirms.
-                            let one_field = matches!(d.kind, dialog::Kind::NewSession | dialog::Kind::Rename | dialog::Kind::Duplicate | dialog::Kind::Notes | dialog::Kind::Snapshot | dialog::Kind::SaveTemplate | dialog::Kind::RenameItem);
+                            let one_field = matches!(d.kind, dialog::Kind::NewSession | dialog::Kind::Rename | dialog::Kind::Duplicate | dialog::Kind::Notes | dialog::Kind::Snapshot | dialog::Kind::SaveTemplate | dialog::Kind::RenameItem | dialog::Kind::SavePreset);
                             let last = d.buttons.len().saturating_sub(1);
                             if let Some(ev) = d.commit() {
                                 app.dialog_event(ev);

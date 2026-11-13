@@ -722,7 +722,22 @@ impl App {
         g.circle([r.x + pad + hw + 10.0 * s, y + lh / 2.0], 4.0 * s, dot);
         y += lh + 2.0 * s;
         g.text_fit(Face::Regular, FONT_SMALL * s, r.x + pad, y + 1.0 * s, r.w - 2.0 * pad, TEXT, &state);
-        y += lh + 8.0 * s;
+        y += lh + 2.0 * s;
+        // The preset in place (or "custom"): a menu of presets to switch to.
+        if st.available {
+            let spx = FONT_SMALL * s;
+            let now = self.jack_now.as_ref().and_then(|n| crate::presets::matching(&self.presets, n));
+            let label = format!("Preset: {} ▼", now.unwrap_or(if self.presets.is_empty() { "none saved" } else { "custom" }));
+            let pr = Rect::new(r.x + pad - 4.0 * s, y - 2.0 * s, g.measure(Face::Regular, spx, &label) + 8.0 * s, lh + 2.0 * s);
+            let hov = self.hovered(&pr);
+            if hov {
+                g.rrect(pr, 3.0 * s, BUTTON_HOVER);
+            }
+            g.text(Face::Regular, spx, pr.x + 4.0 * s, y + 1.0 * s, if hov { TEXT_BRIGHT } else { LCD_TEXT }, &label);
+            self.add_hit(pr, Action::PresetMenu(pr));
+            y += lh;
+        }
+        y += 6.0 * s;
         let bh = (lh + 10.0 * s).round();
         let bw = ((r.w - 2.0 * pad - 12.0 * s) / 3.0).floor();
         let mut bx = r.x + pad;
@@ -924,6 +939,7 @@ impl App {
                 Action::BufferMenu(_) => name == "Buffer",
                 Action::ResetXruns => name == "Xruns",
                 Action::EventLog => name == "log",
+                Action::PresetMenu(_) => name == "preset",
                 Action::AppMenu(_) => name == "menu",
                 Action::ZoomBy(f) => (name == "zoom+" && *f > 1.0) || (name == "zoom-" && *f < 1.0),
                 Action::ZoomSlider(_) => name == "zoomtrack",
