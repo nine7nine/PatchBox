@@ -386,6 +386,7 @@ fn main() {
                         Keycode::Minus | Keycode::KpMinus if ctrl => Some(Action::ZoomBy(1.0 / 1.2)),
                         Keycode::F => Some(Action::FitAll),
                         Keycode::L => Some(Action::ToggleLabels),
+                        Keycode::M => Some(Action::ToggleMatrices),
                         Keycode::E => Some(Action::ExpandAll),
                         Keycode::G if shift => Some(Action::ToggleSnap),
                         Keycode::G => Some(Action::ToggleGrid),

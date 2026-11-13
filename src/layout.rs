@@ -19,6 +19,9 @@ pub struct View {
     pub labels: bool,
     /// The canvas grid is drawn.
     pub grid: bool,
+    /// PatchMatrix's matrices between clients, one wire per client pair. Off (the default):
+    /// ports on the blocks and a wire per connection.
+    pub matrices: bool,
     /// Moving a block or a matrix lands its top-left corner on the grid.
     pub snap: bool,
     /// Interface scale for the window's contents (top bar, sidebar, canvas at zoom 1), on top of
@@ -28,7 +31,7 @@ pub struct View {
 
 impl Default for View {
     fn default() -> View {
-        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, snap: false, ui_scale: 1.25 }
+        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, snap: false, ui_scale: 1.25 }
     }
 }
 

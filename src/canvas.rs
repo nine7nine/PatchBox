@@ -17,7 +17,7 @@ use crate::gfx::{Gfx, Rect, alpha, mix};
 use crate::model::Matrix;
 use crate::text::Face;
 use crate::theme::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
@@ -64,6 +64,8 @@ pub enum Hover {
     Cell(usize, usize, usize),
     /// (node index, graph port index): a row of an expanded node.
     Port(usize, usize),
+    /// A wire of the ports view: (output port, input port).
+    Wire(usize, usize),
 }
 
 #[derive(Default)]
@@ -120,12 +122,75 @@ impl App {
         Some(Rect::new(r.x, r.bottom(), r.w, h * xf.z))
     }
 
-    /// Each port row of an expanded node: (graph port index, row rectangle in pixels).
+    /// Each port row of a node's body: (graph port index, row rectangle in pixels).
     fn port_rows(&self, xf: &Xf, i: usize) -> Vec<(usize, Rect)> {
         let Some(b) = self.body_rect(xf, i) else { return Vec::new() };
         let rh = PORT_ROW * xf.z;
         let top = b.y + BODY_PAD * xf.z;
-        self.body_ports(i).into_iter().enumerate().map(|(k, p)| (p, Rect::new(b.x, top + k as f32 * rh, b.w, rh))).collect()
+        let half = b.w / 2.0;
+        self.body_layout(i)
+            .into_iter()
+            .map(|(p, r, side)| {
+                let y = top + r as f32 * rh;
+                let rect = match side {
+                    0 => Rect::new(b.x, y, half, rh),
+                    1 => Rect::new(b.x + half, y, half, rh),
+                    _ => Rect::new(b.x, y, b.w, rh),
+                };
+                (p, rect)
+            })
+            .collect()
+    }
+
+    /// Where each port's wire attaches (ports view): the edge of its row.
+    fn anchors(&self, xf: &Xf) -> HashMap<usize, [f32; 2]> {
+        let mut m = HashMap::new();
+        for i in 0..self.model.nodes.len() {
+            if !self.visible(i) {
+                continue;
+            }
+            for (p, r) in self.port_rows(xf, i) {
+                let a = if self.graph.ports[p].is_input() { [r.x, r.cy()] } else { [r.right(), r.cy()] };
+                m.insert(p, a);
+            }
+        }
+        m
+    }
+
+    /// A wire's curve (Luluda's: the bend grows with the distance, backwards wires loop round).
+    fn wire_curve(a: [f32; 2], b: [f32; 2], z: f32) -> [[f32; 2]; 4] {
+        let dx = b[0] - a[0];
+        let bend = if dx > 0.0 { (dx * 0.45).max(30.0 * z) } else { (dx.abs() * 0.3 + (b[1] - a[1]).abs() * 0.25).clamp(60.0 * z, 260.0 * z) };
+        [a, [a[0] + bend, a[1]], [b[0] - bend, b[1]], b]
+    }
+
+    /// The wire under (x, y), if any (ports view).
+    fn wire_at(&self, xf: &Xf, x: f32, y: f32) -> Option<(usize, usize)> {
+        let anchors = self.anchors(xf);
+        let tol = 5.0 * self.scale;
+        let mut best: Option<(f32, (usize, usize))> = None;
+        for &(o, i) in &self.graph.conns {
+            if self.graph.ports[o].kind != self.kind {
+                continue;
+            }
+            let (Some(&a), Some(&b)) = (anchors.get(&o), anchors.get(&i)) else { continue };
+            let [p0, p1, p2, p3] = Self::wire_curve(a, b, xf.z);
+            let mut prev = p0;
+            for k in 1..=24 {
+                let t = k as f32 / 24.0;
+                let u = 1.0 - t;
+                let p = [
+                    u * u * u * p0[0] + 3.0 * u * u * t * p1[0] + 3.0 * u * t * t * p2[0] + t * t * t * p3[0],
+                    u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1],
+                ];
+                let d = seg_dist([x, y], prev, p);
+                if d < tol && best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, (o, i)));
+                }
+                prev = p;
+            }
+        }
+        best.map(|(_, w)| w)
     }
 
     /// A centre, snapped so the top-left corner (`centre - half`) sits on the grid, when snapping.
@@ -166,7 +231,8 @@ impl App {
 
     fn hit(&self, x: f32, y: f32) -> Hover {
         let xf = self.xf();
-        for (mi, m) in self.mats.iter().enumerate().rev() {
+        let matrices = self.layout.view.matrices;
+        for (mi, m) in self.mats.iter().enumerate().rev().filter(|_| matrices) {
             let r = self.matrix_rect(&xf, m);
             if r.contains(x, y) {
                 let cell = CELL * xf.z;
@@ -183,10 +249,10 @@ impl App {
             let n = &self.model.nodes[i];
             let (out, inp) = self.handles(i);
             let (so, si) = (xf.s(out), xf.s(inp));
-            if !n.outs_of(&self.graph, self.kind).is_empty() && crate::gfx::dist(so, [x, y]) <= hr {
+            if matrices && !n.outs_of(&self.graph, self.kind).is_empty() && crate::gfx::dist(so, [x, y]) <= hr {
                 return Hover::Out(i);
             }
-            if !n.ins_of(&self.graph, self.kind).is_empty() && crate::gfx::dist(si, [x, y]) <= hr {
+            if matrices && !n.ins_of(&self.graph, self.kind).is_empty() && crate::gfx::dist(si, [x, y]) <= hr {
                 return Hover::In(i);
             }
             if self.node_rect(&xf, i).contains(x, y) {
@@ -200,6 +266,9 @@ impl App {
                     None => Hover::Node(i),
                 };
             }
+        }
+        if !matrices && let Some((o, i)) = self.wire_at(&xf, x, y) {
+            return Hover::Wire(o, i);
         }
         Hover::None
     }
@@ -265,7 +334,7 @@ impl App {
                 Hover::Node(i) | Hover::In(i) => {
                     self.canvas.drag = Drag::Node { id: self.model.nodes[i].key.id(), last: [x, y], raw: self.node_pos(i) }
                 }
-                Hover::None => self.canvas.drag = Drag::Pan { last: [x, y] },
+                Hover::None | Hover::Wire(..) => self.canvas.drag = Drag::Pan { last: [x, y] },
             },
             _ => {}
         }
@@ -447,6 +516,11 @@ impl App {
                 items.push(I::new("Disconnect all", Action::DisconnectMatrix(m.key.clone())).enabled(!m.conns.is_empty()));
                 items.push(I::new("Remove matrix", Action::Unpin(m.key.clone())).enabled(m.conns.is_empty()));
             }
+            Hover::Wire(o, i) => {
+                let (on, inn) = (self.graph.ports[o].name.clone(), self.graph.ports[i].name.clone());
+                items.push(I::header(format!("{} → {}", self.model.labels[o], self.model.labels[i])));
+                items.push(I::new("Disconnect", Action::Disconnect(on, inn)));
+            }
             Hover::Port(i, p) => {
                 let name = self.graph.ports[p].name.clone();
                 items.push(I::header(self.model.labels[p].clone()));
@@ -463,6 +537,7 @@ impl App {
                 items.push(I::new("Reset zoom", Action::ResetZoom));
                 items.push(I::new("Show hidden clients", Action::ShowAll).enabled(!self.layout.hidden.is_empty()));
                 items.push(I::new("Port names on matrices", Action::ToggleLabels).checked(self.layout.view.labels));
+                items.push(I::new("Matrices (PatchMatrix view)", Action::ToggleMatrices).checked(self.layout.view.matrices));
                 items.push(I::new("Show grid", Action::ToggleGrid).checked(self.layout.view.grid));
                 items.push(I::new("Snap to grid", Action::ToggleSnap).checked(self.layout.view.snap));
             }
@@ -583,7 +658,30 @@ impl App {
         let bend = WIRE_BEND * z;
         let cs = HANDLE_R * z;
         let wire = kind_color(self.kind);
-        for (mi, m) in self.mats.iter().enumerate() {
+        if !self.layout.view.matrices {
+            // Ports view: a wire per connection, port to port.
+            let anchors = self.anchors(&xf);
+            let hov_wire = match self.canvas.hover {
+                Hover::Wire(o, i) => Some((o, i)),
+                _ => None,
+            };
+            let hov_port = match self.canvas.hover {
+                Hover::Port(_, p) => Some(p),
+                _ => None,
+            };
+            for &(o, i) in &self.graph.conns {
+                if self.graph.ports[o].kind != self.kind {
+                    continue;
+                }
+                let (Some(&a), Some(&b)) = (anchors.get(&o), anchors.get(&i)) else { continue };
+                let node_lit = |p: usize| self.model.port_node.get(&p).is_some_and(|n| lit_nodes.contains(n));
+                let lit = hov_wire == Some((o, i)) || hov_port.is_some_and(|p| p == o || p == i) || node_lit(o) || node_lit(i);
+                let col = if lit { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA) };
+                let [p0, p1, p2, p3] = Self::wire_curve(a, b, z);
+                g.bezier(p0, p1, p2, p3, if lit { ww * 1.4 } else { ww }, col);
+            }
+        }
+        for (mi, m) in self.mats.iter().enumerate().filter(|_| self.layout.view.matrices) {
             let r = self.matrix_rect(&xf, m);
             let col = if lit_mats.contains(&mi) { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA) };
             let (out, _) = self.handles(m.src);
@@ -610,7 +708,7 @@ impl App {
         }
 
         // Matrices.
-        for mi in 0..self.mats.len() {
+        for mi in (0..self.mats.len()).filter(|_| self.layout.view.matrices) {
             self.draw_matrix(g, &xf, mi, lit_mats.contains(&mi));
         }
 
@@ -638,7 +736,7 @@ impl App {
         }
 
         // Port names around matrices: the hovered one, or all of them.
-        for mi in 0..self.mats.len() {
+        for mi in (0..self.mats.len()).filter(|_| self.layout.view.matrices) {
             if self.layout.view.labels || Some(mi) == hov_mat {
                 self.draw_matrix_labels(g, &xf, mi);
             }
@@ -647,6 +745,15 @@ impl App {
             && matches!(self.canvas.drag, Drag::None | Drag::Paint { .. }) {
                 self.draw_cell_tip(g, &xf, mi, c, r);
             }
+        if let Hover::Wire(o, i) = self.canvas.hover
+            && matches!(self.canvas.drag, Drag::None)
+        {
+            let lines = vec![
+                (format!("{}  →  {}", self.graph.ports[o].name, self.graph.ports[i].name), TEXT_BRIGHT),
+                ("right-click: disconnect".to_string(), TEXT_DIM),
+            ];
+            self.draw_tooltip(g, self.canvas.mouse, &lines);
+        }
         if let Hover::Port(_, p) = self.canvas.hover
             && matches!(self.canvas.drag, Drag::None)
         {
@@ -715,6 +822,13 @@ impl App {
             let spx = FONT_SMALL * z;
             let sh = g.line_height(Face::Regular, spx);
             g.text(Face::Regular, spx, r.x + 2.0 * z, r.y - sh - 1.0 * z, alpha(TEXT_DIM, f), sub);
+        }
+        // Ports view: the ports are on the body; no node handles.
+        if !self.layout.view.matrices {
+            if body.is_some() {
+                self.draw_body(g, xf, i);
+            }
+            return;
         }
         // Handles: Luluda's port squares, in the current type's colour.
         let cw = HANDLE_R * z;
@@ -788,7 +902,8 @@ impl App {
             let port = &self.graph.ports[p];
             let input = port.is_input();
             let fa = if port.kind == self.kind { 1.0 } else { 0.55 };
-            if k == n_in && k > 0 {
+            let ports_view = !self.layout.view.matrices;
+            if !ports_view && k == n_in && k > 0 {
                 g.rect(Rect::new(row.x + 6.0 * z, row.y.round(), row.w - 12.0 * z, self.scale.max(1.0)), PANEL_LINE);
             }
             let hovered = self.canvas.hover == Hover::Port(i, p);
@@ -796,6 +911,38 @@ impl App {
                 g.rect(row.inset(1.0), alpha(HILIGHT, if hovered { 0.30 } else { 0.12 }));
             } else if hovered {
                 g.rect(row.inset(1.0), [1.0, 1.0, 1.0, 0.07]);
+            }
+            if ports_view {
+                // Luluda's port square on the block's edge: filled when connected.
+                let kc = alpha(kind_color(port.kind), fa);
+                let q = 2.4 * HANDLE_R * z;
+                let (ex, tx) = if input { (row.x, row.x + q * 0.5 + 4.0 * z) } else { (row.right(), row.right() - q * 0.5 - 4.0 * z) };
+                let sq = Rect::centered(ex, row.cy(), q, q);
+                let connected = self.graph.conns.iter().any(|&(o, i2)| o == p || i2 == p);
+                if connected {
+                    g.rrect(sq, 0.5 * HANDLE_R * z, kc);
+                } else {
+                    g.rrect(sq, 0.5 * HANDLE_R * z, alpha(BLOCK_BODY, fa));
+                    g.rrect_stroke(sq, 0.5 * HANDLE_R * z, (1.2 * self.scale).max(1.0), kc);
+                }
+                g.rrect_stroke(sq.inset(-1.0), 0.5 * HANDLE_R * z + 1.0, 1.0, [0.0, 0.0, 0.0, 0.6 * fa]);
+                if let Some(&q2) = self.model.partner.get(&p)
+                    && rows.get(k + 1).is_some_and(|(n, _)| *n == q2)
+                {
+                    // Stereo pair: a bracket joining the two squares.
+                    let bx = if input { sq.right() + 1.5 * z } else { sq.x - 2.5 * z };
+                    g.rect(Rect::new(bx, row.cy(), 1.0f32.max(z), row.h), alpha(kc, 0.6));
+                }
+                let label = &self.model.labels[p];
+                let max_w = row.w - q - 8.0 * z;
+                let col = alpha(if hovered { BLOCK_TEXT } else { mix(BLOCK_TEXT, TEXT_BRIGHT, 0.15) }, fa);
+                if input {
+                    g.text_fit(Face::Regular, px, tx, row.cy() - lh / 2.0, max_w, col, label);
+                } else {
+                    let w = g.measure(Face::Regular, px, label).min(max_w);
+                    g.text_fit(Face::Regular, px, tx - w, row.cy() - lh / 2.0, max_w, col, label);
+                }
+                continue;
             }
             let sw = (3.0 * z).max(2.0);
             let strip = if input {
@@ -983,6 +1130,14 @@ impl App {
         g.rrect_stroke(tip, 3.0 * self.scale, 1.0, alpha(if on { TOGGLE } else { BORDER }, 0.6));
         g.text(Face::Regular, px, tip.x + pad, tip.y + pad / 2.0, TEXT_BRIGHT, &s);
     }
+}
+
+/// Distance from p to the segment a-b.
+fn seg_dist(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let l2 = dx * dx + dy * dy;
+    let t = if l2 < 1e-6 { 0.0 } else { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2).clamp(0.0, 1.0) };
+    crate::gfx::dist(p, [a[0] + t * dx, a[1] + t * dy])
 }
 
 /// The JACK client PipeWire runs as (on top of jackdbus): "PipeWire", "PipeWire-…".

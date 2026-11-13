@@ -27,6 +27,10 @@ pub enum Action {
     ToggleSidebar,
     ToggleLabels,
     ToggleGrid,
+    /// Ports on the blocks with a wire per connection, or PatchMatrix's matrices.
+    ToggleMatrices,
+    /// Remove one connection (by port names).
+    Disconnect(String, String),
     ToggleSnap,
     BufferMenu(Rect),
     ScaleMenu(Rect),
@@ -719,18 +723,34 @@ impl App {
     }
 
     /// An expanded node's port rows: inputs, then outputs (graph port indices).
-    pub fn body_ports(&self, i: usize) -> Vec<usize> {
+    /// The ports on a node's body: (port, row, side). Ports view: the current type's inputs down
+    /// the left half (side 0) and outputs down the right (side 1), every type when expanded.
+    /// Matrix view: nothing unless expanded, then every port on a full-width row (side 2),
+    /// inputs first.
+    pub fn body_layout(&self, i: usize) -> Vec<(usize, usize, u8)> {
         let n = &self.model.nodes[i];
-        n.ins.iter().chain(&n.outs).copied().collect()
+        let expanded = self.is_expanded(i);
+        if self.layout.view.matrices {
+            if !expanded {
+                return Vec::new();
+            }
+            return n.ins.iter().chain(&n.outs).enumerate().map(|(r, &p)| (p, r, 2)).collect();
+        }
+        let (ins, outs) = if expanded { (n.ins.clone(), n.outs.clone()) } else { (n.ins_of(&self.graph, self.kind), n.outs_of(&self.graph, self.kind)) };
+        ins.iter().enumerate().map(|(r, &p)| (p, r, 0)).chain(outs.iter().enumerate().map(|(r, &p)| (p, r, 1))).collect()
     }
 
-    /// Height of an expanded node's port list (0 when folded), world units.
+    pub fn body_ports(&self, i: usize) -> Vec<usize> {
+        self.body_layout(i).into_iter().map(|(p, _, _)| p).collect()
+    }
+
+    /// Height of a node's port list (0 when there is none), world units.
     pub fn body_h(&self, i: usize) -> f32 {
-        if !self.is_expanded(i) {
+        let rows = self.body_layout(i).iter().map(|&(_, r, _)| r + 1).max().unwrap_or(0);
+        if rows == 0 {
             return 0.0;
         }
-        let n = &self.model.nodes[i];
-        (n.ins.len() + n.outs.len()) as f32 * theme::PORT_ROW + 2.0 * theme::BODY_PAD
+        rows as f32 * theme::PORT_ROW + 2.0 * theme::BODY_PAD
     }
 
     /// The whole node (header and port list), world units.
@@ -916,6 +936,13 @@ impl App {
                 self.layout.view.sidebar = !self.layout.view.sidebar;
                 self.layout_changed();
             }
+            Action::ToggleMatrices => {
+                self.layout.view.matrices = !self.layout.view.matrices;
+                self.canvas.drag = crate::canvas::Drag::None;
+                self.refresh_matrices();
+                self.layout_changed();
+            }
+            Action::Disconnect(o, i) => self.disconnect_names(&o, &i),
             Action::ToggleGrid => {
                 self.layout.view.grid = !self.layout.view.grid;
                 self.layout_changed();

@@ -99,6 +99,7 @@ impl UiState {
             MenuItem::new("Undo (Ctrl+Z)", Action::Undo),
             MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo),
             MenuItem::new("Show sidebar", Action::ToggleSidebar).checked(sidebar),
+            MenuItem::new("Matrices (PatchMatrix view, M)", Action::ToggleMatrices),
             MenuItem::new("Port names on matrices", Action::ToggleLabels).checked(labels),
             MenuItem::new("Show grid (G)", Action::ToggleGrid).checked(grid),
             MenuItem::new("Snap to grid (Shift+G)", Action::ToggleSnap).checked(snap),
