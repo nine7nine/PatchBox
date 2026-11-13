@@ -998,6 +998,13 @@ impl App {
         if self.source == crate::app::Source::Jack && is_pipewire(&n.key.group) {
             items.push(I::new("Open PipeWire's graph", Action::OpenPipeWire));
         }
+        // Ardour's tracks, Carla's plugins: a block each, or back into one.
+        let client = n.key.group.split('/').next().unwrap_or(&n.key.group).to_string();
+        if self.layout.tracks.contains(&client) {
+            items.push(I::new("One block for the whole client", Action::Tracks(client, false)));
+        } else if crate::model::track_count(&self.graph, &client) >= 2 {
+            items.push(I::new("A block per track / plugin", Action::Tracks(client, true)));
+        }
         items.push(I::new("Rename…", Action::Rename(id.clone())));
         if self.layout.names.contains_key(&id) {
             items.push(I::new("Its JACK name again", Action::SetName(id.clone(), String::new())));

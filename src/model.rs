@@ -88,6 +88,21 @@ pub struct Model {
     pub group_of: HashMap<usize, (usize, usize)>,
 }
 
+/// A port's track or plugin: Ardour's and Mixbus's "Track/port", Carla's "Plugin:port".
+pub fn split_track(short: &str) -> Option<(&str, &str)> {
+    let at = short.find(['/', ':'])?;
+    let (t, rest) = (&short[..at], &short[at + 1..]);
+    (!t.trim().is_empty() && !rest.trim().is_empty()).then_some((t, rest))
+}
+
+/// How many tracks or plugins a client's ports name (a block per track is offered from 2).
+pub fn track_count(g: &Graph, client: &str) -> usize {
+    let mut t: Vec<&str> = g.ports.iter().filter(|p| p.client == client).filter_map(|p| split_track(&p.short).map(|(t, _)| t)).collect();
+    t.sort();
+    t.dedup();
+    t.len()
+}
+
 /// a2j's port names: "<Client> [<id>] (capture|playback): <port>".
 pub fn a2j_split(short: &str) -> Option<(&str, &str)> {
     let (head, port) = short.split_once("): ")?;
@@ -206,11 +221,17 @@ impl Model {
             if p.client == own_client {
                 continue;
             }
+            // A client shown per track: the track's port (its name without the track) goes to
+            // the track's block, titled after it, the client above it.
+            let track = if layout.tracks.contains(&p.client) && p.client != "a2j" { split_track(&p.short) } else { None };
             let (group, title, sub, hw) = if p.client == "a2j" {
                 match a2j_split(&p.short) {
                     Some((dev, _)) => (format!("a2j/{dev}"), dev.to_string(), Some("a2j".to_string()), true),
                     None => ("a2j".to_string(), "a2j".to_string(), None, true),
                 }
+            } else if let Some((t, _)) = track {
+                let client = g.client_pretty.get(&p.client).cloned().unwrap_or_else(|| p.client.clone());
+                (format!("{}/{t}", p.client), t.to_string(), Some(client), p.is_physical())
             } else {
                 let title = g.client_pretty.get(&p.client).cloned().unwrap_or_else(|| p.client.clone());
                 (p.client.clone(), title, None, p.is_physical())
@@ -246,7 +267,10 @@ impl Model {
                 .get(&format!("port:{}", p.name))
                 .cloned()
                 .or_else(|| p.pretty.clone())
-                .unwrap_or_else(|| graceful_port(&p.client, &p.short));
+                .unwrap_or_else(|| match track {
+                    Some((_, rest)) => graceful_port(&p.client, rest),
+                    None => graceful_port(&p.client, &p.short),
+                });
         }
         for n in &m.nodes {
             find_pairs(g, &n.outs, n.physical, &mut m.partner);
@@ -325,6 +349,16 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn tracks_and_plugins() {
+        assert_eq!(split_track("Kick/audio_in 1"), Some(("Kick", "audio_in 1")));
+        assert_eq!(split_track("Calf Compressor:In L"), Some(("Calf Compressor", "In L")));
+        assert_eq!(split_track("capture_1"), None);
+        assert_eq!(split_track("/x"), None);
+        assert_eq!(split_track("x/"), None);
+    }
+
     use super::*;
 
     #[test]

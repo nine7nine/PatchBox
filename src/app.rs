@@ -74,6 +74,8 @@ pub enum Action {
     /// Ask for a group's name and size, from this port on; break up this port's group.
     GroupPrompt(String),
     Ungroup(String),
+    /// Show a client as a block per track / plugin, or as one.
+    Tracks(String, bool),
     /// Our names to JACK's metadata on/off.
     ToggleExportNames,
     /// The find bar (Ctrl+F): open, close, go to a result.
@@ -1493,6 +1495,25 @@ impl App {
                 d.note = format!("From {port}: they connect as one, 1:1 (Ctrl+drag one port alone)");
                 d.edit("name");
                 self.dialog = Some(d);
+            }
+            Action::Tracks(client, on) => {
+                if on {
+                    self.layout.tracks.insert(client.clone());
+                } else {
+                    self.layout.tracks.remove(&client);
+                }
+                self.remodel();
+                self.place_new_nodes(false);
+                // The new blocks (and the client's own, back in one) push the others aside.
+                let prefix = format!("M:{client}");
+                let mine: Vec<usize> = (0..self.model.nodes.len()).filter(|&i| self.model.nodes[i].key.id().starts_with(&prefix)).collect();
+                let was = self.layout.view.no_overlap;
+                self.layout.view.no_overlap = true;
+                for i in mine {
+                    self.repulse(i);
+                }
+                self.layout.view.no_overlap = was;
+                self.refresh_matrices();
             }
             Action::Ungroup(port) => {
                 let before = self.layout.port_groups.len();

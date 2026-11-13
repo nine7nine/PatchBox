@@ -79,6 +79,9 @@ pub struct Layout {
     /// Port groups made by the user: a name and its ports (full names, in order). They connect
     /// as one, 1:1; a group of two is a stereo pair.
     pub port_groups: Vec<PortGroup>,
+    /// Clients shown as a block per track or plugin (Ardour's "Track/port", Carla's
+    /// "Plugin:port").
+    pub tracks: BTreeSet<String>,
     pub view: View,
     /// Window size in points.
     pub window: Option<[u32; 2]>,
