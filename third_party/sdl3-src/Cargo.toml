@@ -1,0 +1,14 @@
+# Our SDL, for sdl3-sys's build from source (docs/sdl-vendoring.md).
+#
+# Replaces the crates.io `sdl3-src` through [patch.crates-io] in the top-level Cargo.toml. sdl3-sys
+# configures, builds and links whatever SOURCE_DIR names: here our CMake wrapper (cmake/), which
+# holds our configuration and builds the gitignored tree third_party/SDL (upstream at the pinned
+# tag, plus patches/sdl-patchbox.patch; scripts/sdl.sh provisions it). sdl3-sys keeps doing the
+# linking, so the bindings stay unforked and link order stays theirs.
+[package]
+name = "sdl3-src"
+# Must equal the version sdl3-sys pins (sdl3-sys 0.7.2 wants =3.4.18).
+version = "3.4.18"
+edition = "2024"
+publish = false
+build = "build.rs"

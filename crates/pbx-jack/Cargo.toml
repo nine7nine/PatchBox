@@ -1,0 +1,14 @@
+[package]
+name = "pbx-jack"
+version = "0.1.0"
+edition = "2024"
+description = "PatchBox's JACK client: graph snapshot, events, connections (thin libjack FFI)"
+license = "GPL-2.0-or-later"
+publish = false
+
+[dependencies]
+
+[[bin]]
+# Test tool: fake clients with ports and connections, for a private test server only.
+name = "pbx-fake-clients"
+path = "src/bin/pbx-fake-clients.rs"

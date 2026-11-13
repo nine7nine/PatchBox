@@ -1,0 +1,351 @@
+diff --git a/src/dynapi/SDL_dynapi.h b/src/dynapi/SDL_dynapi.h
+index 786d86e..c3b135e 100644
+--- a/src/dynapi/SDL_dynapi.h
++++ b/src/dynapi/SDL_dynapi.h
+@@ -43,7 +43,11 @@
+ #include "TargetConditionals.h"
+ #endif
+ 
+-#if defined(SDL_PLATFORM_PRIVATE) // probably not useful on private platforms.
++#if 1 // patchbox (from teams-sdl-cef): a private build linked statically into one program and rebuilt with it, so
++      // no jump table (an indirect call per SDL call) and no SDL3_DYNAMIC_API override that would
++      // load some other SDL into the process.
++#define SDL_DYNAMIC_API 0
++#elif defined(SDL_PLATFORM_PRIVATE) // probably not useful on private platforms.
+ #define SDL_DYNAMIC_API 0
+ #elif defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE // probably not useful on iOS.
+ #define SDL_DYNAMIC_API 0
+diff --git a/src/events/SDL_events.c b/src/events/SDL_events.c
+index 06f1053..077f61d 100644
+--- a/src/events/SDL_events.c
++++ b/src/events/SDL_events.c
+@@ -1591,6 +1591,20 @@ static Sint64 SDL_events_get_polling_interval(void)
+     return poll_intervalNS;
+ }
+ 
++/* patchbox (from teams-sdl-cef): is there anything a wakeup would have been sent for (see SDL_WaitEventTimeout_Device)? */
++static bool SDL_WakeupWorkPending(void)
++{
++    bool pending;
++
++    if (SDL_GetAtomicInt(&SDL_EventQ.count) > SDL_GetAtomicInt(&SDL_sentinel_pending)) {
++        return true;
++    }
++    SDL_LockMutex(SDL_main_callbacks_lock);
++    pending = (SDL_main_callbacks_head != NULL);
++    SDL_UnlockMutex(SDL_main_callbacks_lock);
++    return pending;
++}
++
+ static int SDL_WaitEventTimeout_Device(SDL_VideoDevice *_this, SDL_Window *wakeup_window, SDL_Event *event, Uint64 start, Sint64 timeoutNS)
+ {
+     Sint64 loop_timeoutNS = timeoutNS;
+@@ -1632,6 +1646,14 @@ static int SDL_WaitEventTimeout_Device(SDL_VideoDevice *_this, SDL_Window *wakeu
+             }
+         }
+         SDL_SetAtomicPointer(&_this->wakeup_window, wakeup_window);
++        /* patchbox (from teams-sdl-cef): an event pushed (or a main-thread callback queued) by another thread between
++         * the SDL_PeepEvents above and this store found no wakeup_window, so it sent no wakeup, and
++         * the wait slept through it until the timeout (up to 33 ms in our main loop: a late CEF
++         * message loop, a late bridge reply). Pushes wake us from here on; look once more. */
++        if (SDL_WakeupWorkPending()) {
++            SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
++            continue;
++        }
+         status = _this->WaitEventTimeout(_this, loop_timeoutNS);
+         SDL_SetAtomicPointer(&_this->wakeup_window, NULL);
+         if (status == 0 && poll_intervalNS != SDL_MAX_SINT64 && loop_timeoutNS == poll_intervalNS) {
+diff --git a/src/video/wayland/SDL_waylandevents.c b/src/video/wayland/SDL_waylandevents.c
+index c779a63..096f5e3 100644
+--- a/src/video/wayland/SDL_waylandevents.c
++++ b/src/video/wayland/SDL_waylandevents.c
+@@ -21,6 +21,9 @@
+ 
+ #include "SDL_internal.h"
+ 
++#include <poll.h> // patchbox (from teams-sdl-cef): Wayland_WaitDisplayOrWakeup
++#include <unistd.h>
++
+ #ifdef SDL_VIDEO_DRIVER_WAYLAND
+ 
+ #include "../../core/unix/SDL_poll.h"
+@@ -495,12 +498,60 @@ void Wayland_SendWakeupEvent(SDL_VideoDevice *_this, SDL_Window *window)
+ {
+     SDL_VideoData *d = _this->internal;
+ 
++    /* patchbox (from teams-sdl-cef): wake the waiting thread directly. The sync below costs a round trip through
++     * the compositor, so every wakeup (each CEF message-loop request and bridge reply posted while
++     * the main loop idles) waited on the compositor's own scheduling. */
++    if (d->wakeup_fd >= 0) {
++        const Uint64 one = 1;
++        if (write(d->wakeup_fd, &one, sizeof(one)) == sizeof(one)) {
++            return;
++        }
++    }
++
+     // Queue a sync event to unblock the main event queue if it's being waited on.
+     struct wl_callback *cb = wl_display_sync(d->display);
+     wl_callback_add_listener(cb, &sync_listener, NULL);
+     WAYLAND_wl_display_flush(d->display);
+ }
+ 
++/* patchbox (from teams-sdl-cef): wait for the display fd (readable, or writable with `write`) or the wakeup eventfd
++ * (Wayland_SendWakeupEvent), to the nanosecond like SDL_IOReady. Returns 1 when the display is
++ * ready, 2 when only the wakeup fired (drained), 0 on timeout, -1 on error with errno set (EINTR
++ * included, as SDL_IOR_NO_RETRY would). */
++static int Wayland_WaitDisplayOrWakeup(SDL_VideoData *d, int display_fd, bool write, Sint64 timeoutNS)
++{
++    const short display_events = write ? POLLOUT : POLLIN;
++
++    if (d->wakeup_fd < 0) {
++        return SDL_IOReady(display_fd, (write ? SDL_IOR_WRITE : SDL_IOR_READ) | SDL_IOR_NO_RETRY, timeoutNS);
++    }
++
++    struct pollfd fds[2];
++    fds[0].fd = display_fd;
++    fds[0].events = display_events;
++    fds[0].revents = 0;
++    fds[1].fd = d->wakeup_fd;
++    fds[1].events = POLLIN;
++    fds[1].revents = 0;
++    struct timespec timeout;
++    if (timeoutNS >= 0) {
++        timeout.tv_sec = (time_t)(timeoutNS / SDL_NS_PER_SECOND);
++        timeout.tv_nsec = (long)(timeoutNS % SDL_NS_PER_SECOND);
++    }
++    const int ret = ppoll(fds, 2, timeoutNS >= 0 ? &timeout : NULL, NULL);
++    if (ret <= 0) {
++        return ret;
++    }
++    if (fds[1].revents & POLLIN) {
++        Uint64 count;
++        (void)read(d->wakeup_fd, &count, sizeof(count));
++        if (!(fds[0].revents & (display_events | POLLERR | POLLHUP))) {
++            return 2;
++        }
++    }
++    return 1;
++}
++
+ int Wayland_WaitEventTimeout(SDL_VideoDevice *_this, Sint64 timeoutNS)
+ {
+     SDL_VideoData *d = _this->internal;
+@@ -525,7 +576,11 @@ int Wayland_WaitEventTimeout(SDL_VideoDevice *_this, Sint64 timeoutNS)
+     wl_list_for_each (seat, &d->seat_list, link) {
+         if (keyboard_repeat_is_set(&seat->keyboard.repeat)) {
+             const Uint64 elapsed = start - seat->keyboard.repeat.sdl_press_time_ns;
+-            const Uint64 next_repeat_wait_time = (seat->keyboard.repeat.next_repeat_ns - elapsed) + 1;
++            /* patchbox (from teams-sdl-cef): a repeat already due (the thread was preempted between the pump and this
++             * wait) wrapped the unsigned subtraction, so the wait ran its full timeout and the held
++             * key then fired a burst. */
++            const Uint64 next_repeat_wait_time = elapsed < seat->keyboard.repeat.next_repeat_ns ?
++                (seat->keyboard.repeat.next_repeat_ns - elapsed) + 1 : 0;
+             if (timeoutNS < 0 || next_repeat_wait_time <= timeoutNS) {
+                 timeoutNS = next_repeat_wait_time;
+                 poll_alarm_set = true;
+@@ -545,7 +600,12 @@ int Wayland_WaitEventTimeout(SDL_VideoDevice *_this, Sint64 timeoutNS)
+ 
+         if (ret == -1 && errno == EAGAIN) {
+             // Unable to write to the socket; poll until the socket can be written to, it times out, or is interrupted.
+-            ret = SDL_IOReady(display_fd, SDL_IOR_WRITE | SDL_IOR_NO_RETRY, timeoutNS);
++            ret = Wayland_WaitDisplayOrWakeup(d, display_fd, true, timeoutNS);
++            if (ret == 2) {
++                // patchbox (from teams-sdl-cef): woken by another thread (a pushed event) while the compositor reads slowly.
++                WAYLAND_wl_display_cancel_read(d->display);
++                return 1;
++            }
+ 
+             if (ret <= 0) {
+                 // The poll operation timed out or experienced an error, so see if there are any events to read without waiting.
+@@ -567,7 +627,12 @@ int Wayland_WaitEventTimeout(SDL_VideoDevice *_this, Sint64 timeoutNS)
+         }
+ 
+         // Use SDL_IOR_NO_RETRY to catch EINTR.
+-        ret = SDL_IOReady(display_fd, SDL_IOR_READ | SDL_IOR_NO_RETRY, timeoutNS);
++        ret = Wayland_WaitDisplayOrWakeup(d, display_fd, false, timeoutNS);
++        if (ret == 2) {
++            // patchbox (from teams-sdl-cef): another thread woke us (it pushed an event); no display events to read.
++            WAYLAND_wl_display_cancel_read(d->display);
++            return 1;
++        }
+         if (ret <= 0) {
+             // Timeout or error, cancel the read.
+             WAYLAND_wl_display_cancel_read(d->display);
+@@ -591,6 +656,25 @@ int Wayland_WaitEventTimeout(SDL_VideoDevice *_this, Sint64 timeoutNS)
+     return 1;
+ }
+ 
++/* patchbox (from teams-sdl-cef): after a dispatch, drop the selection offer of each seat that left our windows
++ * and did not enter another (see keyboard_handle_leave). */
++static void Wayland_DropLeftSelectionOffers(SDL_VideoData *d)
++{
++    SDL_WaylandSeat *seat;
++
++    wl_list_for_each (seat, &d->seat_list, link) {
++        if (!seat->keyboard.selection_offer_left) {
++            continue;
++        }
++        seat->keyboard.selection_offer_left = false;
++        if (!seat->keyboard.focus && seat->data_device && seat->data_device->selection_offer) {
++            Wayland_data_offer_destroy(seat->data_device->selection_offer);
++            seat->data_device->selection_offer = NULL;
++            Wayland_data_offer_notify_from_mimes(NULL, false);
++        }
++    }
++}
++
+ void Wayland_PumpEvents(SDL_VideoDevice *_this)
+ {
+     SDL_VideoData *d = _this->internal;
+@@ -658,6 +742,8 @@ void Wayland_PumpEvents(SDL_VideoDevice *_this)
+     }
+ 
+     if (ret >= 0) {
++        Wayland_DropLeftSelectionOffers(d);
++
+         // Synthesize key repeat events.
+         wl_list_for_each (seat, &d->seat_list, link) {
+             if (keyboard_repeat_is_set(&seat->keyboard.repeat)) {
+@@ -1236,6 +1322,10 @@ static void pointer_dispatch_axis(SDL_WaylandSeat *seat)
+         break;
+     }
+ 
++    // patchbox (from teams-sdl-cef) (from Paneless): a leave in the same pointer frame clears the focus; the scroll has no window.
++    if (!seat->pointer.focus) {
++        return;
++    }
+     SDL_SendMouseWheel(seat->pointer.pending_frame.timestamp_ns,
+                        seat->pointer.focus->sdlwindow, seat->pointer.sdl_id, x, y, direction);
+ }
+@@ -2152,12 +2242,13 @@ static void keyboard_handle_leave(void *data, struct wl_keyboard *keyboard,
+         SDL_SetMouseFocus(NULL);
+     }
+ 
+-    // The spec says that data offers are no longer valid when keyboard focus is lost.
+-    if (seat->data_device->selection_offer) {
+-        Wayland_data_offer_destroy(seat->data_device->selection_offer);
+-        seat->data_device->selection_offer = NULL;
+-        Wayland_data_offer_notify_from_mimes(NULL, false);
+-    }
++    /* patchbox (from teams-sdl-cef): the spec says the selection offer is no longer valid once the *client* loses
++     * keyboard focus, but a leave is also sent when focus moves to another of our own windows (a
++     * popup, a second window), with an enter on that one right after, and the compositor resends
++     * no selection within a client (KWin). Destroying the offer here (3.4.18) left every later
++     * paste in any of our windows empty until the clipboard changed. Decided after the dispatch
++     * instead (Wayland_DropLeftSelectionOffers): dropped only if no window of ours has focus. */
++    seat->keyboard.selection_offer_left = true;
+ }
+ 
+ static bool keyboard_input_get_text(char text[8], const SDL_WaylandSeat *seat, uint32_t key, bool down, bool *handled_by_ime)
+diff --git a/src/video/wayland/SDL_waylandevents_c.h b/src/video/wayland/SDL_waylandevents_c.h
+index ad06528..69ac6ca 100644
+--- a/src/video/wayland/SDL_waylandevents_c.h
++++ b/src/video/wayland/SDL_waylandevents_c.h
+@@ -138,6 +138,7 @@ typedef struct SDL_WaylandSeat
+         struct zwp_input_timestamps_v1 *timestamps;
+         struct zwp_keyboard_shortcuts_inhibitor_v1 *key_inhibitor;
+         SDL_WindowData *focus;
++        bool selection_offer_left; // patchbox (from teams-sdl-cef): a leave since the last pump (keyboard_handle_leave)
+         SDL_Keymap **sdl_keymap;
+         char *current_locale;
+ 
+diff --git a/src/video/wayland/SDL_waylandmouse.c b/src/video/wayland/SDL_waylandmouse.c
+index 2e94c45..daaf965 100644
+--- a/src/video/wayland/SDL_waylandmouse.c
++++ b/src/video/wayland/SDL_waylandmouse.c
+@@ -403,7 +403,7 @@ static int SDLCALL Wayland_CursorThreadFunc(void *data)
+     return 0;
+ }
+ 
+-static bool Wayland_StartCursorThread(SDL_VideoData *data)
++static SDL_UNUSED bool Wayland_StartCursorThread(SDL_VideoData *data) // patchbox (from teams-sdl-cef): unused, see Wayland_InitMouse
+ {
+     if (!cursor_thread_context.thread) {
+         cursor_thread_context.queue = Wayland_DisplayCreateQueue(data->display, "SDL Cursor Surface Queue");
+@@ -1496,9 +1496,12 @@ void Wayland_InitMouse(SDL_VideoData *data)
+     mouse->SetRelativeMouseMode = Wayland_SetRelativeMouseMode;
+     mouse->GetGlobalMouseState = Wayland_GetGlobalMouseState;
+ 
+-    if (!Wayland_StartCursorThread(data)) {
+-        SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "wayland: Failed to start cursor animation event thread");
+-    }
++    /* patchbox (from teams-sdl-cef) (from Paneless): no cursor animation thread. It exists only for animated cursors
++     * (KWin draws the system cursors itself through cursor-shape; CEF's custom cursors are still
++     * images), and it sits in prepare_read on the display fd for the whole session: libwayland then
++     * makes every main-thread read_events wait until this thread wakes and does the read, an extra
++     * wake-up and context switch per batch of input. Without it SDL takes the path it already has
++     * for when the thread cannot start (cursor surfaces on the main queue). */
+ 
+     SDL_HitTestResult r = SDL_HITTEST_NORMAL;
+     while (r <= SDL_HITTEST_RESIZE_LEFT) {
+diff --git a/src/video/wayland/SDL_waylandvideo.c b/src/video/wayland/SDL_waylandvideo.c
+index 2f31581..ea2cd05 100644
+--- a/src/video/wayland/SDL_waylandvideo.c
++++ b/src/video/wayland/SDL_waylandvideo.c
+@@ -40,6 +40,7 @@
+ #include "SDL_waylandwindow.h"
+ 
+ #include <fcntl.h>
++#include <sys/eventfd.h> // patchbox (from teams-sdl-cef): wakeup_fd
+ #include <sys/types.h>
+ #include <unistd.h>
+ #include <errno.h>
+@@ -476,6 +477,9 @@ struct wl_event_queue *Wayland_DisplayCreateQueue(struct wl_display *display, co
+ static void Wayland_DeleteDevice(SDL_VideoDevice *device)
+ {
+     SDL_VideoData *data = device->internal;
++    if (data->wakeup_fd >= 0) {
++        close(data->wakeup_fd);
++    }
+     if (data->display && !data->display_externally_owned) {
+         WAYLAND_wl_display_disconnect(data->display);
+         SDL_ClearProperty(SDL_GetGlobalProperties(), SDL_PROP_GLOBAL_VIDEO_WAYLAND_WL_DISPLAY_POINTER);
+@@ -600,6 +604,9 @@ static SDL_VideoDevice *Wayland_CreateDevice(bool require_preferred_protocols)
+ 
+     data->initializing = true;
+     data->display = display;
++    /* patchbox (from teams-sdl-cef): other threads wake the event wait through this eventfd instead of a
++     * wl_display sync round trip through the compositor (see Wayland_SendWakeupEvent). */
++    data->wakeup_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+     data->display_externally_owned = display_is_external;
+     data->scale_to_display_enabled = SDL_GetHintBoolean(SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY, false);
+     WAYLAND_wl_list_init(&data->seat_list);
+@@ -1252,7 +1259,7 @@ static void Wayland_init_xdg_output(SDL_VideoData *d)
+     }
+ }
+ 
+-static void Wayland_InitColorManager(SDL_VideoData *d)
++static SDL_UNUSED void Wayland_InitColorManager(SDL_VideoData *d) // patchbox (from teams-sdl-cef): unused, see handle_registry_global
+ {
+     for (int i = 0; i < d->output_count; ++i) {
+         SDL_DisplayData *disp = d->output_list[i];
+@@ -1349,11 +1356,12 @@ static void handle_registry_global(void *data, struct wl_registry *registry, uin
+         d->wp_alpha_modifier_v1 = wl_registry_bind(d->registry, id, &wp_alpha_modifier_v1_interface, 1);
+     } else if (SDL_strcmp(interface, "xdg_toplevel_icon_manager_v1") == 0) {
+         d->xdg_toplevel_icon_manager_v1 = wl_registry_bind(d->registry, id, &xdg_toplevel_icon_manager_v1_interface, 1);
+-    } else if (SDL_strcmp(interface, "frog_color_management_factory_v1") == 0) {
+-        d->frog_color_management_factory_v1 = wl_registry_bind(d->registry, id, &frog_color_management_factory_v1_interface, 1);
+-    } else if (SDL_strcmp(interface, "wp_color_manager_v1") == 0) {
+-        d->wp_color_manager_v1 = wl_registry_bind(d->registry, id, &wp_color_manager_v1_interface, SDL_min(version, 2));
+-        Wayland_InitColorManager(d);
++    /* patchbox (from teams-sdl-cef) (from Paneless): frog_color_management_factory_v1 and wp_color_manager_v1 are
++     * not bound. SDL uses them only to report HDR/ICC properties of outputs and windows (it never
++     * sets a surface's colour description), which we never read, and it fetches every change with
++     * a synchronous compositor round trip on the main thread, inside event dispatch (a window's
++     * first map, a move to another output, KWin colour or HDR changes). The windows stay sRGB to
++     * the compositor either way. */
+     } else if (SDL_strcmp(interface, "wp_pointer_warp_v1") == 0) {
+         d->wp_pointer_warp_v1 = wl_registry_bind(d->registry, id, &wp_pointer_warp_v1_interface, 1);
+     } else if (SDL_strcmp(interface, "zwp_pointer_gestures_v1") == 0) {
+diff --git a/src/video/wayland/SDL_waylandvideo.h b/src/video/wayland/SDL_waylandvideo.h
+index 1339da8..51fde3a 100644
+--- a/src/video/wayland/SDL_waylandvideo.h
++++ b/src/video/wayland/SDL_waylandvideo.h
+@@ -49,6 +49,7 @@ typedef struct
+ struct SDL_VideoData
+ {
+     struct wl_display *display;
++    int wakeup_fd; // patchbox (from teams-sdl-cef): eventfd that wakes Wayland_WaitEventTimeout from other threads, or -1
+     struct wl_registry *registry;
+     struct wl_compositor *compositor;
+     struct wl_shm *shm;

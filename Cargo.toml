@@ -1,0 +1,55 @@
+[workspace]
+members = [".", "crates/pbx-jack"]
+resolver = "3"
+
+[package]
+name = "patchbox"
+version = "0.1.0"
+edition = "2024"
+description = "JACK patchbay and session manager (SDL3 + GL)"
+license = "GPL-2.0-or-later"
+publish = false
+
+[[bin]]
+name = "patchbox"
+path = "src/main.rs"
+
+[features]
+# Our own SDL: static, Wayland-only, patched (third_party/sdl3-src, docs/sdl-vendoring.md), the way
+# teams-sdl-cef and Paneless vendor theirs. `--no-default-features` links the system's libSDL3.so
+# instead (A/B runs).
+default = ["vendored-sdl"]
+vendored-sdl = ["sdl3/build-from-source-static", "dep:sdl3-sys"]
+
+[dependencies]
+pbx-jack = { path = "crates/pbx-jack" }
+sdl3 = { version = "0.20", default-features = false }
+# Direct only so build.rs gets DEP_SDL3_OUT_DIR (where sdl3-sys built our SDL) for the link flags.
+# Pinned: our third_party/sdl3-src is SDL 3.4.18, which sdl3-sys 0.7.2 builds (0.7.3 wants 3.4.20).
+sdl3-sys = { version = "=0.7.2", optional = true }
+glow = "0.16"
+ab_glyph = "0.2.32"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+png = "0.17"
+# Window shadows on KWin (shadow.rs): org_kde_kwin_shadow on SDL's own wl_display/wl_surface.
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-protocols-plasma = { version = "0.3", features = ["client"] }
+
+# sdl3-src is ours: the CMake wrapper that builds third_party/SDL with our configuration.
+[patch.crates-io]
+sdl3-src = { path = "third_party/sdl3-src" }
+
+[profile.dev]
+debug = "line-tables-only"
+
+# SDL is built by sdl3-sys's build script at that package's optimisation level: an -O0 SDL in debug
+# builds would skew every measurement of the main loop.
+[profile.dev.package.sdl3-sys]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
