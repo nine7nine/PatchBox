@@ -27,7 +27,8 @@ puts it in the graph.
 
 | | |
 |---|---|
-| Top bar | port type (AUDIO / MIDI / CV / OSC, or keys 1–4), sample rate and latency, buffer size (menu), xruns (click: reset), DSP load |
+| Title bar | window buttons, ☰ menu (views, scale, grid, undo…), the session's name |
+| Toolbar | session (New, Open, Save; dropped first when narrow), transport (rewind, play/pause, stop, time and BBT), port type (AUDIO / MIDI / CV / OSC, keys 1–4), view (Ports, Matrix, Vertical), JACK (rate and latency, buffer size menu, xruns: click to reset, DSP load) |
 | Views | **Ports** (default): each block shows its ports of the current type, inputs left, outputs right, a wire per connection; **Matrices** (M): PatchMatrix's view, one wire per client pair through a matrix of their ports. Both keep the AUDIO / MIDI / CV / OSC split |
 | Port | drag onto another port: connect / disconnect; onto a block: its first free compatible port; hover: full name, aliases, connections |
 | Wire (ports view) | hover: lights up with its name; right-click: disconnect |
@@ -72,9 +73,12 @@ patchbox-ctl connect SRC DST | disconnect SRC DST | graph | state | watch | quit
 
 ## JACK server
 
-The sidebar's JACK section starts, stops and restarts the server through jackdbus, and Settings
-edits its driver and engine parameters (what jackdbus offers, with its constraints and
-descriptions). The transport (bottom left; Space) plays, pauses, stops and shows time and BBT.
+PatchBox is built for jack2dbus-nspa: the server is jackdbus's. The sidebar's JACK · jackdbus
+section starts, stops and restarts it, and Settings (a toggle) edits the driver and engine
+parameters jackdbus offers, with their constraints and descriptions. A session can remember
+them (☰ session menu) and puts them back when it opens. PatchBox never starts jackd itself; with
+a plain jackd the patchbay and transport work, server control doesn't. The transport is in the
+toolbar (Space: play/pause).
 
 ## Layout of the tree
 

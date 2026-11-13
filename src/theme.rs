@@ -23,6 +23,9 @@ pub const TEXT_DIM: Color = rgb(110, 110, 110);
 
 // Window chrome.
 pub const BAR_BG: Color = rgb(24, 24, 26);
+pub const TITLE_BG: Color = rgb(16, 16, 18);
+pub const GROUP_BG: Color = rgb(31, 31, 34);
+pub const LCD_BG: Color = rgb(10, 10, 12);
 pub const PANEL_BG: Color = rgb(30, 30, 32);
 pub const PANEL_LINE: Color = rgb(52, 52, 56);
 pub const BUTTON: Color = rgb(45, 45, 45);
@@ -65,6 +68,9 @@ pub const WIRE_ALPHA: f32 = 0.78;
 pub const FONT: f32 = 13.0;
 pub const FONT_SMALL: f32 = 11.0;
 pub const TOPBAR_H: f32 = 34.0;
+/// The title bar (desktop scale) and the toolbar row under it (interface scale), points.
+pub const TITLE_H: f32 = 30.0;
+pub const TOOLBAR_H: f32 = 46.0;
 pub const SIDEBAR_W: f32 = 250.0;
 pub const NODE_W: f32 = 200.0;
 pub const NODE_H: f32 = 24.0;

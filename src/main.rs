@@ -248,7 +248,7 @@ fn main() {
                         app.zoom_slider_drag(px);
                         continue;
                     }
-                    let ch = app.ui.csd.button_at(px, py, app.win[0], app.ui.bar_h, app.chrome);
+                    let ch = app.ui.csd.button_at(px, py, app.win[0], app.ui.title_h, app.chrome);
                     let hh = app.ui.hits.iter().rposition(|(r, _)| r.contains(px, py));
                     if ch != app.ui.csd_hover || hh != app.ui.hover_hit {
                         app.ui.csd_hover = ch;
@@ -281,7 +281,7 @@ fn main() {
                         continue;
                     }
                     if mouse_btn == MouseButton::Left
-                        && let Some(b) = app.ui.csd.button_at(px, py, app.win[0], app.ui.bar_h, app.chrome)
+                        && let Some(b) = app.ui.csd.button_at(px, py, app.win[0], app.ui.title_h, app.chrome)
                     {
                         app.apply(Action::Window(b));
                         continue;
@@ -307,7 +307,7 @@ fn main() {
                             app.ui.open_menu([px, py], items);
                             app.redraw = true;
                         }
-                        if py < app.ui.bar_h && clicks == 2 && app.hit_action(px, py).is_none() {
+                        if py < app.ui.title_h && clicks == 2 && app.hit_action(px, py).is_none() {
                             app.window_cmd = Some(WindowCmd::ToggleMaximize);
                         }
                     } else if app.canvas.area.contains(px, py) {
@@ -473,7 +473,7 @@ fn main() {
             if let Ok(mut g) = geom.lock() {
                 g.w = app.win[0];
                 g.h = app.win[1];
-                g.bar_h = app.ui.bar_h;
+                g.bar_h = app.ui.title_h;
                 g.controls = app.bar_controls();
                 g.density = density;
                 g.scale = app.chrome;

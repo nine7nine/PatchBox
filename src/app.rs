@@ -1412,7 +1412,7 @@ impl App {
             Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Server) => self.dialog = None,
             Action::ServerSettings => {
                 self.server.send(crate::server::Cmd::LoadConfig);
-                let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::Server, "JACK server");
+                let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::Server, "JACK server (jackdbus)");
                 d.note = "Driver and engine settings apply when the server (re)starts; jackdbus keeps them.".into();
                 d.set_rows(self.server_rows());
                 d.buttons = self.server_buttons();
