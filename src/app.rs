@@ -30,6 +30,7 @@ pub enum Action {
     ToggleNoOverlap,
     /// Ports on the blocks with a wire per connection, or PatchMatrix's matrices.
     ToggleMatrices,
+    ToggleVertical,
     /// Remove one connection (by port names).
     Disconnect(String, String),
     ToggleSnap,
@@ -697,6 +698,7 @@ impl App {
         }
         let depths = self.depths();
         const COL_W: f32 = 460.0;
+        const ROW_H: f32 = 190.0;
         const X0: f32 = 160.0;
         const GAP: f32 = 48.0;
         // Lowest edge taken in each column (headers and expanded port lists).
@@ -704,7 +706,8 @@ impl App {
         for (i, node) in self.model.nodes.iter().enumerate() {
             if self.layout.nodes.contains_key(&node.key.id()) {
                 let b = bottom.entry(depths[i]).or_insert(f32::MIN);
-                *b = b.max(self.node_extent(i).bottom());
+                let e = self.node_extent(i);
+                *b = b.max(if self.vertical() { e.right() } else { e.bottom() });
             }
         }
         // Column by column, left to right; within a column, blocks in the order of where what
@@ -723,19 +726,34 @@ impl App {
         }
         for col in cols {
             let mut here: Vec<usize> = missing.iter().copied().filter(|&i| depths[i] == col).collect();
+            let vertical = self.vertical();
             let key = |i: usize, me: &App| -> f32 {
                 let ys: Vec<f32> = feeds
                     .get(&i)
                     .map(|v| v.iter().filter(|&&a| depths[a] < col).filter_map(|&a| me.layout.nodes.get(&me.model.nodes[a].key.id()).map(|p| p[1])).collect())
                     .unwrap_or_default();
-                if ys.is_empty() { f32::MAX } else { ys.iter().sum::<f32>() / ys.len() as f32 }
+                let _ = &ys;
+                let along: Vec<f32> = feeds
+                    .get(&i)
+                    .map(|v| v.iter().filter(|&&a| depths[a] < col).filter_map(|&a| me.layout.nodes.get(&me.model.nodes[a].key.id()).map(|p| if me.vertical() { p[0] } else { p[1] })).collect())
+                    .unwrap_or_default();
+                if along.is_empty() { f32::MAX } else { along.iter().sum::<f32>() / along.len() as f32 }
             };
             here.sort_by(|&a, &b| key(a, self).total_cmp(&key(b, self)).then(self.model.nodes[a].title.to_lowercase().cmp(&self.model.nodes[b].title.to_lowercase())));
             for i in here {
-                let y = bottom.get(&col).map_or(80.0, |b| b + GAP + theme::NODE_H / 2.0);
-                let x = X0 + col as f32 * COL_W;
-                self.layout.nodes.insert(self.model.nodes[i].key.id(), [x, y]);
-                bottom.insert(col, self.node_extent(i).bottom());
+                if vertical {
+                    // Rows by depth, left to right within a row.
+                    let w = self.node_size(i)[0];
+                    let x = bottom.get(&col).map_or(80.0, |r| r + GAP + w / 2.0);
+                    let y = 80.0 + col as f32 * ROW_H;
+                    self.layout.nodes.insert(self.model.nodes[i].key.id(), [x, y]);
+                    bottom.insert(col, self.node_extent(i).right());
+                } else {
+                    let y = bottom.get(&col).map_or(80.0, |b| b + GAP + theme::NODE_H / 2.0);
+                    let x = X0 + col as f32 * COL_W;
+                    self.layout.nodes.insert(self.model.nodes[i].key.id(), [x, y]);
+                    bottom.insert(col, self.node_extent(i).bottom());
+                }
             }
         }
         self.layout_changed();
@@ -767,8 +785,27 @@ impl App {
         self.body_layout(i).into_iter().map(|(p, _, _)| p).collect()
     }
 
+    /// The vertical ports layout is on (it applies to the ports view).
+    pub fn vertical(&self) -> bool {
+        self.layout.view.vertical && !self.layout.view.matrices
+    }
+
+    /// A block's header size, world units: fixed in the horizontal views; in the vertical one as
+    /// wide as its ports along an edge need.
+    pub fn node_size(&self, i: usize) -> [f32; 2] {
+        if !self.vertical() {
+            return [theme::NODE_W, theme::NODE_H];
+        }
+        let l = self.body_layout(i);
+        let n = l.iter().map(|&(_, r, _)| r + 1).max().unwrap_or(0);
+        [(n as f32 * VPORT + 24.0).max(theme::NODE_W * 0.7), theme::NODE_H * 1.5]
+    }
+
     /// Height of a node's port list (0 when there is none), world units.
     pub fn body_h(&self, i: usize) -> f32 {
+        if self.vertical() {
+            return 0.0;
+        }
         let rows = self.body_layout(i).iter().map(|&(_, r, _)| r + 1).max().unwrap_or(0);
         if rows == 0 {
             return 0.0;
@@ -779,7 +816,8 @@ impl App {
     /// The whole node (header and port list), world units.
     pub fn node_extent(&self, i: usize) -> Rect {
         let p = self.node_pos(i);
-        Rect::new(p[0] - theme::NODE_W / 2.0, p[1] - theme::NODE_H / 2.0, theme::NODE_W, theme::NODE_H + self.body_h(i))
+        let [w, h] = self.node_size(i);
+        Rect::new(p[0] - w / 2.0, p[1] - h / 2.0, w, h + self.body_h(i))
     }
 
     /// Move a node; its matrices follow halfway (PatchMatrix), or fully when both ends are it.
@@ -1002,6 +1040,18 @@ impl App {
             }
             Action::ToggleSidebar => {
                 self.layout.view.sidebar = !self.layout.view.sidebar;
+                self.layout_changed();
+            }
+            Action::ToggleVertical => {
+                self.layout.view.vertical = !self.layout.view.vertical;
+                if self.layout.view.vertical {
+                    self.layout.view.matrices = false;
+                }
+                self.canvas.drag = crate::canvas::Drag::None;
+                // The flow turns: lay the graph out again for it.
+                self.place_new_nodes(true);
+                self.refresh_matrices();
+                self.fit_pending = true;
                 self.layout_changed();
             }
             Action::ToggleMatrices => {
@@ -1531,6 +1581,9 @@ pub enum Source {
     Jack,
     PipeWire,
 }
+
+/// Spacing of the port squares along a block's edge (vertical layout), world units.
+pub const VPORT: f32 = 18.0;
 
 pub fn kind_from(s: &str) -> PortKind {
     match s {

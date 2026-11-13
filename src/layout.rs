@@ -22,6 +22,9 @@ pub struct View {
     /// PatchMatrix's matrices between clients, one wire per client pair. Off (the default):
     /// ports on the blocks and a wire per connection.
     pub matrices: bool,
+    /// Ports view only: signal flows top to bottom (Luluda's vertical layout), inputs along a
+    /// block's top edge, outputs along its bottom.
+    pub vertical: bool,
     /// Moving a block or a matrix lands its top-left corner on the grid.
     pub snap: bool,
     /// A moved block pushes the ones it lands on out of the way (RaySession's default).
@@ -33,7 +36,7 @@ pub struct View {
 
 impl Default for View {
     fn default() -> View {
-        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, snap: false, no_overlap: true, ui_scale: 1.25 }
+        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, vertical: false, snap: false, no_overlap: true, ui_scale: 1.25 }
     }
 }
 

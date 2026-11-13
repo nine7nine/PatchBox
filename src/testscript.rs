@@ -154,6 +154,7 @@ impl Script {
                         "e" => Keycode::E,
                         "g" => Keycode::G,
                         "m" => Keycode::M,
+                        "v" => Keycode::V,
                         "f" => Keycode::F,
                         "f9" => Keycode::F9,
                         "space" => Keycode::Space,

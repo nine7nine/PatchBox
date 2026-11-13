@@ -103,7 +103,8 @@ impl App {
 
     fn node_rect(&self, xf: &Xf, i: usize) -> Rect {
         let c = xf.s(self.node_pos(i));
-        Rect::centered(c[0], c[1], NODE_W * xf.z, NODE_H * xf.z)
+        let [w, h] = self.node_size(i);
+        Rect::centered(c[0], c[1], w * xf.z, h * xf.z)
     }
 
     fn matrix_rect(&self, xf: &Xf, m: &Matrix) -> Rect {
@@ -122,8 +123,23 @@ impl App {
         Some(Rect::new(r.x, r.bottom(), r.w, h * xf.z))
     }
 
-    /// Each port row of a node's body: (graph port index, row rectangle in pixels).
+    /// Each port row of a node's body: (graph port index, row rectangle in pixels). Vertical
+    /// layout: the square of each port on the block's top (inputs) or bottom (outputs) edge.
     fn port_rows(&self, xf: &Xf, i: usize) -> Vec<(usize, Rect)> {
+        if self.vertical() {
+            let r = self.node_rect(xf, i);
+            let step = crate::app::VPORT * xf.z;
+            let q = 2.4 * HANDLE_R * xf.z;
+            return self
+                .body_layout(i)
+                .into_iter()
+                .map(|(p, k, side)| {
+                    let cx = r.x + 12.0 * xf.z + (k as f32 + 0.5) * step;
+                    let cy = if side == 0 { r.y } else { r.bottom() };
+                    (p, Rect::centered(cx, cy, step.max(q), q * 1.6))
+                })
+                .collect();
+        }
         let Some(b) = self.body_rect(xf, i) else { return Vec::new() };
         let rh = PORT_ROW * xf.z;
         let top = b.y + BODY_PAD * xf.z;
@@ -149,8 +165,15 @@ impl App {
             if !self.visible(i) {
                 continue;
             }
+            let vertical = self.vertical();
+            let q = 1.2 * HANDLE_R * xf.z;
             for (p, r) in self.port_rows(xf, i) {
-                let a = if self.graph.ports[p].is_input() { [r.x, r.cy()] } else { [r.right(), r.cy()] };
+                let a = match (vertical, self.graph.ports[p].is_input()) {
+                    (true, true) => [r.cx(), r.cy() - q],
+                    (true, false) => [r.cx(), r.cy() + q],
+                    (false, true) => [r.x, r.cy()],
+                    (false, false) => [r.right(), r.cy()],
+                };
                 m.insert(p, a);
             }
         }
@@ -158,6 +181,15 @@ impl App {
     }
 
     /// A wire's curve (Luluda's: the bend grows with the distance, backwards wires loop round).
+    fn curve(&self, a: [f32; 2], b: [f32; 2], z: f32) -> [[f32; 2]; 4] {
+        if !self.vertical() {
+            return Self::wire_curve(a, b, z);
+        }
+        let dy = b[1] - a[1];
+        let bend = if dy > 0.0 { (dy * 0.45).max(30.0 * z) } else { (dy.abs() * 0.3 + (b[0] - a[0]).abs() * 0.25).clamp(60.0 * z, 260.0 * z) };
+        [a, [a[0], a[1] + bend], [b[0], b[1] - bend], b]
+    }
+
     fn wire_curve(a: [f32; 2], b: [f32; 2], z: f32) -> [[f32; 2]; 4] {
         let dx = b[0] - a[0];
         let bend = if dx > 0.0 { (dx * 0.45).max(30.0 * z) } else { (dx.abs() * 0.3 + (b[1] - a[1]).abs() * 0.25).clamp(60.0 * z, 260.0 * z) };
@@ -174,7 +206,7 @@ impl App {
                 continue;
             }
             let (Some(&a), Some(&b)) = (anchors.get(&o), anchors.get(&i)) else { continue };
-            let [p0, p1, p2, p3] = Self::wire_curve(a, b, xf.z);
+            let [p0, p1, p2, p3] = self.curve(a, b, xf.z);
             let mut prev = p0;
             for k in 1..=24 {
                 let t = k as f32 / 24.0;
@@ -254,6 +286,11 @@ impl App {
             }
             if matrices && !n.ins_of(&self.graph, self.kind).is_empty() && crate::gfx::dist(si, [x, y]) <= hr {
                 return Hover::In(i);
+            }
+            if self.vertical()
+                && let Some((p, _)) = self.port_rows(&xf, i).into_iter().find(|(_, r)| r.contains(x, y))
+            {
+                return Hover::Port(i, p);
             }
             if self.node_rect(&xf, i).contains(x, y) {
                 return Hover::Node(i);
@@ -543,6 +580,7 @@ impl App {
                 items.push(I::new("Show hidden clients", Action::ShowAll).enabled(!self.layout.hidden.is_empty()));
                 items.push(I::new("Port names on matrices", Action::ToggleLabels).checked(self.layout.view.labels));
                 items.push(I::new("Matrices (PatchMatrix view)", Action::ToggleMatrices).checked(self.layout.view.matrices));
+                items.push(I::new("Vertical flow (ports view)", Action::ToggleVertical).checked(self.vertical()));
                 items.push(I::new("Show grid", Action::ToggleGrid).checked(self.layout.view.grid));
                 items.push(I::new("Snap to grid", Action::ToggleSnap).checked(self.layout.view.snap));
                 items.push(I::new("Prevent overlap", Action::ToggleNoOverlap).checked(self.layout.view.no_overlap));
@@ -683,7 +721,7 @@ impl App {
                 let node_lit = |p: usize| self.model.port_node.get(&p).is_some_and(|n| lit_nodes.contains(n));
                 let lit = hov_wire == Some((o, i)) || hov_port.is_some_and(|p| p == o || p == i) || node_lit(o) || node_lit(i);
                 let col = if lit { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA) };
-                let [p0, p1, p2, p3] = Self::wire_curve(a, b, z);
+                let [p0, p1, p2, p3] = self.curve(a, b, z);
                 g.bezier(p0, p1, p2, p3, if lit { ww * 1.4 } else { ww }, col);
             }
         }
@@ -829,9 +867,12 @@ impl App {
             let sh = g.line_height(Face::Regular, spx);
             g.text(Face::Regular, spx, r.x + 2.0 * z, r.y - sh - 1.0 * z, alpha(TEXT_DIM, f), sub);
         }
-        // Ports view: the ports are on the body; no node handles.
+        // Ports view: the ports are on the body (or, vertical, on the top and bottom edges); no
+        // node handles.
         if !self.layout.view.matrices {
-            if body.is_some() {
+            if self.vertical() {
+                self.draw_vports(g, xf, i, f);
+            } else if body.is_some() {
                 self.draw_body(g, xf, i);
             }
             return;
@@ -979,6 +1020,35 @@ impl App {
                 let w = g.measure(Face::Regular, px, label).min(max_w);
                 g.text_fit(Face::Regular, px, dot[0] - 6.0 * z - w, row.cy() - lh / 2.0, max_w, col, label);
             }
+        }
+    }
+
+    /// Vertical layout: port squares along the top (inputs) and bottom (outputs) edges, filled
+    /// when connected; names on hover (the tooltip), as in Luluda.
+    fn draw_vports(&self, g: &mut Gfx, xf: &Xf, i: usize, f: f32) {
+        let z = xf.z;
+        let q = 2.4 * HANDLE_R * z;
+        let dragged = match &self.canvas.drag {
+            Drag::Port { name } => self.graph.by_name.get(name).copied(),
+            _ => None,
+        };
+        for (p, r) in self.port_rows(xf, i) {
+            let port = &self.graph.ports[p];
+            let fa = if port.kind == self.kind { f } else { f * 0.55 };
+            let kc = alpha(kind_color(port.kind), fa);
+            let sq = Rect::centered(r.cx(), r.cy(), q, q);
+            let hovered = self.canvas.hover == Hover::Port(i, p);
+            if dragged.is_some_and(|a| self.compatible(a, p)) || hovered {
+                g.rrect(sq.inset(-3.0 * self.scale), 0.5 * HANDLE_R * z + 3.0, alpha(HILIGHT, 0.45));
+            }
+            let connected = self.graph.conns.iter().any(|&(o, i2)| o == p || i2 == p);
+            if connected {
+                g.rrect(sq, 0.5 * HANDLE_R * z, kc);
+            } else {
+                g.rrect(sq, 0.5 * HANDLE_R * z, alpha(BLOCK_BODY, fa));
+                g.rrect_stroke(sq, 0.5 * HANDLE_R * z, (1.2 * self.scale).max(1.0), kc);
+            }
+            g.rrect_stroke(sq.inset(-1.0), 0.5 * HANDLE_R * z + 1.0, 1.0, [0.0, 0.0, 0.0, 0.6 * fa]);
         }
     }
 

@@ -387,6 +387,7 @@ fn main() {
                         Keycode::F => Some(Action::FitAll),
                         Keycode::L => Some(Action::ToggleLabels),
                         Keycode::M => Some(Action::ToggleMatrices),
+                        Keycode::V => Some(Action::ToggleVertical),
                         Keycode::E => Some(Action::ExpandAll),
                         Keycode::G if shift => Some(Action::ToggleSnap),
                         Keycode::G => Some(Action::ToggleGrid),
