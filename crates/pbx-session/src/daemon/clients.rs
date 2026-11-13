@@ -32,6 +32,9 @@ pub struct Client {
     pub late: bool,
     /// Announced on its own (NSM_URL set by the user): not our child, liveness by kill(pid, 0).
     pub external: bool,
+    /// Kept running across the session switch in progress, for the new session's client of
+    /// this id.
+    pub reserved_for: Option<String>,
     announce_by: Option<Instant>,
     pub reply_by: Option<(Pending, Instant)>,
     kill_at: Option<Instant>,
@@ -58,6 +61,7 @@ impl Client {
             jack_name: String::new(),
             late: false,
             external: false,
+            reserved_for: None,
             announce_by: None,
             reply_by: None,
             kill_at: None,
@@ -192,7 +196,13 @@ impl Client {
                 Arg::S(":server-control:broadcast:optional-gui:".into()),
             ],
         ));
-        let prefix: String = name.chars().map(|c| if c == '/' { '_' } else { c }).collect();
+        self.send_open(dir, session);
+    }
+
+    /// Tell it to open its files for the session in `dir` (at announce, and when it is kept
+    /// across a session switch).
+    pub fn send_open(&mut self, dir: &Path, session: &str) {
+        let prefix: String = self.entry.name.chars().map(|c| if c == '/' { '_' } else { c }).collect();
         let full = format!("{prefix}.{}", self.entry.id);
         let path = dir.join(&full);
         self.jack_name = full.clone();

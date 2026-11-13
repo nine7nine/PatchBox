@@ -32,6 +32,11 @@ check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
 wait_for() { for i in $(seq ${PB_WAIT:-60}); do eval "$1" && return 0; sleep 0.1; done; return 1; }
 st() { ctl state; }
 
+# A load hook for every session (sessions root): it records that it ran, and with what.
+mkdir -p "$W/sessions/patchbox-scripts"
+cat > "$W/sessions/patchbox-scripts/load.sh" <<'SH'
+echo "$PATCHBOX_SCRIPT $PATCHBOX_SESSION_NAME" >> "$PATCHBOX_SESSION_PATH/script-ran"
+SH
 ctl new t1 >/dev/null
 wait_for 'st | grep -q "\"busy\": null"'
 check "session t1 created" 'st | grep -q "\"session\": \"t1\""'
@@ -80,6 +85,15 @@ ctl duplicate t2 >/dev/null
 wait_for 'st | grep -q "\"session\": \"t2\"" && st | grep -q "\"busy\": null"'
 check "duplicated to t2 and opened it" 'st | grep -q "\"session\": \"t2\""'
 check "t1 still on disk" '[ -f "$W/sessions/t1/session.toml" ]'
+check "the load script ran for t2" 'grep -q "load t2" "$W/sessions/t2/script-ran"'
+PID2=$(st | sed -n 's/.*"pid": \([0-9]*\).*/\1/p' | head -1)
+ctl open t1 >/dev/null
+wait_for 'st | grep -q "\"session\": \"t1\"" && st | grep -q "\"busy\": null"'
+PID1=$(st | sed -n 's/.*"pid": \([0-9]*\).*/\1/p' | head -1)
+check "switch t2 -> t1 kept the :switch: client running (pid $PID2 -> $PID1)" '[ -n "$PID2" ] && [ "$PID1" = "$PID2" ] && st | grep -q "\"status\": \"ready\""'
+check "the switched client was told its new place" 'ls -d "$W"/sessions/t1/FakeApp.* >/dev/null 2>&1'
+ctl open t2 >/dev/null
+wait_for 'st | grep -q "\"session\": \"t2\"" && st | grep -q "\"busy\": null"'
 check "the copy has no snapshot history of t1" '! git --git-dir="$W/sessions/t2/.patchbox-snapshots" log --format=%s 2>/dev/null | grep -q "first notes"'
 check "sessions listed" 'ctl sessions | grep -q "^t2"'
 export PATCHBOX_TEMPLATES="$W/templates"

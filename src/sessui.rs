@@ -221,6 +221,8 @@ impl App {
                 let cur = st.session.clone().unwrap_or_default().replace('/', " ");
                 self.name_dialog(Kind::SaveTemplate, "Save the session as a template", "Template name", &cur, "Save");
             }
+            SessAction::Open if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::OpenSession) => self.dialog = None,
+            SessAction::AddApp if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::AddApp) => self.dialog = None,
             SessAction::Open => {
                 self.sess.send(&Request::ListSessions);
                 let mut d = Dialog::new(Kind::OpenSession, "Open a session");

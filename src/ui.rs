@@ -115,6 +115,48 @@ impl UiState {
     }
 }
 
+/// Break `text` into lines no wider than `max_w`: at spaces, or (a long name with none) anywhere
+/// after a ':' '/' '_' '-' or, failing that, mid-word.
+pub fn wrap(g: &Gfx, px: f32, text: &str, max_w: f32) -> Vec<String> {
+    if g.measure(Face::Regular, px, text) <= max_w {
+        return vec![text.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for word in text.split_inclusive(' ') {
+        let cand = format!("{line}{word}");
+        if g.measure(Face::Regular, px, cand.trim_end()) <= max_w {
+            line = cand;
+            continue;
+        }
+        if !line.is_empty() {
+            out.push(line.trim_end().to_string());
+            line.clear();
+        }
+        // A word wider than the box: cut it, preferring a separator.
+        let mut rest = word.to_string();
+        while g.measure(Face::Regular, px, rest.trim_end()) > max_w {
+            let chars: Vec<char> = rest.chars().collect();
+            let mut fit = 0;
+            for k in 1..=chars.len() {
+                if g.measure(Face::Regular, px, &chars[..k].iter().collect::<String>()) > max_w {
+                    break;
+                }
+                fit = k;
+            }
+            let fit = fit.max(1);
+            let cut = chars[..fit].iter().rposition(|c| matches!(c, ':' | '/' | '_' | '-' | '.')).map(|p| p + 1).filter(|&p| p > fit / 3).unwrap_or(fit);
+            out.push(chars[..cut].iter().collect());
+            rest = chars[cut..].iter().collect();
+        }
+        line = rest;
+    }
+    if !line.trim().is_empty() {
+        out.push(line.trim_end().to_string());
+    }
+    out
+}
+
 impl App {
     /// Lay out the frame's regions (pixels).
     pub fn layout_regions(&mut self) {
@@ -506,13 +548,22 @@ impl App {
         }
     }
 
-    /// A box of text lines near `at` (window pixels), kept inside the window.
+    /// A box of text lines near `at` (window pixels), kept inside the window; long lines wrap at
+    /// a compact width.
     pub fn draw_tooltip(&self, g: &mut Gfx, at: [f32; 2], lines: &[(String, crate::gfx::Color)]) {
         let s = self.scale;
-        let px = FONT * s;
+        let px = FONT_SMALL * s * 1.08;
+        let max_w = (340.0 * s).min(self.win[0] * 0.45);
+        let mut wrapped: Vec<(String, crate::gfx::Color)> = Vec::new();
+        for (t, c) in lines {
+            for l in wrap(g, px, t, max_w) {
+                wrapped.push((l, *c));
+            }
+        }
+        let lines = &wrapped;
         let lh = g.line_height(Face::Regular, px) + 2.0 * s;
         let pad = 7.0 * s;
-        let w = lines.iter().map(|(t, _)| g.measure(Face::Regular, px, t)).fold(0.0, f32::max).min(self.win[0] * 0.6) + 2.0 * pad;
+        let w = lines.iter().map(|(t, _)| g.measure(Face::Regular, px, t)).fold(0.0, f32::max).min(max_w) + 2.0 * pad;
         let h = lines.len() as f32 * lh + 2.0 * pad - 2.0 * s;
         let mut x = at[0] + 16.0 * s;
         let mut y = at[1] + 18.0 * s;

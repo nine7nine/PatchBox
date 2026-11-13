@@ -1409,6 +1409,7 @@ impl App {
             Action::ServerStart => self.server.run(crate::server::Cmd::Start),
             Action::ServerStop => self.server.run(crate::server::Cmd::Stop),
             Action::ServerRestart => self.server.run(crate::server::Cmd::Restart),
+            Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Server) => self.dialog = None,
             Action::ServerSettings => {
                 self.server.send(crate::server::Cmd::LoadConfig);
                 let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::Server, "JACK server");

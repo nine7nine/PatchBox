@@ -21,7 +21,7 @@ fn main() {
         "/nsm/server/announce",
         vec![
             Arg::S(name.clone()),
-            Arg::S(":dirty:optional-gui:".into()),
+            Arg::S(":dirty:optional-gui:switch:".into()),
             Arg::S("pbx-fake-nsm".into()),
             Arg::I(1),
             Arg::I(2),
@@ -40,6 +40,11 @@ fn main() {
                     path = m.s(0).unwrap_or("").to_string();
                     let jname = m.s(2).unwrap_or("fake").to_string();
                     let _ = std::fs::create_dir_all(&path);
+                    // A switch: same process, new files; the JACK client stays.
+                    if jack.is_some() {
+                        send(Msg::new("/reply", vec![Arg::S("/nsm/client/open".into()), Arg::S("switched".into())]));
+                        continue;
+                    }
                     let w: pbx_jack::Waker = std::sync::Arc::new(|| {});
                     if let Ok(c) = pbx_jack::Client::open(&jname, w) {
                         for (p, input) in [("in_L", true), ("in_R", true), ("out_L", false), ("out_R", false)] {

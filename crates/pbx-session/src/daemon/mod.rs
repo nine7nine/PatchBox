@@ -55,6 +55,10 @@ enum Step {
     Snapshot(String, bool),
     /// Put the folder back as it was in a snapshot (clients stopped).
     Checkout(String),
+    /// Run the session's hook script of that name (load, save, close), if it has one.
+    Script(&'static str),
+    /// Before a switch to the session of that name: keep the running clients it can use.
+    Reserve(String),
     Launch,
     WaitReady,
     Loaded,
@@ -85,6 +89,8 @@ pub struct Daemon {
     /// A git child running for a snapshot or a checkout, and how it ended.
     git: Option<u32>,
     git_status: Option<i32>,
+    /// Clients kept running across a session switch: (the new session's client id, client).
+    reserved: Vec<(String, Client)>,
     quit: bool,
     /// No session and no front end since then: exit after a while.
     idle_since: Option<Instant>,
@@ -144,6 +150,7 @@ pub fn run() -> Result<(), String> {
         last_state: None,
         git: None,
         git_status: None,
+        reserved: Vec::new(),
         quit: false,
         idle_since: Some(Instant::now()),
     };
@@ -408,13 +415,13 @@ impl Daemon {
             Request::Save if self.op.is_some() => busy(),
             Request::Save => {
                 let snap = self.auto_snapshot();
-                self.start_op("Saving…".into(), vec![Step::SaveClients, Step::WriteFile, snap]);
+                self.start_op("Saving…".into(), vec![Step::SaveClients, Step::WriteFile, snap, Step::Script("save")]);
                 ok("saving")
             }
             Request::Close if self.op.is_some() => busy(),
             Request::Close => {
                 let snap = self.auto_snapshot();
-                self.start_op("Closing…".into(), vec![Step::SaveClients, Step::WriteFile, snap, Step::StopClients, Step::Unload]);
+                self.start_op("Closing…".into(), vec![Step::SaveClients, Step::WriteFile, snap, Step::Script("close"), Step::StopClients, Step::Unload]);
                 ok("closing")
             }
             Request::Abort => {
@@ -430,8 +437,8 @@ impl Daemon {
                 Ok(()) if self.op.is_some() => busy(),
                 Ok(()) => {
                     let n = name.trim().to_string();
-                    let mut steps = vec![Step::SaveClients, Step::WriteFile, Step::CopyTo(n.clone()), Step::StopClients, Step::Unload];
-                    steps.extend([Step::Load(n, false), Step::Launch, Step::WaitReady, Step::Loaded]);
+                    let mut steps = vec![Step::SaveClients, Step::WriteFile, Step::CopyTo(n.clone()), Step::Script("close"), Step::StopClients, Step::Unload];
+                    steps.extend([Step::Load(n, false), Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
                     self.start_op(format!("Duplicating to {name}…"), steps);
                     ok("duplicating")
                 }
@@ -441,8 +448,8 @@ impl Daemon {
                 Ok(()) if self.op.is_some() => busy(),
                 Ok(()) => {
                     let n = name.trim().to_string();
-                    let mut steps = vec![Step::SaveClients, Step::WriteFile, Step::StopClients, Step::MoveTo(n.clone()), Step::Unload];
-                    steps.extend([Step::Load(n, false), Step::Launch, Step::WaitReady, Step::Loaded]);
+                    let mut steps = vec![Step::SaveClients, Step::WriteFile, Step::Script("close"), Step::StopClients, Step::MoveTo(n.clone()), Step::Unload];
+                    steps.extend([Step::Load(n, false), Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
                     self.start_op(format!("Renaming to {name}…"), steps);
                     ok("renaming")
                 }
@@ -537,6 +544,7 @@ impl Daemon {
                     Step::SaveClients,
                     Step::WriteFile,
                     Step::Snapshot(format!("before going back to {id}"), false),
+                    Step::Script("close"),
                     Step::StopClients,
                     Step::Checkout(id.clone()),
                     Step::Unload,
@@ -544,6 +552,7 @@ impl Daemon {
                     Step::Launch,
                     Step::WaitReady,
                     Step::Loaded,
+                    Step::Script("load"),
                 ];
                 self.start_op(format!("Going back to {id}…"), steps);
                 ok("rewinding")
@@ -585,9 +594,15 @@ impl Daemon {
     fn switch_steps(&self, load: Step) -> Vec<Step> {
         let mut steps = Vec::new();
         if self.session.is_some() {
-            steps.extend([Step::SaveClients, Step::WriteFile, Step::StopClients, Step::Unload]);
+            let snap = self.auto_snapshot();
+            steps.extend([Step::SaveClients, Step::WriteFile, snap, Step::Script("close")]);
+            // Opening an existing session: clients it can use carry on (:switch:).
+            if let Step::Load(name, false) = &load {
+                steps.push(Step::Reserve(name.clone()));
+            }
+            steps.extend([Step::StopClients, Step::Unload]);
         }
-        steps.extend([load, Step::Launch, Step::WaitReady, Step::Loaded]);
+        steps.extend([load, Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
         steps
     }
 
@@ -670,10 +685,13 @@ impl Daemon {
             }
             Step::StopClients => {
                 if first {
-                    let n = self.session.as_mut().map_or(0, |s| s.clients.iter_mut().rev().filter(|c| c.running()).map(|c| c.stop()).count());
+                    let n = self
+                        .session
+                        .as_mut()
+                        .map_or(0, |s| s.clients.iter_mut().rev().filter(|c| c.running() && c.reserved_for.is_none()).map(|c| c.stop()).count());
                     self.set_deadline(if n > 0 { Some(now + Duration::from_secs(30)) } else { None });
                 }
-                let running = self.session.as_ref().is_some_and(|s| s.clients.iter().any(|c| c.running()));
+                let running = self.session.as_ref().is_some_and(|s| s.clients.iter().any(|c| c.running() && c.reserved_for.is_none()));
                 if late && running {
                     if let Some(s) = &mut self.session {
                         for c in &mut s.clients {
@@ -685,7 +703,13 @@ impl Daemon {
                 !running || late
             }
             Step::Unload => {
-                if let Some(s) = self.session.take() {
+                if let Some(mut s) = self.session.take() {
+                    // Clients carrying on into the next session leave with us.
+                    let (keep, _): (Vec<Client>, Vec<Client>) = std::mem::take(&mut s.clients).into_iter().partition(|c| c.reserved_for.is_some());
+                    for c in keep {
+                        let id = c.reserved_for.clone().unwrap_or_default();
+                        self.reserved.push((id, c));
+                    }
                     let _ = std::fs::remove_file(s.dir.join(store::LOCK));
                     self.log(format!("Closed {}", s.name), false);
                 }
@@ -797,9 +821,75 @@ impl Daemon {
                 }
                 self.git_done("checkout", late)
             }
+            Step::Reserve(name) => {
+                let name = name.clone();
+                let future = SessionFile::load(&self.root.join(&name)).map(|f| f.clients).unwrap_or_default();
+                let mut taken: Vec<String> = Vec::new();
+                let mut kept = Vec::new();
+                if let Some(s) = &mut self.session {
+                    for c in &mut s.clients {
+                        if !(c.running() && c.status == Status::Ready && c.has("switch") && c.out.is_some()) {
+                            continue;
+                        }
+                        let fits = |e: &&ClientEntry| e.nsm && e.autostart && e.exe == c.entry.exe && e.args == c.entry.args && !taken.contains(&e.id);
+                        // The same id first, else any client running the same program.
+                        let pick = future.iter().filter(fits).find(|e| e.id == c.entry.id).or_else(|| future.iter().find(fits));
+                        if let Some(e) = pick {
+                            taken.push(e.id.clone());
+                            c.reserved_for = Some(e.id.clone());
+                            kept.push(c.entry.id.clone());
+                        }
+                    }
+                }
+                if !kept.is_empty() {
+                    self.log(format!("Keeping {} running into {name} (:switch:)", kept.join(", ")), false);
+                }
+                true
+            }
+            Step::Script(which) => {
+                if first {
+                    let which = *which;
+                    let Some((dir, name)) = self.session.as_ref().map(|s| (s.dir.clone(), s.name.clone())) else { return true };
+                    match self.spawn_script(&dir, &name, which) {
+                        Some(Ok(pid)) => {
+                            self.git = Some(pid);
+                            self.git_status = None;
+                            self.set_deadline(Some(now + Duration::from_secs(60)));
+                            self.log(format!("Running the {which} script"), false);
+                        }
+                        Some(Err(e)) => {
+                            self.log(e, true);
+                            return true;
+                        }
+                        None => return true,
+                    }
+                }
+                self.git_done("script", late)
+            }
             Step::Launch => {
+                // Clients kept from the last session take their new places and are told where
+                // their files are now.
+                let kept = std::mem::take(&mut self.reserved);
+                if let Some(s) = &mut self.session {
+                    for (id, mut c) in kept {
+                        match s.clients.iter().position(|n| n.entry.id == id) {
+                            Some(k) => {
+                                let entry = s.clients[k].entry.clone();
+                                c.entry = ClientEntry { name: c.entry.name.clone(), ..entry };
+                                c.reserved_for = None;
+                                c.send_open(&s.dir, &s.name);
+                                s.clients[k] = c;
+                            }
+                            None => c.stop(),
+                        }
+                    }
+                }
                 let n = self.session.as_ref().map_or(0, |s| s.clients.len());
                 for i in 0..n {
+                    let running = self.session.as_ref().is_some_and(|s| s.clients[i].running());
+                    if running {
+                        continue;
+                    }
                     let auto = self.session.as_ref().is_some_and(|s| s.clients[i].entry.autostart);
                     if auto && let Err(e) = self.launch(i) {
                         self.log(e, true);
@@ -842,6 +932,57 @@ impl Daemon {
         let on = self.session.as_ref().is_some_and(|s| s.file.auto_snapshot.unwrap_or(true));
         // An empty label: automatic snapshots are off for this session (the step does nothing).
         Step::Snapshot(if on { "saved".into() } else { String::new() }, true)
+    }
+
+    /// The session's hook script `which` (load, save, close): `patchbox-scripts/<which>.sh` in the
+    /// session folder or the nearest folder above it, up to the sessions root (RaySession's
+    /// scheme). It gets the session in its environment and our socket, so it can drive
+    /// patchbox-ctl (connections, clients); the operation waits for it (60 s at most). None:
+    /// there is no such script.
+    fn spawn_script(&self, dir: &Path, name: &str, which: &str) -> Option<Result<u32, String>> {
+        let mut d = Some(dir);
+        let script = loop {
+            let here = d?;
+            let s = here.join("patchbox-scripts").join(format!("{which}.sh"));
+            if s.is_file() {
+                break s;
+            }
+            if here == self.root {
+                return None;
+            }
+            d = here.parent().filter(|p| p.starts_with(&self.root));
+        };
+        let mut path = std::env::var_os("PATH").unwrap_or_default();
+        if let Some(bin) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
+            let mut p = bin.into_os_string();
+            p.push(":");
+            p.push(&path);
+            path = p;
+        }
+        let log = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(".patchbox").join("scripts.log")).ok();
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg(&script)
+            .current_dir(dir)
+            .env("PATH", path)
+            .env("PATCHBOX_SCRIPT", which)
+            .env("PATCHBOX_SESSION_NAME", name)
+            .env("PATCHBOX_SESSION_PATH", dir)
+            .env("PATCHBOX_SOCKET", proto::socket_path())
+            .stdin(std::process::Stdio::null());
+        if let Some(f) = log.as_ref().and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?))) {
+            cmd.stdout(f.0).stderr(f.1);
+        }
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                let mut set: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut set);
+                libc::sigaddset(&mut set, libc::SIGCHLD);
+                libc::sigprocmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+                Ok(())
+            });
+        }
+        Some(cmd.spawn().map(|c| c.id()).map_err(|e| format!("{}: {e}", script.display())))
     }
 
     /// The git child of the current step finished (or ran out of time).
