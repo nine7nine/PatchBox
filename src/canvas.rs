@@ -41,6 +41,22 @@ pub enum Drag {
     Link {
         src: String,
     },
+    /// A wire of the ports view picked up by one end (`moving_in`: the input end), from `from`
+    /// (window pixels): dropped on another port or block it moves there, on empty canvas it
+    /// is disconnected.
+    Rewire {
+        out: String,
+        inp: String,
+        moving_in: bool,
+        from: [f32; 2],
+    },
+    /// A matrix view wire pulled off its block (`sink`: the block the matrix feeds): onto
+    /// another block, the matrix's connections move there; onto empty canvas, they go.
+    MatWire {
+        key: String,
+        sink: bool,
+        from: [f32; 2],
+    },
     Paint {
         key: String,
         connect: bool,
@@ -66,6 +82,8 @@ pub enum Hover {
     Port(usize, usize),
     /// A wire of the ports view: (output port, input port).
     Wire(usize, usize),
+    /// A wire of the matrix view: (matrix, the one to its sink block).
+    MatWire(usize, bool),
 }
 
 #[derive(Default)]
@@ -165,19 +183,79 @@ impl App {
             if !self.visible(i) {
                 continue;
             }
-            let vertical = self.vertical();
-            let q = 1.2 * HANDLE_R * xf.z;
             for (p, r) in self.port_rows(xf, i) {
-                let a = match (vertical, self.graph.ports[p].is_input()) {
-                    (true, true) => [r.cx(), r.cy() - q],
-                    (true, false) => [r.cx(), r.cy() + q],
-                    (false, true) => [r.x, r.cy()],
-                    (false, false) => [r.right(), r.cy()],
-                };
-                m.insert(p, a);
+                m.insert(p, self.anchor_of(xf, p, r));
             }
         }
         m
+    }
+
+    /// Where port `p`'s wire leaves its row (or, vertical, its square) `r`.
+    fn anchor_of(&self, xf: &Xf, p: usize, r: Rect) -> [f32; 2] {
+        let q = 1.2 * HANDLE_R * xf.z;
+        match (self.vertical(), self.graph.ports[p].is_input()) {
+            (true, true) => [r.cx(), r.cy() - q],
+            (true, false) => [r.cx(), r.cy() + q],
+            (false, true) => [r.x, r.cy()],
+            (false, false) => [r.right(), r.cy()],
+        }
+    }
+
+    /// One port's anchor (ports view), if its block shows it.
+    fn port_anchor(&self, xf: &Xf, p: usize) -> Option<[f32; 2]> {
+        let &ni = self.model.port_node.get(&p)?;
+        if !self.visible(ni) {
+            return None;
+        }
+        let (_, r) = self.port_rows(xf, ni).into_iter().find(|(q, _)| *q == p)?;
+        Some(self.anchor_of(xf, p, r))
+    }
+
+    /// A curve from `a` to `b` where `a` is an output's end: for a wire whose output end is
+    /// `fixed` (or, `out_fixed` false, whose input end is) and whose other end is at `free`.
+    fn loose_curve(&self, fixed: [f32; 2], free: [f32; 2], out_fixed: bool, z: f32) -> [[f32; 2]; 4] {
+        if out_fixed { self.curve(fixed, free, z) } else { self.curve(free, fixed, z) }
+    }
+
+    /// The matrix view's two wires of matrix `mi`, window pixels: source block to the matrix's
+    /// centre, centre to sink block. They leave a block level and head straight for the
+    /// centre (the matrix is drawn over the end), so they look right wherever the matrix is.
+    /// `loose`: the end at a block of one of them follows the pointer instead (pulled off).
+    fn mat_curves(&self, xf: &Xf, mi: usize, loose: Option<(bool, [f32; 2])>) -> [[[f32; 2]; 4]; 2] {
+        let m = &self.mats[mi];
+        let c = xf.s(self.matrix_pos(m));
+        let bend = WIRE_BEND * xf.z;
+        let (out, _) = self.handles(m.src);
+        let (_, inp) = self.handles(m.dst);
+        let mut l0 = xf.s(out);
+        let mut l1 = xf.s(inp);
+        match loose {
+            Some((false, p)) => l0 = p,
+            Some((true, p)) => l1 = p,
+            None => {}
+        }
+        let b0 = ((c[0] - l0[0]).abs() * 0.5).clamp(bend * 0.4, bend * 2.5);
+        let b1 = ((l1[0] - c[0]).abs() * 0.5).clamp(bend * 0.4, bend * 2.5);
+        [[l0, [l0[0] + b0, l0[1]], c, c], [c, c, [l1[0] - b1, l1[1]], l1]]
+    }
+
+    /// The matrix view wire under (x, y), if any (outside the matrix and the blocks).
+    fn mat_wire_at(&self, xf: &Xf, x: f32, y: f32) -> Option<(usize, bool)> {
+        let tol = 5.0 * self.scale;
+        let mut best: Option<(f32, (usize, bool))> = None;
+        for mi in 0..self.mats.len() {
+            let mr = self.matrix_rect(xf, &self.mats[mi]);
+            for (k, cv) in self.mat_curves(xf, mi, None).into_iter().enumerate() {
+                if let Some((d, _)) = curve_dist(cv, [x, y])
+                    && d < tol
+                    && !mr.contains(x, y)
+                    && best.is_none_or(|(bd, _)| d < bd)
+                {
+                    best = Some((d, (mi, k == 1)));
+                }
+            }
+        }
+        best.map(|(_, w)| w)
     }
 
     /// A wire's curve (Luluda's: the bend grows with the distance, backwards wires loop round).
@@ -196,30 +274,21 @@ impl App {
         [a, [a[0] + bend, a[1]], [b[0] - bend, b[1]], b]
     }
 
-    /// The wire under (x, y), if any (ports view).
-    fn wire_at(&self, xf: &Xf, x: f32, y: f32) -> Option<(usize, usize)> {
+    /// The wire under (x, y), if any (ports view), and how far along it (0 at the output).
+    fn wire_at(&self, xf: &Xf, x: f32, y: f32) -> Option<(usize, usize, f32)> {
         let anchors = self.anchors(xf);
         let tol = 5.0 * self.scale;
-        let mut best: Option<(f32, (usize, usize))> = None;
+        let mut best: Option<(f32, (usize, usize, f32))> = None;
         for &(o, i) in &self.graph.conns {
             if self.graph.ports[o].kind != self.kind {
                 continue;
             }
             let (Some(&a), Some(&b)) = (anchors.get(&o), anchors.get(&i)) else { continue };
-            let [p0, p1, p2, p3] = self.curve(a, b, xf.z);
-            let mut prev = p0;
-            for k in 1..=24 {
-                let t = k as f32 / 24.0;
-                let u = 1.0 - t;
-                let p = [
-                    u * u * u * p0[0] + 3.0 * u * u * t * p1[0] + 3.0 * u * t * t * p2[0] + t * t * t * p3[0],
-                    u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1],
-                ];
-                let d = seg_dist([x, y], prev, p);
-                if d < tol && best.is_none_or(|(bd, _)| d < bd) {
-                    best = Some((d, (o, i)));
-                }
-                prev = p;
+            if let Some((d, t)) = curve_dist(self.curve(a, b, xf.z), [x, y])
+                && d < tol
+                && best.is_none_or(|(bd, _)| d < bd)
+            {
+                best = Some((d, (o, i, t)));
             }
         }
         best.map(|(_, w)| w)
@@ -241,6 +310,21 @@ impl App {
         }
         let [x, y] = self.ui.mouse;
         self.canvas.hover = if self.canvas.area.contains(x, y) && self.ui.menu.is_none() { self.hit(x, y) } else { Hover::None };
+    }
+
+    /// A point `t` (0..1) along the ports view wire `out` → `inp` (tests).
+    pub fn wire_point(&self, out: &str, inp: &str, t: f32) -> Option<[f32; 2]> {
+        let xf = self.xf();
+        let (&o, &i) = (self.graph.by_name.get(out)?, self.graph.by_name.get(inp)?);
+        let (a, b) = (self.port_anchor(&xf, o)?, self.port_anchor(&xf, i)?);
+        Some(bezier_at(self.curve(a, b, xf.z), t))
+    }
+
+    /// A point `t` along a matrix view wire (tests): the matrix whose key contains `key`.
+    pub fn mat_wire_point(&self, key: &str, sink: bool, t: f32) -> Option<[f32; 2]> {
+        let xf = self.xf();
+        let mi = self.mats.iter().position(|m| m.key.contains(key))?;
+        Some(bezier_at(self.mat_curves(&xf, mi, None)[sink as usize], t))
     }
 
     /// Centre of a port's row in its expanded node (tests).
@@ -304,7 +388,11 @@ impl App {
                 };
             }
         }
-        if !matrices && let Some((o, i)) = self.wire_at(&xf, x, y) {
+        if matrices {
+            if let Some((mi, sink)) = self.mat_wire_at(&xf, x, y) {
+                return Hover::MatWire(mi, sink);
+            }
+        } else if let Some((o, i, _)) = self.wire_at(&xf, x, y) {
             return Hover::Wire(o, i);
         }
         Hover::None
@@ -371,7 +459,21 @@ impl App {
                 Hover::Node(i) | Hover::In(i) => {
                     self.canvas.drag = Drag::Node { id: self.model.nodes[i].key.id(), last: [x, y], raw: self.node_pos(i) }
                 }
-                Hover::None | Hover::Wire(..) => self.canvas.drag = Drag::Pan { last: [x, y] },
+                Hover::Wire(..) => {
+                    // Picked up by its nearer end.
+                    let xf = self.xf();
+                    self.canvas.drag = match self.wire_at(&xf, x, y) {
+                        Some((o, i, t)) => Drag::Rewire {
+                            out: self.graph.ports[o].name.clone(),
+                            inp: self.graph.ports[i].name.clone(),
+                            moving_in: t >= 0.5,
+                            from: [x, y],
+                        },
+                        None => Drag::Pan { last: [x, y] },
+                    };
+                }
+                Hover::MatWire(mi, sink) => self.canvas.drag = Drag::MatWire { key: self.mats[mi].key.clone(), sink, from: [x, y] },
+                Hover::None => self.canvas.drag = Drag::Pan { last: [x, y] },
             },
             _ => {}
         }
@@ -440,7 +542,7 @@ impl App {
                 }
                 self.layout_changed();
             }
-            Drag::Link { .. } | Drag::Port { .. } => {
+            Drag::Link { .. } | Drag::Port { .. } | Drag::Rewire { .. } | Drag::MatWire { .. } => {
                 self.canvas.hover = self.hit(x, y);
                 self.redraw = true;
             }
@@ -486,6 +588,16 @@ impl App {
         {
             self.drop_port(a, self.hit(x, y));
         }
+        if let Drag::Rewire { out, inp, moving_in, from } = &drag
+            && let (Some(&o), Some(&i)) = (self.graph.by_name.get(out), self.graph.by_name.get(inp))
+        {
+            let moved = crate::gfx::dist(*from, [x, y]) > 6.0 * self.scale;
+            self.drop_wire(o, i, *moving_in, moved, self.hit(x, y));
+        }
+        if let Drag::MatWire { key, sink, from } = &drag {
+            let moved = crate::gfx::dist(*from, [x, y]) > 6.0 * self.scale;
+            self.drop_mat_wire(key, *sink, moved, self.hit(x, y));
+        }
         if let Drag::Link { src } = drag {
             let target = match self.hit(x, y) {
                 Hover::Node(i) | Hover::In(i) | Hover::Out(i) => Some(i),
@@ -507,6 +619,93 @@ impl App {
         }
         self.canvas.hover = self.hit(x, y);
         self.redraw = true;
+    }
+
+    /// A wire picked up by one end was dropped: on a port that fits, or a block with one free,
+    /// the connection moves there; on its own port or block, or a port that doesn't fit, it
+    /// stays; anywhere else it is disconnected. A click without a drag changes nothing.
+    fn drop_wire(&mut self, o: usize, i: usize, moving_in: bool, moved: bool, target: Hover) {
+        let (fixed, old) = if moving_in { (o, i) } else { (i, o) };
+        let old_node = self.model.port_node.get(&old).copied();
+        let pair = |b: usize| if moving_in { (o, b) } else { (b, i) };
+        let to = match target {
+            _ if !moved => return,
+            Hover::Port(_, b) if b == old => return,
+            Hover::Port(_, b) if self.compatible(fixed, b) => b,
+            Hover::Port(..) => return,
+            Hover::Node(t) | Hover::In(t) | Hover::Out(t) => {
+                if Some(t) == old_node {
+                    return;
+                }
+                let n = &self.model.nodes[t];
+                let cands = if moving_in { &n.ins } else { &n.outs };
+                let free = cands.iter().copied().find(|&b| {
+                    let (po, pi) = pair(b);
+                    self.compatible(fixed, b) && !self.graph.connected(po, pi)
+                });
+                match free {
+                    Some(b) => b,
+                    None => return,
+                }
+            }
+            _ => {
+                self.disconnect(o, i);
+                return;
+            }
+        };
+        let (no, ni) = pair(to);
+        self.disconnect(o, i);
+        if !self.graph.connected(no, ni) {
+            self.connect(no, ni);
+        }
+    }
+
+    /// A matrix view wire pulled off its block was dropped: onto another block with ports of
+    /// this type, the matrix's connections move to it (port for port, in order) and the matrix
+    /// with them; onto its own block, nothing; anywhere else, they are disconnected and the
+    /// matrix goes.
+    fn drop_mat_wire(&mut self, key: &str, sink: bool, moved: bool, target: Hover) {
+        let Some(m) = self.mats.iter().find(|m| m.key == key) else { return };
+        if !moved {
+            return;
+        }
+        let (src, dst) = (m.src, m.dst);
+        let old = if sink { dst } else { src };
+        let conns: Vec<(usize, usize)> = m.conns.iter().copied().collect();
+        let to = match target {
+            Hover::Node(t) | Hover::In(t) | Hover::Out(t) | Hover::Port(t, _) => Some(t),
+            _ => None,
+        };
+        match to {
+            Some(t) if t == old => {}
+            Some(t) => {
+                let ports = |n: usize| if sink { self.model.nodes[n].ins_of(&self.graph, self.kind) } else { self.model.nodes[n].outs_of(&self.graph, self.kind) };
+                let (from_ports, to_ports) = (ports(old), ports(t));
+                if to_ports.is_empty() || t == if sink { src } else { dst } {
+                    return;
+                }
+                for (o, i) in conns {
+                    let moving = if sink { i } else { o };
+                    let Some(k) = from_ports.iter().position(|&p| p == moving) else { continue };
+                    self.disconnect(o, i);
+                    if let Some(&b) = to_ports.get(k) {
+                        let (no, ni) = if sink { (o, b) } else { (b, i) };
+                        if !self.graph.connected(no, ni) {
+                            self.connect(no, ni);
+                        }
+                    }
+                }
+                self.apply(Action::Unpin(key.to_string()));
+                if sink { self.pin(src, t) } else { self.pin(t, dst) };
+                self.refresh_matrices();
+            }
+            None => {
+                for (o, i) in conns {
+                    self.disconnect(o, i);
+                }
+                self.apply(Action::Unpin(key.to_string()));
+            }
+        }
     }
 
     /// A port dragged from an expanded node was dropped: onto a port, toggle that connection;
@@ -555,6 +754,13 @@ impl App {
                 let title = format!("{} → {}", self.model.nodes[m.src].title, self.model.nodes[m.dst].title);
                 items.push(I::header(title));
                 items.push(I::new("Connect 1:1", Action::ConnectDiagonal(m.key.clone())));
+                items.push(I::new("Disconnect all", Action::DisconnectMatrix(m.key.clone())).enabled(!m.conns.is_empty()));
+                items.push(I::new("Remove matrix", Action::Unpin(m.key.clone())).enabled(m.conns.is_empty()));
+            }
+            Hover::MatWire(mi, _) => {
+                let m = &self.mats[mi];
+                let title = format!("{} → {}", self.model.nodes[m.src].title, self.model.nodes[m.dst].title);
+                items.push(I::header(title));
                 items.push(I::new("Disconnect all", Action::DisconnectMatrix(m.key.clone())).enabled(!m.conns.is_empty()));
                 items.push(I::new("Remove matrix", Action::Unpin(m.key.clone())).enabled(m.conns.is_empty()));
             }
@@ -672,7 +878,7 @@ impl App {
             _ => None,
         };
         let hov_mat = match self.canvas.hover {
-            Hover::Cell(mi, ..) => Some(mi),
+            Hover::Cell(mi, ..) | Hover::MatWire(mi, _) => Some(mi),
             _ => None,
         };
         let dragging_node = match &self.canvas.drag {
@@ -680,7 +886,7 @@ impl App {
             _ => None,
         };
         let dragging_mat = match &self.canvas.drag {
-            Drag::Matrix { key, .. } | Drag::Paint { key, .. } => self.mats.iter().position(|m| &m.key == key),
+            Drag::Matrix { key, .. } | Drag::Paint { key, .. } | Drag::MatWire { key, .. } => self.mats.iter().position(|m| &m.key == key),
             _ => None,
         };
         let mut lit_nodes: HashSet<usize> = HashSet::new();
@@ -718,11 +924,22 @@ impl App {
                 Hover::Port(_, p) => Some(p),
                 _ => None,
             };
+            let picked = match &self.canvas.drag {
+                Drag::Rewire { out, inp, moving_in, .. } => self.graph.by_name.get(out).copied().zip(self.graph.by_name.get(inp).copied()).map(|w| (w, *moving_in)),
+                _ => None,
+            };
             for &(o, i) in &self.graph.conns {
                 if self.graph.ports[o].kind != self.kind {
                     continue;
                 }
                 let (Some(&a), Some(&b)) = (anchors.get(&o), anchors.get(&i)) else { continue };
+                if let Some(((po, pi), moving_in)) = picked
+                    && (po, pi) == (o, i)
+                {
+                    let [p0, p1, p2, p3] = if moving_in { self.loose_curve(a, self.canvas.mouse, true, z) } else { self.loose_curve(b, self.canvas.mouse, false, z) };
+                    g.bezier(p0, p1, p2, p3, ww * 1.4, mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25));
+                    continue;
+                }
                 let node_lit = |p: usize| self.model.port_node.get(&p).is_some_and(|n| lit_nodes.contains(n));
                 let lit = hov_wire == Some((o, i)) || hov_port.is_some_and(|p| p == o || p == i) || node_lit(o) || node_lit(i);
                 let col = if lit { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA) };
@@ -730,20 +947,24 @@ impl App {
                 g.bezier(p0, p1, p2, p3, if lit { ww * 1.4 } else { ww }, col);
             }
         }
-        for (mi, m) in self.mats.iter().enumerate().filter(|_| self.layout.view.matrices) {
-            let r = self.matrix_rect(&xf, m);
-            let col = if lit_mats.contains(&mi) { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA) };
-            let (out, _) = self.handles(m.src);
-            let (_, inp) = self.handles(m.dst);
-            let (l0, l1) = (xf.s(out), xf.s(inp));
-            let top = [r.cx(), r.y];
-            let right = [r.right(), r.cy()];
-            let b0 = ((top[0] - l0[0]).abs().max((top[1] - l0[1]).abs()) * 0.5).clamp(bend * 0.4, bend * 2.5);
-            let b1 = ((l1[0] - right[0]).abs() * 0.5).clamp(bend * 0.4, bend * 2.5);
-            g.bezier(l0, [l0[0] + b0, l0[1]], [top[0], top[1] - b0], top, ww, col);
-            g.bezier(right, [right[0] + b1, right[1]], [l1[0] - b1, l1[1]], l1, ww, col);
-            g.pie(top, cs, std::f32::consts::PI, std::f32::consts::TAU, col);
-            g.pie(right, cs, -std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2, col);
+        // Matrix view: each matrix's wires meet at its centre, under it.
+        let pulled = match &self.canvas.drag {
+            Drag::MatWire { key, sink, .. } => self.mats.iter().position(|m| &m.key == key).map(|mi| (mi, *sink)),
+            _ => None,
+        };
+        let hov_wire = match self.canvas.hover {
+            Hover::MatWire(mi, sink) => Some((mi, sink)),
+            _ => None,
+        };
+        for mi in (0..self.mats.len()).filter(|_| self.layout.view.matrices) {
+            let lit = lit_mats.contains(&mi);
+            let loose = pulled.filter(|(m, _)| *m == mi).map(|(_, sink)| (sink, self.canvas.mouse));
+            for (k, [p0, p1, p2, p3]) in self.mat_curves(&xf, mi, loose).into_iter().enumerate() {
+                let sink = k == 1;
+                let hot = hov_wire == Some((mi, sink)) || loose.is_some_and(|(s, _)| s == sink);
+                let col = if lit || hot { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA) };
+                g.bezier(p0, p1, p2, p3, if hot { ww * 1.5 } else { ww }, col);
+            }
         }
 
         // Nodes.
@@ -774,14 +995,10 @@ impl App {
         // A port being dragged from an expanded node.
         if let Drag::Port { name } = &self.canvas.drag
             && let Some(&a) = self.graph.by_name.get(name)
-            && let Some(&ni) = self.model.port_node.get(&a)
-            && let Some((_, row)) = self.port_rows(&xf, ni).into_iter().find(|(p, _)| *p == a)
+            && let Some(p0) = self.port_anchor(&xf, a)
         {
-            let out = self.graph.ports[a].is_output();
-            let p0 = if out { [row.right(), row.cy()] } else { [row.x, row.cy()] };
-            let p1 = self.canvas.mouse;
-            let b = if out { bend } else { -bend };
-            g.bezier(p0, [p0[0] + b, p0[1]], [p1[0] - b, p1[1]], p1, ww * 1.4, kind_color(self.graph.ports[a].kind));
+            let [q0, q1, q2, q3] = self.loose_curve(p0, self.canvas.mouse, self.graph.ports[a].is_output(), z);
+            g.bezier(q0, q1, q2, q3, ww * 1.4, kind_color(self.graph.ports[a].kind));
         }
 
         // Port names around matrices: the hovered one, or all of them.
@@ -799,7 +1016,20 @@ impl App {
         {
             let lines = vec![
                 (format!("{}  →  {}", self.graph.ports[o].name, self.graph.ports[i].name), TEXT_BRIGHT),
+                ("drag an end off: disconnect, or onto another port: move".to_string(), TEXT_DIM),
                 ("right-click: disconnect".to_string(), TEXT_DIM),
+            ];
+            self.draw_tooltip(g, self.canvas.mouse, &lines);
+        }
+        if let Hover::MatWire(mi, _) = self.canvas.hover
+            && matches!(self.canvas.drag, Drag::None)
+        {
+            let m = &self.mats[mi];
+            let n = m.conns.len();
+            let lines = vec![
+                (format!("{}  →  {}", self.model.nodes[m.src].title, self.model.nodes[m.dst].title), TEXT_BRIGHT),
+                (format!("{n} connection{}", if n == 1 { "" } else { "s" }), TEXT),
+                ("drag off the block: disconnect, or onto another block: move".to_string(), TEXT_DIM),
             ];
             self.draw_tooltip(g, self.canvas.mouse, &lines);
         }
@@ -1216,6 +1446,30 @@ impl App {
 }
 
 /// Distance from p to the segment a-b.
+fn bezier_at([p0, p1, p2, p3]: [[f32; 2]; 4], t: f32) -> [f32; 2] {
+    let u = 1.0 - t;
+    [
+        u * u * u * p0[0] + 3.0 * u * u * t * p1[0] + 3.0 * u * t * t * p2[0] + t * t * t * p3[0],
+        u * u * u * p0[1] + 3.0 * u * u * t * p1[1] + 3.0 * u * t * t * p2[1] + t * t * t * p3[1],
+    ]
+}
+
+/// Distance from `p` to a cubic curve (sampled), and where along it (0..1) that is closest.
+fn curve_dist([p0, p1, p2, p3]: [[f32; 2]; 4], p: [f32; 2]) -> Option<(f32, f32)> {
+    let mut best: Option<(f32, f32)> = None;
+    let mut prev = p0;
+    for k in 1..=24 {
+        let t = k as f32 / 24.0;
+        let q = bezier_at([p0, p1, p2, p3], t);
+        let d = seg_dist(p, prev, q);
+        if best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, t - 0.5 / 24.0));
+        }
+        prev = q;
+    }
+    best
+}
+
 fn seg_dist(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let l2 = dx * dx + dy * dy;

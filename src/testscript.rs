@@ -111,6 +111,20 @@ impl Script {
                     push(&mut out, button(true, b, p[0], p[1], density, clicks));
                     push(&mut out, button(false, b, p[0], p[1], density, clicks));
                 }
+                Some("down") | Some("up") => {
+                    let Some(p) = w.get(1).and_then(|p| resolve(app, p)) else {
+                        eprintln!("[test] cannot resolve: {step}");
+                        continue;
+                    };
+                    push(&mut out, motion(p[0], p[1], density));
+                    push(&mut out, button(w[0] == "down", MouseButton::Left, p[0], p[1], density, 1));
+                }
+                Some("conns") => {
+                    // The connections now, for the log: "out>in" each.
+                    let mut v: Vec<String> = app.graph.conns.iter().map(|&(o, i)| format!("{}>{}", app.graph.ports[o].name, app.graph.ports[i].name)).collect();
+                    v.sort();
+                    eprintln!("[test] conns {}", v.join(" "));
+                }
                 Some("drag") => {
                     let (Some(a), Some(b)) = (w.get(1).and_then(|p| resolve(app, p)), w.get(2).and_then(|p| resolve(app, p))) else {
                         eprintln!("[test] cannot resolve: {step}");
@@ -233,6 +247,15 @@ pub fn resolve(app: &App, p: &str) -> Option<[f32; 2]> {
             let s = App::matrix_size(m);
             let cell = crate::theme::CELL * xf.z;
             Some([c[0] - s[0] * xf.z / 2.0 + (col as f32 + 0.5) * cell, c[1] - s[1] * xf.z / 2.0 + (row as f32 + 0.5) * cell])
+        }
+        // A point along a wire: "wire:<out port>|<in port>|<0..1>", "matwire:<matrix key part>|<0 or 1: the sink side>|<0..1>".
+        "wire" => {
+            let v: Vec<&str> = rest.split('|').collect();
+            app.wire_point(v.first()?, v.get(1)?, v.get(2)?.parse().ok()?)
+        }
+        "matwire" => {
+            let v: Vec<&str> = rest.split('|').collect();
+            app.mat_wire_point(v.first()?, *v.get(1)? == "1", v.get(2)?.parse().ok()?)
         }
         "bar" => app.bar_point(rest),
         "port" => app.port_point(rest),
