@@ -91,6 +91,24 @@ impl Layout {
         self.window = window;
     }
 
+    /// PipeWire's canvas (the drill-down), next to the JACK one.
+    pub fn load_pw() -> Layout {
+        let Some(p) = path().map(|p| p.with_file_name("layout-pw.json")) else { return Layout::default() };
+        std::fs::read(&p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    pub fn save_pw(&mut self) {
+        self.version = 1;
+        let Some(p) = path().map(|p| p.with_file_name("layout-pw.json")) else { return };
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = p.with_extension("json.tmp");
+        if let Ok(body) = serde_json::to_vec_pretty(self) {
+            let _ = std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &p));
+        }
+    }
+
     pub fn load() -> Layout {
         let Some(p) = path() else { return Layout::default() };
         match std::fs::read(&p) {

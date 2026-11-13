@@ -237,6 +237,9 @@ impl App {
                     }
                 }
                 Hover::Port(_, p) => self.canvas.drag = Drag::Port { name: self.graph.ports[p].name.clone() },
+                Hover::Node(i) if clicks >= 2 && self.source == crate::app::Source::Jack && is_pipewire(&self.model.nodes[i].key.group) => {
+                    self.apply(Action::OpenPipeWire);
+                }
                 Hover::Node(i) if clicks >= 2 => {
                     let id = self.model.nodes[i].key.id();
                     let on = !self.is_expanded(i);
@@ -456,6 +459,9 @@ impl App {
         }
         items.push(I::new(if split { "Join inputs and outputs" } else { "Split inputs and outputs" }, Action::Split(n.key.group.clone(), !split)));
         items.push(I::new(format!("Disconnect all {}", self.kind.label()), Action::DisconnectNode(id.clone())));
+        if self.source == crate::app::Source::Jack && is_pipewire(&n.key.group) {
+            items.push(I::new("Open PipeWire's graph", Action::OpenPipeWire));
+        }
         items.push(I::new("Rename…", Action::Rename(id.clone())));
         if self.layout.names.contains_key(&id) {
             items.push(I::new("Its JACK name again", Action::SetName(id.clone(), String::new())));
@@ -491,7 +497,21 @@ impl App {
             }
         }
 
-        if self.jack.is_none() {
+        if self.source == crate::app::Source::PipeWire {
+            // Where we are, and the way back.
+            let s = self.scale;
+            let px = FONT * s;
+            let lh = g.line_height(Face::Regular, px);
+            let label = "← JACK  ›  PipeWire";
+            let w = g.measure(Face::Bold, px, label) + 24.0 * s;
+            let r = Rect::new(a.x + 12.0 * s, a.y + 10.0 * s, w, lh + 12.0 * s);
+            let hov = r.contains(self.ui.mouse[0], self.ui.mouse[1]);
+            g.rrect(r, 4.0 * s, alpha(BAR_BG, 0.92));
+            g.rrect_stroke(r, 4.0 * s, s.max(1.0), if hov { HILIGHT } else { alpha(kind_color(pbx_jack::PortKind::Video), 0.8) });
+            g.text(Face::Bold, px, r.x + 12.0 * s, r.y + 6.0 * s, TEXT_BRIGHT, label);
+            self.ui.hits.push((r, Action::BackToJack));
+        }
+        if self.jack.is_none() && self.source == crate::app::Source::Jack {
             let msg = "Waiting for a JACK server…";
             g.text_center(Face::Regular, FONT * self.scale * 1.2, a, TEXT_DIM, msg);
             g.pop_clip();
@@ -906,6 +926,11 @@ impl App {
         g.rrect_stroke(tip, 3.0 * self.scale, 1.0, alpha(if on { TOGGLE } else { BORDER }, 0.6));
         g.text(Face::Regular, px, tip.x + pad, tip.y + pad / 2.0, TEXT_BRIGHT, &s);
     }
+}
+
+/// The JACK client PipeWire runs as (on top of jackdbus): "PipeWire", "PipeWire-…".
+pub fn is_pipewire(group: &str) -> bool {
+    group.to_ascii_lowercase().starts_with("pipewire")
 }
 
 fn cut_to(g: &Gfx, px: f32, s: &str, max_w: f32) -> String {

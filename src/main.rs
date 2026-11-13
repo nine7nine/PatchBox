@@ -11,6 +11,7 @@ mod dialog;
 mod gfx;
 mod layout;
 mod model;
+mod pw;
 mod server;
 mod session;
 mod sessui;
@@ -438,6 +439,7 @@ fn main() {
                 app.fit_all();
             }
             gfx.begin(app.win[0] as u32, app.win[1] as u32);
+            app.ui.hits.clear();
             app.draw_canvas(&mut gfx);
             app.draw_ui(&mut gfx);
             if let Some(mut d) = app.dialog.take() {

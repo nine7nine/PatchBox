@@ -40,6 +40,7 @@ pub fn kind_color(k: PortKind) -> Color {
         PortKind::Midi => rgb(255, 165, 48),
         PortKind::Cv => rgb(151, 255, 71),
         PortKind::Osc => rgb(191, 71, 255),
+        PortKind::Video => rgb(255, 90, 140),
         PortKind::Other => rgb(150, 150, 150),
     }
 }

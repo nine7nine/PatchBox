@@ -33,6 +33,12 @@ const DEMO: &[Spec] = &[
         pretty: None,
         ports: &[("Input L", true, true), ("Input R", true, true), ("Output L", true, false), ("Output R", true, false), ("events-in", false, true)],
     },
+    // PipeWire on top of JACK (module-jackdbus-detect): one client bridging both ways.
+    Spec {
+        name: "PipeWire",
+        pretty: None,
+        ports: &[("capture_FL", true, false), ("capture_FR", true, false), ("playback_FL", true, true), ("playback_FR", true, true)],
+    },
     Spec { name: "Hydrogen", pretty: None, ports: &[("Hydrogen Midi-In", false, true), ("out_L", true, false), ("out_R", true, false)] },
     Spec {
         name: "ardour",

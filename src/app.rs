@@ -69,6 +69,9 @@ pub enum Action {
     DialogSet(String, String),
     Undo,
     Redo,
+    /// Show PipeWire's own graph (the drill-down into the PipeWire JACK client).
+    OpenPipeWire,
+    BackToJack,
     /// Rename a node (its id) or a port ("port:<full name>"): opens a dialog.
     Rename(String),
     /// Set (or, empty, clear) a user name: (layout key, name).
@@ -114,6 +117,12 @@ pub struct App {
     pub dialog: Option<crate::dialog::Dialog>,
     pub sess: crate::session::SessionLink,
     pub history: crate::undo::History,
+    /// Which graph the canvas shows.
+    pub source: Source,
+    pub pw: Option<crate::pw::PwLink>,
+    pw_graph: Graph,
+    /// The JACK canvas, put aside while PipeWire's is shown.
+    jack_canvas: Option<Layout>,
     /// The open session's folder, whose canvas is in use (None: the global one).
     pub layout_dir: Option<std::path::PathBuf>,
     /// The global canvas, put aside while a session's is in use.
@@ -153,6 +162,10 @@ impl App {
             dialog: None,
             sess,
             history: Default::default(),
+            source: Source::Jack,
+            pw: None,
+            pw_graph: Graph::default(),
+            jack_canvas: None,
             layout_dir: None,
             global_canvas: None,
             apps: None,
@@ -236,6 +249,7 @@ impl App {
     pub fn on_wake(&mut self) {
         self.on_jack_events();
         self.on_daemon();
+        self.on_pipewire();
         for r in self.server.take() {
             use crate::server::Reply;
             match r {
@@ -288,9 +302,11 @@ impl App {
         }
         if let Some(reason) = lost {
             self.jack = None;
-            self.graph = Graph::default();
-            self.model = Model::default();
-            self.mats.clear();
+            if self.source == Source::Jack {
+                self.graph = Graph::default();
+                self.model = Model::default();
+                self.mats.clear();
+            }
             self.graph_due = None;
             self.graph_first = None;
             self.canvas.drag = crate::canvas::Drag::None;
@@ -365,6 +381,11 @@ impl App {
 
     pub fn save_layout(&mut self) {
         self.layout.view.kind = self.kind.label().to_string();
+        if self.source == Source::PipeWire {
+            self.layout.save_pw();
+            self.layout_dirty = None;
+            return;
+        }
         match &self.layout_dir {
             // A session's canvas goes with it; the view (and the canvas we left) stays global.
             Some(dir) => {
@@ -417,8 +438,55 @@ impl App {
         self.redraw = true;
     }
 
+    /// PipeWire's graph changed (or pw-dump ended).
+    fn on_pipewire(&mut self) {
+        let Some(pw) = &mut self.pw else { return };
+        let (g, err, log) = pw.take();
+        for (m, bad) in log {
+            self.say(m, bad);
+        }
+        if let Some(g) = g {
+            self.pw_graph = g;
+            if self.source == Source::PipeWire {
+                self.rebuild();
+            }
+        }
+        if let Some(e) = err {
+            self.say(format!("PipeWire: {e}"), true);
+            self.pw = None;
+            if self.source == Source::PipeWire {
+                self.apply(Action::BackToJack);
+            }
+        }
+    }
+
+    /// The port types the current graph has tabs for.
+    pub fn kinds(&self) -> Vec<PortKind> {
+        let mut k = match self.source {
+            Source::Jack => vec![PortKind::Audio, PortKind::Midi, PortKind::Cv, PortKind::Osc],
+            Source::PipeWire => vec![PortKind::Audio, PortKind::Midi],
+        };
+        if self.graph.ports.iter().any(|p| p.kind == PortKind::Video) || self.source == Source::PipeWire {
+            k.push(PortKind::Video);
+        }
+        k
+    }
+
     /// Re-read the graph and rebuild what is shown.
     pub fn rebuild(&mut self) {
+        if self.source == Source::PipeWire {
+            self.graph = self.pw_graph.clone();
+            self.model = Model::build(&self.graph, &self.layout, "");
+            let first = self.layout.nodes.is_empty();
+            self.place_new_nodes(false);
+            self.refresh_matrices();
+            if first && !self.model.nodes.is_empty() {
+                self.fit_pending = true;
+            }
+            self.refresh_hover();
+            self.redraw = true;
+            return;
+        }
         let Some(c) = &self.jack else { return };
         let own = c.name().to_string();
         self.graph = c.snapshot();
@@ -446,6 +514,13 @@ impl App {
     }
 
     pub fn connect_names(&mut self, o: &str, i: &str) {
+        if self.source == Source::PipeWire {
+            if let Some(pw) = &self.pw {
+                pw.link(o, i, true);
+                self.history.connected(o, i);
+            }
+            return;
+        }
         let Some(c) = &self.jack else { return };
         if c.connect(o, i) {
             self.history.connected(o, i);
@@ -455,6 +530,13 @@ impl App {
     }
 
     pub fn disconnect_names(&mut self, o: &str, i: &str) {
+        if self.source == Source::PipeWire {
+            if let Some(pw) = &self.pw {
+                pw.link(o, i, false);
+                self.history.disconnected(o, i);
+            }
+            return;
+        }
         let Some(c) = &self.jack else { return };
         if c.disconnect(o, i) {
             self.history.disconnected(o, i);
@@ -1014,6 +1096,45 @@ impl App {
                 self.dialog = Some(d);
             }
             Action::DialogSet(id, v) => self.dialog_event(crate::dialog::Event::Set(id, v)),
+            Action::OpenPipeWire => {
+                if self.source == Source::PipeWire {
+                    return;
+                }
+                if self.pw.is_none() {
+                    match crate::pw::PwLink::start(self.waker.clone()) {
+                        Ok(p) => self.pw = Some(p),
+                        Err(e) => return self.say(format!("PipeWire: {e}"), true),
+                    }
+                }
+                self.save_layout();
+                let pw_canvas = Layout::load_pw();
+                self.jack_canvas = Some(self.layout.clone());
+                self.layout.take_canvas(pw_canvas);
+                self.source = Source::PipeWire;
+                self.history = Default::default();
+                if !self.kinds().contains(&self.kind) {
+                    self.kind = PortKind::Audio;
+                }
+                self.rebuild();
+                self.say("PipeWire's graph (← JACK, top left, to go back)", false);
+            }
+            Action::BackToJack => {
+                if self.source == Source::Jack {
+                    return;
+                }
+                self.layout.save_pw();
+                if let Some(j) = self.jack_canvas.take() {
+                    self.layout.take_canvas(j);
+                }
+                self.source = Source::Jack;
+                self.history = Default::default();
+                // Keep the dump running for a quick way back; it is idle between changes.
+                if !self.kinds().contains(&self.kind) {
+                    self.kind = PortKind::Audio;
+                }
+                self.graph = Graph::default();
+                self.rebuild();
+            }
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
             Action::Rename(key) => {
@@ -1295,11 +1416,18 @@ impl App {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Source {
+    Jack,
+    PipeWire,
+}
+
 pub fn kind_from(s: &str) -> PortKind {
     match s {
         "MIDI" => PortKind::Midi,
         "CV" => PortKind::Cv,
         "OSC" => PortKind::Osc,
+        "VIDEO" => PortKind::Video,
         _ => PortKind::Audio,
     }
 }

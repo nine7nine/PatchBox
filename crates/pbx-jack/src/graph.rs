@@ -12,6 +12,8 @@ pub enum PortKind {
     Cv,
     /// MIDI-type port carrying OSC (metadata event-types mentions OSC).
     Osc,
+    /// Video (PipeWire's camera and screen nodes; JACK video port types).
+    Video,
     /// Any other port type string (video, ...).
     Other,
 }
@@ -25,6 +27,7 @@ impl PortKind {
             PortKind::Midi => "MIDI",
             PortKind::Cv => "CV",
             PortKind::Osc => "OSC",
+            PortKind::Video => "VIDEO",
             PortKind::Other => "OTHER",
         }
     }
@@ -114,6 +117,7 @@ fn kind_of(type_name: &str, uuid: u64) -> PortKind {
     let base = match type_name {
         ffi::DEFAULT_AUDIO_TYPE => PortKind::Audio,
         ffi::DEFAULT_MIDI_TYPE => PortKind::Midi,
+        t if t.contains("video") => return PortKind::Video,
         _ => return PortKind::Other,
     };
     let signal = property(uuid, keys::SIGNAL_TYPE).or_else(|| property(uuid, keys::OLD_SIGNAL_TYPE));

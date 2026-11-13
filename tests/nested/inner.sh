@@ -25,6 +25,17 @@ else
 fi
 for i in $(seq 50); do ls /dev/shm/jack_default_* >/dev/null 2>&1 && break; sleep 0.1; done
 sleep 0.3
+if [ -n "${PB_PIPEWIRE:-}" ]; then
+  # A private PipeWire: its socket in a scratch runtime dir that pw-dump/pw-link use too.
+  # (-c with an absolute path: none of the owner's PipeWire configuration applies to the daemon.)
+  export PIPEWIRE_RUNTIME_DIR="$L/pw-run"
+  rm -rf "$PIPEWIRE_RUNTIME_DIR"; mkdir -p "$PIPEWIRE_RUNTIME_DIR"
+  env HOME="$L/pw-home" pipewire -c "$(dirname "$0")/pw-test.conf" > "$L/pipewire.log" 2>&1 &
+  for i in $(seq 50); do [ -S "$PIPEWIRE_RUNTIME_DIR/pipewire-0" ] && break; sleep 0.1; done
+  sleep 0.3
+  timeout 5 pw-link firefox:capture_FL skype_in:playback_FL >/dev/null 2>&1
+  timeout 5 pw-link firefox:capture_FR jack_sink:playback_FR >/dev/null 2>&1
+fi
 if [ -z "${PB_NO_FAKES:-}" ]; then
   "$BIN/pbx-fake-clients" > "$L/fakes.log" 2>&1 &
   for i in $(seq 50); do grep -q ready "$L/fakes.log" 2>/dev/null && break; sleep 0.1; done

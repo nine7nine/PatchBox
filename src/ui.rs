@@ -142,8 +142,9 @@ impl App {
         self.add_hit(r, action);
     }
 
+    /// The chrome; the frame's clickable rectangles were cleared before the canvas drew (it adds
+    /// its own: the PipeWire breadcrumb).
     pub fn draw_ui(&mut self, g: &mut Gfx) {
-        self.ui.hits.clear();
         self.draw_topbar(g);
         if self.layout.view.sidebar {
             self.draw_sidebar(g);
@@ -274,7 +275,7 @@ impl App {
 
         // Port-type tabs (PatchMatrix's top row).
         let tab_w = 74.0 * s;
-        for k in PortKind::ALL {
+        for k in self.kinds() {
             let r = Rect::new(x, by, tab_w, bh);
             let active = self.kind == k;
             let hov = self.hovered(&r);
@@ -412,7 +413,7 @@ impl App {
             }
             // Port types this node has.
             let mut dx = rr.x + 8.0 * s;
-            for k in PortKind::ALL {
+            for k in self.kinds() {
                 if n.has_kind(&self.graph, k) {
                     g.circle([dx, rr.cy()], 2.6 * s, kind_color(k));
                     dx += 7.0 * s;
@@ -565,6 +566,7 @@ impl App {
                         || matches!(a, S::ClientMenu(id, _) if name == format!("client:{id}"))
                         || matches!(a, S::Start(id) | S::Stop(id) if name == format!("startstop:{id}"))
                 }
+                Action::BackToJack => name == "back",
                 Action::ServerStart => name == "start",
                 Action::ServerStop => name == "stop",
                 Action::ServerRestart => name == "restart",
