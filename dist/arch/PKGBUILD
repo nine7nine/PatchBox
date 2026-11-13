@@ -24,7 +24,7 @@ depends=(
   libxkbcommon.so
 )
 # SDL3 carries the Wayland protocol files it uses (wayland-scanner, from wayland, builds them).
-makedepends=(cargo cmake dbus git mesa pkgconf wayland libxkbcommon)
+makedepends=(cargo cmake dbus git librsvg mesa pkgconf wayland libxkbcommon)
 optdepends=(
   'jack2dbus-nspa: the JACK server PatchBox is built for (jackdbus control, settings, presets)'
   'pipewire: the PipeWire graph and settings tab (pw-dump, pw-link, pw-metadata, pw-cli)'
@@ -82,6 +82,14 @@ package() {
   install -Dm755 target/release/patchbox target/release/patchboxd target/release/patchbox-ctl -t "$pkgdir/usr/bin"
   install -Dm644 dist/share/patchbox.desktop -t "$pkgdir/usr/share/applications"
   install -Dm644 dist/share/patchbox.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps"
+  # PNGs for every size (the 16 and 24 px ones from the simplified design).
+  local s src
+  for s in 16 24 32 48 64 128 256 512; do
+    src=dist/share/patchbox.svg
+    [[ $s -le 24 ]] && src=dist/share/patchbox-small.svg
+    install -d "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps"
+    rsvg-convert -w "$s" -h "$s" "$src" -o "$pkgdir/usr/share/icons/hicolor/${s}x${s}/apps/patchbox.png"
+  done
   install -Dm644 dist/share/patchboxd.service -t "$pkgdir/usr/lib/systemd/user"
   install -Dm644 README.md docs/*.md -t "$pkgdir/usr/share/doc/$pkgname"
   install -Dm644 assets/fonts/LICENSE "$pkgdir/usr/share/licenses/$pkgname/Cousine-LICENSE"
