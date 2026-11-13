@@ -1322,6 +1322,26 @@ impl App {
         for a in &port.aliases {
             lines.push((format!("alias {a}"), TEXT_DIM));
         }
+        // Its latency: how long since the signal was captured, how long until it is played.
+        if self.source == crate::app::Source::Jack
+            && let Some((cap, play)) = self.jack.as_ref().and_then(|c| c.port_latency(&port.name))
+        {
+            let rate = self.stats.sample_rate.max(1) as f32;
+            let show = |r: pbx_jack::ffi::jack_latency_range_t| {
+                let f = if r.min == r.max { format!("{}", r.max) } else { format!("{}–{}", r.min, r.max) };
+                format!("{f} frames ({:.2} ms)", r.max as f32 * 1000.0 / rate)
+            };
+            let mut parts = Vec::new();
+            if cap.max > 0 {
+                parts.push(format!("capture {}", show(cap)));
+            }
+            if play.max > 0 {
+                parts.push(format!("playback {}", show(play)));
+            }
+            if !parts.is_empty() {
+                lines.push((format!("latency: {}", parts.join(" · ")), LCD_TEXT));
+            }
+        }
         let others: Vec<&str> = self
             .graph
             .conns

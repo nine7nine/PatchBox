@@ -12,6 +12,17 @@ use std::ffi::{c_char, c_float, c_int, c_ulong, c_void};
 pub struct jack_client_t {
     _private: [u8; 0],
 }
+/// A port's latency, frames (jack_latency_range_t).
+#[repr(C)]
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct jack_latency_range_t {
+    pub min: u32,
+    pub max: u32,
+}
+
+pub const JACK_CAPTURE_LATENCY: c_int = 0;
+pub const JACK_PLAYBACK_LATENCY: c_int = 1;
+
 #[repr(C)]
 pub struct jack_port_t {
     _private: [u8; 0],
@@ -106,6 +117,8 @@ unsafe extern "C" {
     pub fn jack_port_by_name(client: *mut jack_client_t, name: *const c_char) -> *mut jack_port_t;
     pub fn jack_port_by_id(client: *mut jack_client_t, id: jack_port_id_t) -> *mut jack_port_t;
     pub fn jack_port_name(port: *const jack_port_t) -> *const c_char;
+    /// `mode`: JACK_CAPTURE_LATENCY or JACK_PLAYBACK_LATENCY.
+    pub fn jack_port_get_latency_range(port: *mut jack_port_t, mode: c_int, range: *mut jack_latency_range_t);
     pub fn jack_port_short_name(port: *const jack_port_t) -> *const c_char;
     pub fn jack_port_flags(port: *const jack_port_t) -> c_int;
     pub fn jack_port_type(port: *const jack_port_t) -> *const c_char;

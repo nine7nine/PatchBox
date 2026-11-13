@@ -2154,6 +2154,24 @@ impl App {
             && let Some(sx) = &self.server.stats
         {
             rows.push(Row::info("Load · latency", format!("{:.1} % · {:.2} ms{}", sx.load, sx.latency_ms, if sx.realtime { " · realtime" } else { "" })));
+            // Round trip through the hardware: a physical capture port's capture latency plus a
+            // physical playback port's playback latency.
+            if let Some(c) = &self.jack {
+                let phys = |out: bool| self.graph.ports.iter().find(|p| p.is_physical() && p.is_output() == out && p.kind == pbx_jack::PortKind::Audio).map(|p| p.name.clone());
+                if let (Some(cap), Some(play)) = (phys(true), phys(false))
+                    && let (Some((c_in, _)), Some((_, p_out))) = (c.port_latency(&cap), c.port_latency(&play))
+                {
+                    let frames = c_in.max + p_out.max;
+                    let ms = frames as f32 * 1000.0 / self.stats.sample_rate.max(1) as f32;
+                    rows.push(Row {
+                        id: String::new(),
+                        label: "Round trip".into(),
+                        help: format!("{cap} captures {} frames late, {play} plays {} frames later: what a signal through the computer and back out takes, the hardware's own converters aside", c_in.max, p_out.max),
+                        control: Control::Info(format!("{frames} frames · {ms:.2} ms (capture {} + playback {})", c_in.max, p_out.max)),
+                        modified: false,
+                    });
+                }
+            }
             rows.push(link("act:reset-xruns", &format!("Server xruns: {}", sx.xruns), "reset them"));
         }
         if st.started {
@@ -2198,13 +2216,6 @@ impl App {
             }
             return rows;
         };
-        rows.push(Row {
-            id: "engine/driver".into(),
-            label: "Driver".into(),
-            help: "The backend jackd drives: alsa for sound cards, dummy for none, net/netone for network audio…".into(),
-            control: Control::Choice { value: cfg.driver.clone(), options: cfg.drivers.iter().map(|d| (d.clone(), d.clone())).collect(), editable: false },
-            modified: false,
-        });
         let to_row = |p: &crate::server::Param| -> Row {
             let id = p.path.join("/");
             let control = match (&p.value, &p.constraint) {
@@ -2254,6 +2265,13 @@ impl App {
             Row { id, label, help, control, modified: p.is_set }
         };
         rows.push(Row::header(format!("Master driver: {}", cfg.driver)));
+        rows.push(Row {
+            id: "engine/driver".into(),
+            label: "Driver".into(),
+            help: "The backend jackd drives: alsa for sound cards, dummy for none, net/netone for network audio…".into(),
+            control: Control::Choice { value: cfg.driver.clone(), options: cfg.drivers.iter().map(|d| (d.clone(), d.clone())).collect(), editable: false },
+            modified: false,
+        });
         rows.extend(cfg.driver_params.iter().map(to_row));
         rows.push(Row::header("Engine"));
         rows.extend(cfg.engine.iter().filter(|p| p.name != "driver" && p.name != "slave-drivers").map(to_row));

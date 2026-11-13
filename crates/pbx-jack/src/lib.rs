@@ -228,6 +228,22 @@ impl Client {
     pub fn xrun_delay_ms(&self) -> f32 {
         unsafe { ffi::jack_get_xrun_delayed_usecs(self.raw) / 1000.0 }
     }
+    /// A port's latency ranges, frames: (capture: since the signal was captured, playback:
+    /// until it is played). Read from the port's shared memory: cheap.
+    pub fn port_latency(&self, name: &str) -> Option<(ffi::jack_latency_range_t, ffi::jack_latency_range_t)> {
+        let c = std::ffi::CString::new(name).ok()?;
+        unsafe {
+            let p = ffi::jack_port_by_name(self.raw, c.as_ptr());
+            if p.is_null() {
+                return None;
+            }
+            let (mut cap, mut play) = (ffi::jack_latency_range_t::default(), ffi::jack_latency_range_t::default());
+            ffi::jack_port_get_latency_range(p, ffi::JACK_CAPTURE_LATENCY, &mut cap);
+            ffi::jack_port_get_latency_range(p, ffi::JACK_PLAYBACK_LATENCY, &mut play);
+            Some((cap, play))
+        }
+    }
+
     /// A port's full name from its id (notifications carry ids).
     pub fn port_name(&self, id: u32) -> Option<String> {
         unsafe {
