@@ -24,6 +24,7 @@ pub enum SessAction {
     OpenFolder,
     Snapshot,
     Snapshots,
+    SaveTemplate,
     AddApp,
     Start(String),
     Stop(String),
@@ -90,6 +91,16 @@ impl App {
                         }
                     }
                 }
+                FromDaemon::Reply(Reply::Templates { templates }) => {
+                    self.sess.templates = templates;
+                    let opts = self.template_options();
+                    if let Some(d) = self.dialog.as_mut().filter(|d| d.kind == Kind::NewSession)
+                        && let Some(r) = d.rows.iter_mut().find(|r| r.id == "template")
+                        && let Control::Choice { options, .. } = &mut r.control
+                    {
+                        *options = opts;
+                    }
+                }
                 FromDaemon::Reply(Reply::State(st)) => self.sess.state = st,
                 FromDaemon::Reply(Reply::Error { msg }) => self.say(msg, true),
                 FromDaemon::Reply(Reply::Ok { .. }) => {}
@@ -133,6 +144,10 @@ impl App {
             rows.push(Row { id: format!("session:{}", s.name), label: s.name.clone(), help: String::new(), control: Control::Link(text), modified: false });
         }
         rows
+    }
+
+    fn template_options(&self) -> Vec<(String, String)> {
+        std::iter::once((String::new(), "(an empty session)".to_string())).chain(self.sess.templates.iter().map(|t| (t.clone(), t.clone()))).collect()
     }
 
     fn snapshot_rows(&self) -> Vec<Row> {
@@ -188,7 +203,24 @@ impl App {
         self.redraw = true;
         let st = self.sess.state.clone();
         match a {
-            SessAction::New => self.name_dialog(Kind::NewSession, "New session", "Name", "", "Create"),
+            SessAction::New => {
+                self.sess.send(&Request::ListTemplates);
+                self.name_dialog(Kind::NewSession, "New session", "Name", "", "Create");
+                let opts = self.template_options();
+                if let Some(d) = &mut self.dialog {
+                    d.rows.push(Row {
+                        id: "template".into(),
+                        label: "From template".into(),
+                        help: "Start from a session saved as a template (clients, their files, connections)".into(),
+                        control: Control::Choice { value: String::new(), options: opts, editable: false },
+                        modified: false,
+                    });
+                }
+            }
+            SessAction::SaveTemplate => {
+                let cur = st.session.clone().unwrap_or_default().replace('/', " ");
+                self.name_dialog(Kind::SaveTemplate, "Save the session as a template", "Template name", &cur, "Save");
+            }
             SessAction::Open => {
                 self.sess.send(&Request::ListSessions);
                 let mut d = Dialog::new(Kind::OpenSession, "Open a session");
@@ -206,6 +238,7 @@ impl App {
                     MenuItem::new("Duplicate…", Action::Sess(SessAction::Duplicate)).enabled(open),
                     MenuItem::new("Rename…", Action::Sess(SessAction::Rename)).enabled(open),
                     MenuItem::new("Notes…", Action::Sess(SessAction::Notes)).enabled(open),
+                    MenuItem::new("Save as template…", Action::Sess(SessAction::SaveTemplate)).enabled(open),
                     MenuItem::new("Take a snapshot…", Action::Sess(SessAction::Snapshot)).enabled(open),
                     MenuItem::new("Go back to a snapshot…", Action::Sess(SessAction::Snapshots)).enabled(open),
                     MenuItem::new("Open the session folder", Action::Sess(SessAction::OpenFolder)).enabled(open),
@@ -320,7 +353,8 @@ impl App {
                 let name = d.value("name").unwrap_or_default();
                 let req = match (kind, label.as_str()) {
                     (_, "Cancel") => None,
-                    (Kind::NewSession, _) => Some(Request::New { name }),
+                    (Kind::NewSession, _) => Some(Request::New { name, template: d.value("template").filter(|t| !t.is_empty()) }),
+                    (Kind::SaveTemplate, _) => Some(Request::SaveTemplate { name }),
                     (Kind::Rename, _) => Some(Request::Rename { name }),
                     (Kind::Duplicate, _) => Some(Request::Duplicate { name }),
                     (Kind::Notes, _) => Some(Request::SetNotes { notes: d.value("notes").unwrap_or_default() }),

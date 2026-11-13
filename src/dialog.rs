@@ -61,6 +61,7 @@ pub enum Kind {
     Notes,
     Snapshot,
     Snapshots,
+    SaveTemplate,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

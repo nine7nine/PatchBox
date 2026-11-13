@@ -1,6 +1,7 @@
 //! Command-line control of patchboxd.
 //!
-//!   patchbox-ctl state | sessions | new NAME | open NAME | save | close | abort
+//!   patchbox-ctl state | sessions | new NAME [--template T] | open NAME | save | close | abort
+//!                templates | save-template NAME
 //!                duplicate NAME | rename NAME | add [--plain] EXE [ARGS…]
 //!                start ID | stop ID | kill ID | save-client ID | show-gui ID | hide-gui ID
 //!                trash ID | restore ID | notes TEXT | connect SRC DST | disconnect SRC DST
@@ -10,7 +11,7 @@
 use pbx_session::proto::{Conn, FromDaemon, Push, Reply, Request};
 
 fn usage() -> ! {
-    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(6).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
+    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(7).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
     std::process::exit(2)
 }
 
@@ -20,7 +21,9 @@ fn main() {
     let req = match a.first().map(String::as_str) {
         Some("state") => Request::State,
         Some("sessions") => Request::ListSessions,
-        Some("new") => Request::New { name: arg(1) },
+        Some("new") => Request::New { name: arg(1), template: a.iter().position(|x| x == "--template").and_then(|i| a.get(i + 1).cloned()) },
+        Some("templates") => Request::ListTemplates,
+        Some("save-template") => Request::SaveTemplate { name: arg(1) },
         Some("open") => Request::Open { name: arg(1) },
         Some("save") => Request::Save,
         Some("close") => Request::Close,
@@ -70,6 +73,11 @@ fn main() {
             println!("# {root}");
             for s in sessions {
                 println!("{}\t{} clients\t{}", s.name, s.clients, s.notes);
+            }
+        }
+        Ok(Reply::Templates { templates }) => {
+            for t in templates {
+                println!("{t}");
             }
         }
         Ok(Reply::Snapshots { snapshots }) => {

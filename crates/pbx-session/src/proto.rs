@@ -13,7 +13,10 @@ pub enum Request {
     Subscribe,
     State,
     ListSessions,
-    New { name: String },
+    New { name: String, #[serde(default)] template: Option<String> },
+    /// Save the open session as a template (overwrites one of that name).
+    SaveTemplate { name: String },
+    ListTemplates,
     Open { name: String },
     Save,
     Close,
@@ -58,6 +61,7 @@ pub enum Reply {
     Error { msg: String },
     Sessions { root: String, sessions: Vec<SessionEntry> },
     Snapshots { snapshots: Vec<SnapshotEntry> },
+    Templates { templates: Vec<String> },
     State(State),
 }
 
@@ -167,6 +171,20 @@ pub fn socket_path() -> PathBuf {
         PathBuf::from(format!("/tmp/patchbox-{}", unsafe { libc::getuid() }))
     });
     base.join("patchbox").join("daemon.sock")
+}
+
+/// Session templates: PATCHBOX_TEMPLATES, else $XDG_CONFIG_HOME/patchbox/templates.
+pub fn templates_root() -> PathBuf {
+    if let Some(p) = std::env::var_os("PATCHBOX_TEMPLATES") {
+        return PathBuf::from(p);
+    }
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("patchbox")
+        .join("templates")
 }
 
 /// Where sessions live: PATCHBOX_SESSIONS, else ~/PatchBox Sessions.

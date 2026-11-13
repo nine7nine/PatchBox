@@ -180,7 +180,7 @@ impl Daemon {
             "/nsm/server/abort" => Request::Abort,
             "/nsm/server/quit" => Request::Quit,
             "/nsm/server/open" => Request::Open { name: arg },
-            "/nsm/server/new" => Request::New { name: arg },
+            "/nsm/server/new" => Request::New { name: arg, template: None },
             "/nsm/server/duplicate" => Request::Duplicate { name: arg },
             "/nsm/server/add" => {
                 if arg.contains('/') {

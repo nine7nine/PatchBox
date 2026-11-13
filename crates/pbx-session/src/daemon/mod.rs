@@ -46,6 +46,10 @@ enum Step {
     /// Open (or create) a session by name.
     Load(String, bool),
     CopyTo(String),
+    /// Copy the session into the templates (name).
+    ToTemplate(String),
+    /// Make the new session (name) from a template (template, name).
+    FromTemplate(String, String),
     MoveTo(String),
     /// Snapshot the session folder: (label, auto: skip when nothing changed).
     Snapshot(String, bool),
@@ -351,17 +355,46 @@ impl Daemon {
             }
             Request::State => Reply::State(self.state()),
             Request::ListSessions => Reply::Sessions { root: self.root.display().to_string(), sessions: store::list(&self.root) },
-            Request::New { name } | Request::Open { name } if self.op.is_some() => {
-                let _ = name;
-                busy()
-            }
-            Request::New { name } => match self.check_new(&name) {
+            Request::New { .. } | Request::Open { .. } if self.op.is_some() => busy(),
+            Request::New { name, template } => match self.check_new(&name) {
                 Err(e) => Reply::Error { msg: e },
                 Ok(()) => {
-                    self.start_op(format!("Creating {name}…"), self.switch_steps(Step::Load(name.trim().to_string(), true)));
+                    let n = name.trim().to_string();
+                    match template.filter(|t| !t.is_empty()) {
+                        Some(t) => {
+                            if !proto::templates_root().join(&t).join(store::FILE).is_file() {
+                                return Reply::Error { msg: format!("no template \"{t}\"") };
+                            }
+                            let mut steps = self.switch_steps(Step::Load(n.clone(), false));
+                            let at = steps.iter().position(|s| matches!(s, Step::Load(..))).unwrap_or(0);
+                            steps.insert(at, Step::FromTemplate(t, n));
+                            self.start_op(format!("Creating {name}…"), steps);
+                        }
+                        None => self.start_op(format!("Creating {name}…"), self.switch_steps(Step::Load(n, true))),
+                    }
                     ok("creating")
                 }
             },
+            Request::ListTemplates => {
+                let mut t: Vec<String> = std::fs::read_dir(proto::templates_root())
+                    .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.path().join(store::FILE).is_file()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+                    .unwrap_or_default();
+                t.sort();
+                Reply::Templates { templates: t }
+            }
+            Request::SaveTemplate { name } => {
+                if self.session.is_none() {
+                    return Reply::Error { msg: "no session is open".into() };
+                }
+                if self.op.is_some() {
+                    return busy();
+                }
+                if let Err(e) = store::valid_name(&name).and_then(|_| if name.contains('/') { Err("a template name has no '/'".to_string()) } else { Ok(()) }) {
+                    return Reply::Error { msg: e };
+                }
+                self.start_op(format!("Saving template {name}…"), vec![Step::SaveClients, Step::WriteFile, Step::ToTemplate(name.trim().to_string())]);
+                ok("saving template")
+            }
             Request::Open { name } => {
                 if !self.root.join(name.trim()).join(store::FILE).is_file() {
                     return Reply::Error { msg: format!("no session \"{name}\"") };
@@ -679,6 +712,33 @@ impl Daemon {
                         return false;
                     }
                     let _ = std::fs::remove_file(to.join(store::LOCK));
+                }
+                true
+            }
+            Step::ToTemplate(name) => {
+                let name = name.clone();
+                if let Some(s) = &self.session {
+                    let to = proto::templates_root().join(&name);
+                    let _ = std::fs::remove_dir_all(&to);
+                    match copy_dir(&s.dir, &to, &[snapshots::DIR, ".patchbox", store::LOCK]) {
+                        Ok(()) => self.log(format!("Saved as template {name}"), false),
+                        Err(e) => self.log(format!("template {}: {e}", to.display()), true),
+                    }
+                }
+                true
+            }
+            Step::FromTemplate(t, name) => {
+                let (t, name) = (t.clone(), name.clone());
+                let to = self.root.join(&name);
+                let res = copy_dir(&proto::templates_root().join(&t), &to, &[store::LOCK]).map_err(|e| e.to_string()).and_then(|_| {
+                    let mut f = SessionFile::load(&to)?;
+                    f.name = name.clone();
+                    f.save(&to)
+                });
+                if let Err(e) = res {
+                    self.log(format!("from template {t}: {e}"), true);
+                    self.op = None;
+                    return false;
                 }
                 true
             }
