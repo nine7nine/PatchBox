@@ -220,7 +220,9 @@ fn parse_desktop(path: &std::path::Path) -> Option<App> {
     let nsm = get("X-NSM-Capable") == "true";
     let cats = get("Categories");
     let audio = cats.split(';').any(|c| matches!(c, "Audio" | "Midi" | "Music" | "Sequencer" | "Mixer"));
-    if !nsm && !audio {
+    // Media players, disc burners, video: audio in their categories but not for a session.
+    let consumer = cats.split(';').any(|c| matches!(c, "Player" | "DiscBurning" | "Video" | "TV" | "Viewer"));
+    if !nsm && (!audio || consumer) {
         return None;
     }
     let exec = if nsm && !get("X-NSM-Exec").is_empty() { get("X-NSM-Exec") } else { get("Exec") };

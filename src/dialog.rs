@@ -246,11 +246,12 @@ impl Dialog {
     pub fn click(&mut self, x: f32, y: f32) -> Vec<Event> {
         let hit = self.hits.iter().rev().find(|(r, _)| r.contains(x, y)).map(|(r, h)| (*r, *h));
         let mut out = Vec::new();
-        // A click anywhere but the field being edited commits the edit first.
+        // A click anywhere but the field being edited commits the edit first, then does what it
+        // does there (another field starts editing, a button or a link acts): one click moves
+        // from field to field, as in any form. A click on nothing only commits.
         if self.editing.is_some() && !matches!(hit, Some((_, Hit::Row(i, Part::Edit))) if Some(i) == self.editing.as_ref().map(|e| e.0)) {
             out.extend(self.commit());
-            // A click on another row only commits; a button acts too.
-            if !matches!(hit, Some((_, Hit::Button(_)))) {
+            if hit.is_none() {
                 return out;
             }
         }
