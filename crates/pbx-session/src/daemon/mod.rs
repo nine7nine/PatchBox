@@ -101,6 +101,11 @@ pub struct Daemon {
     quit: bool,
     /// No session and no front end since then: exit after a while.
     idle_since: Option<Instant>,
+    /// Its executable was replaced on disk (checked every few seconds); with no session it
+    /// re-executes as the new one.
+    outdated: bool,
+    exe_check_at: Instant,
+    reexec: bool,
     /// When the clients' logs were last checked for size.
     logs_checked: Instant,
     /// Connection rules: made whenever their ports are there, session or not.
@@ -165,13 +170,34 @@ pub fn run() -> Result<(), String> {
         jack_job: None,
         quit: false,
         idle_since: Some(Instant::now()),
+        outdated: false,
+        exe_check_at: Instant::now(),
+        reexec: false,
         logs_checked: Instant::now(),
         rules: crate::rules::Rules::load(),
     };
     eprintln!("[patchboxd] {} · NSM at {} · sessions in {}", sock.display(), d.nsm_url, d.root.display());
     d.main_loop();
+    let reexec = d.reexec;
+    drop(d);
     let _ = std::fs::remove_file(&sock);
+    if reexec && let Some(exe) = new_exe() {
+        // Updated on disk: the same process, the new program (the window reconnects to it).
+        use std::os::unix::process::CommandExt;
+        eprintln!("[patchboxd] updated on disk: restarting as {}", exe.display());
+        let err = std::process::Command::new(&exe).args(std::env::args_os().skip(1)).exec();
+        return Err(format!("{}: {err}", exe.display()));
+    }
     Ok(())
+}
+
+/// Our executable's path, if the file we run from was replaced (an update): /proc/self/exe then
+/// reads "<path> (deleted)", and the new file is at <path>.
+fn new_exe() -> Option<PathBuf> {
+    let p = std::fs::read_link("/proc/self/exe").ok()?;
+    let s = p.to_str()?.strip_suffix(" (deleted)")?;
+    let p = PathBuf::from(s);
+    p.is_file().then_some(p)
 }
 
 impl Daemon {
@@ -339,6 +365,8 @@ impl Daemon {
     pub(crate) fn state(&self) -> State {
         let mut st = State { root: self.root.display().to_string(), nsm_url: self.nsm_url.clone(), ..Default::default() };
         st.busy = self.op.as_ref().map(|o| o.label.clone());
+        st.proto = proto::PROTO;
+        st.outdated = self.outdated;
         st.connections_saved = self.patch.saved.len();
         st.connections_present = self.patch.present;
         if let Some(s) = &self.session {
@@ -620,7 +648,9 @@ impl Daemon {
                 let s = d.session.as_mut().unwrap();
                 if !s.clients[i].running() {
                     let c = s.clients.remove(i);
+                    let name = if c.entry.label.is_empty() { c.entry.name.clone() } else { c.entry.label.clone() };
                     s.trash.push(c.entry);
+                    d.log(format!("{name} removed (Removed, in the session panel, brings it back)"), false);
                     return Ok("removed".into());
                 }
                 if save {
@@ -783,6 +813,17 @@ impl Daemon {
 
     fn timers(&mut self) {
         let now = Instant::now();
+        if now >= self.exe_check_at {
+            self.exe_check_at = now + Duration::from_secs(5);
+            self.outdated = new_exe().is_some();
+        }
+        // Updated, nothing open and nobody connected: become the new version now. (A window keeps
+        // a connection: it replaces us itself, after offering to save, close and reopen a session.
+        // A request from patchbox-ctl is answered first: its connection ends, then we restart.)
+        if self.outdated && self.session.is_none() && self.op.is_none() && self.ctls.is_empty() && !self.quit {
+            self.reexec = true;
+            self.quit = true;
+        }
         if self.jack.is_none() && now >= self.jack_retry {
             self.connect_jack();
         }

@@ -72,6 +72,8 @@ pub enum Kind {
     AbortSession,
     /// Session and client templates, to use or delete.
     Templates,
+    /// Confirm restarting an older daemon that runs the open session (`tag`: its name).
+    UpdateDaemon,
     /// Confirm deleting a template (`tag`: "s:<name>" or "c:<name>").
     DeleteTemplate,
     Rename,

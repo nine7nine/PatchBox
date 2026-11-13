@@ -44,6 +44,13 @@ if [ -z "${PB_NO_FAKES:-}" ]; then
   "$BIN/pbx-fake-clients" > "$L/fakes.log" 2>&1 &
   for i in $(seq 50); do grep -q ready "$L/fakes.log" 2>/dev/null && break; sleep 0.1; done
 fi
+# PB_OLD_DAEMON=<patchboxd>: an older daemon already running when the window starts (as after an
+# update with a session open); PB_OLD_SETUP: shell commands run against it first (patchbox-ctl …).
+if [ -n "${PB_OLD_DAEMON:-}" ]; then
+  "$PB_OLD_DAEMON" > "$L/old-daemon.log" 2>&1 &
+  for i in $(seq 50); do [ -S "$PATCHBOX_SOCKET" ] && break; sleep 0.1; done
+  [ -n "${PB_OLD_SETUP:-}" ] && sh -c "$PB_OLD_SETUP" > "$L/old-setup.log" 2>&1
+fi
 # Its own XDG config home: the PipeWire tab's drop-in and config lookups stay in the scratch dir.
 mkdir -p "$L/xdg-config"
 env PATCHBOX_CONFIG_DIR="$CFG" XDG_CONFIG_HOME="$L/xdg-config" PATCHBOX_SNAPSHOT="$OUT" PATCHBOX_SNAPSHOT_EXIT=1 PATCHBOX_SHADOW=0 "$@" "$BIN/patchbox" 2>&1 | tee "$L/patchbox.log"

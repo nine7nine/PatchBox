@@ -176,5 +176,23 @@ if [ -n "${PB_VALGRIND:-}" ]; then
   check "valgrind: no memory errors in patchboxd (exit $DRC)" '[ $DRC -ne 99 ] && grep -q "ERROR SUMMARY: 0 errors" "$W/valgrind.log"'
   grep -E "ERROR SUMMARY" "$W/valgrind.log"
 fi
+# An update replaces the daemon's program on disk (as pacman does: a new file renamed over it):
+# with no session open it re-executes as the new program, same pid, and keeps answering.
+mkdir -p "$W/upd"; cp "$BIN/patchboxd" "$W/upd/patchboxd"
+"$W/upd/patchboxd" > "$W/upd.log" 2>&1 &
+UPID=$!
+wait_for '[ -S "$W/daemon.sock" ] && ctl state >/dev/null 2>&1'
+check "a fresh daemon reports the protocol version, not outdated" 'st | grep -q "\"proto\": 2" && st | grep -q "\"outdated\": false"'
+cp "$BIN/patchboxd" "$W/upd/patchboxd.new" && mv -f "$W/upd/patchboxd.new" "$W/upd/patchboxd"
+# It looks on its next pass (requests wake it; idle, within a minute). Each request here is
+# answered by whichever program runs; the restart comes once none is connected. (The new program
+# is up once it has said where it listens a second time.)
+PB_WAIT=150 wait_for 'ctl state >/dev/null 2>&1; [ "$(grep -c "NSM at" "$W/upd.log")" -ge 2 ] && ctl state >/dev/null 2>&1'
+check "every request on the way was answered" '! grep -q "bad request\|error" "$W/upd.log"'
+check "replaced on disk, no session open: it restarts as the new program (pid $UPID kept)" 'grep -q "updated on disk" "$W/upd.log" && kill -0 $UPID && [ "$(readlink /proc/$UPID/exe)" = "$W/upd/patchboxd" ] && st | grep -q "\"outdated\": false"'
+ctl quit >/dev/null
+# Never hang the suite on it.
+wait_for '! kill -0 $UPID 2>/dev/null' || { echo "FAIL the restarted daemon did not quit"; fail=1; kill -9 $UPID; }
+wait $UPID 2>/dev/null
 echo "--- patchboxd log"; tail -n 25 "$W/patchboxd.log"
 exit $fail

@@ -85,7 +85,11 @@ From the sidebar (hover any icon for what it does):
 - **Removed n** brings removed clients back, forgets them, or deletes them with their files.
 
 Nothing is deleted outright: sessions, templates and client files go to the desktop's Trash
-(freedesktop spec), where a file manager can restore them. From a shell:
+(freedesktop spec; Dolphin: Places → Trash), where a file manager can restore them.
+
+After an update, a `patchboxd` still running from before is replaced: at once when no session is
+open (by the window, or by itself when no window is connected); with a session open, the session
+panel offers **Update** (save, close, restart the daemon, reopen). From a shell:
 
 ```sh
 patchbox-ctl sessions | new NAME | open NAME | save | close | abort | duplicate NAME | rename NAME | delete NAME

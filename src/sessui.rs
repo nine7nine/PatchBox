@@ -46,6 +46,8 @@ pub enum SessAction {
     Templates,
     /// Delete the open session (asks first; closes it without saving, then deletes).
     DeleteOpen,
+    /// The daemon is older than this window: save, close, restart it, reopen (asks first).
+    UpdateDaemon,
     /// A client's properties dialog.
     Props(String),
     /// Keep a client as a client template (asks the name).
@@ -87,6 +89,24 @@ pub fn unsaved(c: &pbx_session::proto::ClientState) -> bool {
 }
 
 impl App {
+    /// A daemon from before an update: with no session open, replaced at once (asked to quit;
+    /// the link starts the new one); with one open, the panel offers Update. Once the new one
+    /// answers, a session closed for the update is opened again.
+    fn check_daemon_version(&mut self) {
+        let st = &self.sess.state;
+        if self.sess.stale() {
+            if st.session.is_none() && st.busy.is_none() && !self.sess.quit_sent {
+                self.sess.quit_sent = true;
+                self.sess.send(&Request::Quit);
+                self.say("PatchBox was updated: restarting its session daemon", false);
+            }
+        } else if self.sess.connected && st.session.is_none() && st.busy.is_none()
+            && let Some(name) = self.sess.reopen_after_update.take()
+        {
+            self.send(Request::Open { name });
+        }
+    }
+
     /// What patchboxd said.
     pub fn on_daemon(&mut self) {
         for m in self.sess.take() {
@@ -101,6 +121,7 @@ impl App {
                     {
                         self.send(Request::Delete { name });
                     }
+                    self.check_daemon_version();
                     if opened && self.dialog.is_none() {
                         match self.sess.add_after_open.take() {
                             Some(AddNext::App) => self.add_app_dialog(),
@@ -158,7 +179,11 @@ impl App {
                 FromDaemon::Reply(Reply::Error { msg }) => {
                     self.sess.add_after_open = None;
                     self.sess.delete_after_close = None;
-                    self.say(msg, true);
+                    if msg.starts_with("bad request") && self.sess.stale() {
+                        self.say("The session daemon is from before PatchBox was updated and can't do that: Update, in the session panel, restarts it", true);
+                    } else {
+                        self.say(msg, true);
+                    }
                 }
                 FromDaemon::Reply(Reply::Ok { .. }) => {}
             }
@@ -264,7 +289,7 @@ impl App {
         let mut d = Dialog::new(Kind::Templates, "Templates");
         d.rows = self.templates_rows();
         d.buttons = vec!["Close".into()];
-        d.note = "Click one to use it; × deletes it (to the desktop's Trash).".into();
+        d.note = "Click one to use it; × deletes it (to your file manager's Trash).".into();
         self.dialog = Some(d);
     }
 
@@ -406,15 +431,19 @@ impl App {
             }
             SessAction::DeleteOpen => {
                 let name = st.session.clone().unwrap_or_default();
-                self.confirm(Kind::DeleteSession, &name, "Delete this session?", &format!("{name} is closed without saving (its clients stop), then its folder, with every client's files in it, goes to the desktop's Trash, where you can restore it from."), &["Cancel", "Move to Trash"]);
+                self.confirm(Kind::DeleteSession, &name, "Delete this session?", &format!("{name} is closed without saving (its clients stop), then its folder, with every client's files in it, goes to your file manager's Trash (Dolphin: Places → Trash), where you can restore it."), &["Cancel", "Move to Trash"]);
             }
             SessAction::Templates => self.templates_page(),
+            SessAction::UpdateDaemon => {
+                let name = st.session.clone().unwrap_or_default();
+                self.confirm(Kind::UpdateDaemon, &name, "Restart the session daemon?", &format!("PatchBox was updated, but {name} still runs in the session daemon from before, which can't do everything the new window asks. This saves {name} and closes it (its programs stop), starts the new daemon, and opens {name} again."), &["Cancel", "Save and restart"]);
+            }
             SessAction::Remove(id) => {
                 let Some(c) = st.clients.iter().find(|c| c.id == id) else { return };
                 let name = self.client_name(&id);
                 if c.pid.is_none() {
+                    // The daemon says when it is done (or why not).
                     self.send(Request::Remove { id, save: false });
-                    self.say(format!("{name} removed: Removed, below the clients, brings it back"), false);
                 } else {
                     let mut b = vec!["Cancel", "Stop and remove"];
                     let can_save = c.nsm && c.status == Status::Ready;
@@ -427,7 +456,7 @@ impl App {
             }
             SessAction::DeleteClient(id) => {
                 let name = self.client_name(&id);
-                self.confirm(Kind::DeleteClient, &id, &format!("Delete {name}?"), &format!("{name} leaves the session for good; the files it saved in the session's folder go to the desktop's Trash."), &["Cancel", "Delete"]);
+                self.confirm(Kind::DeleteClient, &id, &format!("Delete {name}?"), &format!("{name} leaves the session for good; the files it saved in the session's folder go to your file manager's Trash."), &["Cancel", "Delete"]);
             }
             SessAction::Menu(r) => {
                 let open = st.session.is_some();
@@ -583,7 +612,7 @@ impl App {
                 let (client, name) = (id.starts_with("ctemplate:"), id.split_once(':').map(|x| x.1).unwrap_or_default().to_string());
                 let tag = format!("{}:{name}", if client { "c" } else { "s" });
                 let what = if client { "client template" } else { "session template" };
-                self.confirm(Kind::DeleteTemplate, &tag, &format!("Delete the {what}?"), &format!("{name}, with the files kept with it, goes to the desktop's Trash, where you can restore it from."), &["Cancel", "Move to Trash"]);
+                self.confirm(Kind::DeleteTemplate, &tag, &format!("Delete the {what}?"), &format!("{name}, with the files kept with it, goes to your file manager's Trash (Dolphin: Places → Trash), where you can restore it."), &["Cancel", "Move to Trash"]);
             }
             Event::Set(id, v) if id.starts_with("stemplate:") && v == "activate" => {
                 let t = id.trim_start_matches("stemplate:").to_string();
@@ -598,7 +627,7 @@ impl App {
             }
             Event::Set(id, v) if id.starts_with("session:") && v == "remove" => {
                 let name = id.trim_start_matches("session:").to_string();
-                let msg = format!("{name} goes to the desktop's Trash: its folder, with every client's files in it. You can restore it from there.");
+                let msg = format!("{name} goes to your file manager's Trash (Dolphin: Places → Trash), with every client's files in it. You can restore it from there.");
                 self.confirm(Kind::DeleteSession, &name, "Delete this session?", &msg, &["Cancel", "Move to Trash"]);
             }
                         Event::Set(id, v) if id.starts_with("session:") && v == "activate" => {
@@ -642,6 +671,15 @@ impl App {
                 }
                 // Back to the list.
                 self.session_action(SessAction::Open);
+            }
+            Event::Button(b) if kind == Kind::UpdateDaemon => {
+                let go = d.buttons.get(b).is_some_and(|l| l == "Save and restart");
+                let name = d.tag.clone();
+                self.dialog = None;
+                if go {
+                    self.sess.reopen_after_update = Some(name);
+                    self.send(Request::Close);
+                }
             }
             Event::Button(b) if matches!(kind, Kind::RemoveClient | Kind::DeleteClient | Kind::StopClient | Kind::AbortSession | Kind::DeleteTemplate) => {
                 let label = d.buttons.get(b).cloned().unwrap_or_default();
@@ -758,6 +796,22 @@ impl App {
         if let Some(b) = &st.busy {
             g.text_fit(Face::Regular, FONT_SMALL * s, r.x + pad, y, r.w - 2.0 * pad, WARN, b);
             y += lh;
+        }
+        // An older daemon still running the open session (PatchBox was updated meanwhile).
+        if self.sess.stale() && st.session.is_some() && st.busy.is_none() {
+            let spx = FONT_SMALL * s;
+            let bh = (lh + 10.0 * s).round();
+            let bw = g.measure(Face::Regular, px, "Update") + 28.0 * s;
+            let tw = r.w - 2.0 * pad - bw - 8.0 * s;
+            let lines = crate::ui::wrap(g, spx, "Its daemon is from before the update", tw);
+            let slh = g.line_height(Face::Regular, spx);
+            let th = lines.len() as f32 * slh;
+            for (k, l) in lines.iter().enumerate() {
+                g.text(Face::Regular, spx, r.x + pad, y + (bh - th) / 2.0 + k as f32 * slh, WARN, l);
+            }
+            let ur = Rect::new(r.right() - pad - bw, y, bw, bh);
+            self.sbutton(g, ur, "Update", Action::Sess(SessAction::UpdateDaemon));
+            y += bh + 6.0 * s;
         }
         // New / Open / Save / Close / ⋯
         let bh = (lh + 10.0 * s).round();

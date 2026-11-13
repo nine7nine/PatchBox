@@ -224,7 +224,18 @@ pub struct State {
     pub auto_snapshot: bool,
     /// The session restores JACK's settings when it opens.
     pub jack_memory: bool,
+    /// The daemon's protocol version (PROTO); 0 from a daemon older than the field.
+    #[serde(default)]
+    pub proto: u32,
+    /// The daemon's executable was replaced on disk (an update) since it started.
+    #[serde(default)]
+    pub outdated: bool,
 }
+
+/// The control protocol's version, bumped when requests or the state change: a GUI talking to an
+/// older daemon (one left running across an update, with a session open) can tell, and replace it.
+/// 2: delete, remove, save_stop, delete_template, forget's files.
+pub const PROTO: u32 = 2;
 
 /// $XDG_RUNTIME_DIR/patchbox/daemon.sock (PATCHBOX_SOCKET overrides).
 pub fn socket_path() -> PathBuf {

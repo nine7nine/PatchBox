@@ -290,6 +290,7 @@ pub fn tint_for(label: &str) -> crate::gfx::Color {
     match label {
         "Stop" | "Kill" | "Quit" | "Move to Trash" | "Delete" | "Stop without saving" | "Close without saving" | "Stop and remove" => TINT_RED,
         "Save and stop" | "Save, stop and remove" => TINT_GREEN,
+        "Update" | "Save and restart" => TINT_AMBER,
         "Start" | "Create" | "Add command" | "Save the current view" | "Take" => TINT_GREEN,
         "Restart" | "Save" | "Rename" | "Duplicate" => TINT_AMBER,
         "Settings" | "Open" => TINT_BLUE,
@@ -1010,6 +1011,7 @@ impl App {
                     Some(c) if c.pid.is_some() => "Remove it from the session (it is stopped first: asks)".into(),
                     _ => "Remove it from the session (Removed, below, brings it back)".into(),
                 },
+                S::UpdateDaemon => "Save and close the session, restart its daemon as the updated one, open it again".into(),
                 S::TrashMenu(_) => "Clients removed from the session: bring one back, or delete it".into(),
                 S::ClientMenu(id, _) => {
                     let c = client(id)?;
@@ -1133,7 +1135,7 @@ impl App {
                 Action::TransportRewind => name == "rew",
                 Action::Sess(a) => {
                     use crate::sessui::SessAction as S;
-                    matches!((a, name), (S::New, "sess-new") | (S::Open, "sess-open") | (S::Save, "sess-save") | (S::Close, "sess-close") | (S::AddApp, "sess-add") | (S::AddExe, "sess-exe") | (S::TrashMenu(_), "sess-removed") | (S::Menu(_), "sess-menu"))
+                    matches!((a, name), (S::New, "sess-new") | (S::Open, "sess-open") | (S::Save, "sess-save") | (S::Close, "sess-close") | (S::AddApp, "sess-add") | (S::AddExe, "sess-exe") | (S::TrashMenu(_), "sess-removed") | (S::UpdateDaemon, "sess-update") | (S::Menu(_), "sess-menu"))
                         || matches!(a, S::ClientMenu(id, _) if name == format!("client:{id}"))
                         || matches!(a, S::Start(id) | S::Stop(id) if name == format!("startstop:{id}"))
                         || matches!(a, S::Remove(id) if name == format!("remove:{id}"))

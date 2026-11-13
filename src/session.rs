@@ -36,6 +36,10 @@ pub struct SessionLink {
     pub add_after_open: Option<AddNext>,
     /// "Delete this session…" on the open one: deleted once it has closed.
     pub delete_after_close: Option<String>,
+    /// Updating an older daemon that had a session open: reopened with the new one.
+    pub reopen_after_update: Option<String>,
+    /// Asked the older daemon to quit (once per connection).
+    pub quit_sent: bool,
 }
 
 /// patchboxd next to our executable (a build tree, an install), else on PATH.
@@ -65,7 +69,14 @@ impl SessionLink {
             lost: false,
             add_after_open: None,
             delete_after_close: None,
+            reopen_after_update: None,
+            quit_sent: false,
         }
+    }
+
+    /// The daemon is from before an update (an older protocol, or its program replaced on disk).
+    pub fn stale(&self) -> bool {
+        self.connected && !self.state.root.is_empty() && (self.state.proto < pbx_session::proto::PROTO || self.state.outdated)
     }
 
     pub fn retry_at(&self) -> Option<Instant> {
@@ -104,6 +115,7 @@ impl SessionLink {
                 self.tx = Some(tx);
                 self.connected = true;
                 self.lost = false;
+                self.quit_sent = false;
                 self.send(&Request::Subscribe);
                 self.send(&Request::ListSessions);
                 self.send(&Request::Rules);
