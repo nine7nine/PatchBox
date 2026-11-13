@@ -98,6 +98,8 @@ pub struct Daemon {
     quit: bool,
     /// No session and no front end since then: exit after a while.
     idle_since: Option<Instant>,
+    /// When the clients' logs were last checked for size.
+    logs_checked: Instant,
 }
 
 const IDLE_EXIT: Duration = Duration::from_secs(30);
@@ -158,6 +160,7 @@ pub fn run() -> Result<(), String> {
         jack_job: None,
         quit: false,
         idle_since: Some(Instant::now()),
+        logs_checked: Instant::now(),
     };
     eprintln!("[patchboxd] {} · NSM at {} · sessions in {}", sock.display(), d.nsm_url, d.root.display());
     d.main_loop();
@@ -642,6 +645,11 @@ impl Daemon {
                 if let Some(m) = c.timers(now) {
                     msgs.push(m);
                 }
+            }
+            // The loop wakes at least once a minute: the clients' logs stay under their cap.
+            if now.duration_since(self.logs_checked) >= std::time::Duration::from_secs(30) {
+                self.logs_checked = now;
+                msgs.extend(s.clients.iter().filter_map(|c| c.cap_log()).map(|m| (m, false)));
             }
             for (m, bad) in msgs {
                 self.log(m, bad);

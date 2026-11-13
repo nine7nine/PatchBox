@@ -45,6 +45,8 @@ g reset -q --hard "$2"
 fn spawn(dir: &Path, script: &str, a2: &str, a3: &str) -> Result<u32, String> {
     let log = dir.join(".patchbox");
     let _ = std::fs::create_dir_all(&log);
+    // git's output for the snapshots, put aside past 256 KB (one older file kept).
+    super::clients::rotate(&log.join("git.log"), 256 << 10);
     let out = std::fs::OpenOptions::new().create(true).append(true).open(log.join("git.log")).ok();
     let mut cmd = Command::new("sh");
     cmd.arg("-c").arg(format!("{PRELUDE}{script}")).arg("sh").arg(dir).arg(a2).arg(a3).current_dir(dir).stdin(Stdio::null());

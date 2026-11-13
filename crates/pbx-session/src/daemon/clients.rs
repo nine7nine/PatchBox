@@ -40,6 +40,22 @@ pub struct Client {
     kill_at: Option<Instant>,
     alive_check: Option<Instant>,
     open_sent: Option<Instant>,
+    /// Its stdout/stderr file (.patchbox/<id>.log), cut back when it grows too big.
+    log: Option<std::path::PathBuf>,
+}
+
+/// A client's log is cut back past this (the previous run's is kept as <id>.log.1).
+pub const LOG_MAX: u64 = 4 << 20;
+
+/// Put `path` aside as `<path>.1` when it passed `max` (or always, `max` 0): what comes next
+/// starts a fresh file. Logs never grow without end.
+pub fn rotate(path: &Path, max: u64) {
+    let big = std::fs::metadata(path).is_ok_and(|m| m.len() >= max);
+    if big {
+        let mut old = path.as_os_str().to_owned();
+        old.push(".1");
+        let _ = std::fs::rename(path, old);
+    }
 }
 
 /// NSM clients that never announce become plain programs after this.
@@ -67,7 +83,22 @@ impl Client {
             kill_at: None,
             alive_check: None,
             open_sent: None,
+            log: None,
         }
+    }
+
+    /// Cut the running client's log back when it passed LOG_MAX. The client writes in append
+    /// mode, so it carries on at the new end.
+    pub fn cap_log(&self) -> Option<String> {
+        let p = self.log.as_ref()?;
+        if std::fs::metadata(p).ok()?.len() < LOG_MAX {
+            return None;
+        }
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().write(true).open(p).ok()?;
+        f.set_len(0).ok()?;
+        let _ = writeln!(f, "[patchboxd: the log passed {} MB and was cut]", LOG_MAX >> 20);
+        Some(format!("{}: its log passed {} MB and was cut", self.entry.id, LOG_MAX >> 20))
     }
 
     pub fn running(&self) -> bool {
@@ -118,7 +149,12 @@ impl Client {
     pub fn launch(&mut self, url: &str, dir: &Path, session: &str) -> Result<(), String> {
         let logs = dir.join(".patchbox");
         let _ = std::fs::create_dir_all(&logs);
-        let log = std::fs::File::create(logs.join(format!("{}.log", self.entry.id))).ok();
+        // This run's output; the previous run's is kept beside it (.1), nothing older. Append
+        // mode, so the file can be cut back while the client writes (cap_log).
+        let path = logs.join(format!("{}.log", self.entry.id));
+        rotate(&path, 0);
+        let log = std::fs::OpenOptions::new().create(true).append(true).open(&path).ok();
+        self.log = log.is_some().then_some(path);
         let mut cmd = Command::new(&self.entry.exe);
         cmd.args(&self.entry.args).current_dir(dir).stdin(Stdio::null());
         match log.as_ref().and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?))) {
@@ -370,5 +406,27 @@ impl Client {
             self.alive_check = None;
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logs_rotate_past_their_size() {
+        let d = std::env::temp_dir().join(format!("pbx-rotate-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let p = d.join("c.log");
+        std::fs::write(&p, "small").unwrap();
+        rotate(&p, 100);
+        assert!(p.exists(), "under the size: kept");
+        std::fs::write(&p, vec![b'x'; 200]).unwrap();
+        rotate(&p, 100);
+        assert!(!p.exists() && d.join("c.log.1").exists(), "past it: put aside");
+        std::fs::write(&p, "new run").unwrap();
+        rotate(&p, 0);
+        assert_eq!(std::fs::read_to_string(d.join("c.log.1")).unwrap(), "new run", "one older file only");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
