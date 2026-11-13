@@ -71,6 +71,8 @@ pub enum Kind {
     Log,
     /// The name for a JACK preset.
     SavePreset,
+    /// Connection rules.
+    Rules,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -296,7 +298,7 @@ impl Dialog {
 
     /// Pages (settings, lists) fill the canvas; prompts are a card over it.
     pub fn is_page(&self) -> bool {
-        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Log | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views)
+        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Log | Kind::Rules | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views)
     }
 
     /// Draw over `area` (the canvas): a page fills it, a prompt is a card in its middle. The

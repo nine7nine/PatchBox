@@ -6,12 +6,13 @@
 //!                start ID | stop ID | kill ID | save-client ID | show-gui ID | hide-gui ID
 //!                trash ID | restore ID | notes TEXT | connect SRC DST | disconnect SRC DST
 //!                graph | snapshot [LABEL] | snapshots | rewind ID | auto-snapshot on|off | jack-memory on|off
+//!                rules | rule-add OUT IN | rule-del OUT IN   (names may hold *)
 //!                quit | watch
 
 use pbx_session::proto::{Conn, FromDaemon, Push, Reply, Request};
 
 fn usage() -> ! {
-    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(7).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
+    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(8).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
     std::process::exit(2)
 }
 
@@ -52,6 +53,7 @@ fn main() {
         Some("rewind") => Request::Rewind { id: arg(1) },
         Some("auto-snapshot") => Request::SetAutoSnapshot { on: arg(1) == "on" },
         Some("jack-memory") => Request::SetJackMemory { on: arg(1) == "on" },
+        Some("rules" | "rule-add" | "rule-del") => Request::Rules,
         Some("quit") => Request::Quit,
         Some("watch") => Request::Subscribe,
         _ => usage(),
@@ -64,6 +66,29 @@ fn main() {
         }
     };
     let watch = matches!(req, Request::Subscribe);
+    // rule-add / rule-del: the rules, changed, sent back.
+    let req = if matches!(a[0].as_str(), "rule-add" | "rule-del") {
+        let mut rules = match c.call(&Request::Rules) {
+            Ok(Reply::Rules { rules }) => rules,
+            Ok(Reply::Error { msg }) => {
+                eprintln!("error: {msg}");
+                std::process::exit(1);
+            }
+            _ => {
+                eprintln!("patchbox-ctl: no rules from patchboxd");
+                std::process::exit(1);
+            }
+        };
+        let r = pbx_session::rules::Rule { out: arg(1), inp: arg(2) };
+        if a[0] == "rule-add" {
+            rules.push(r);
+        } else {
+            rules.retain(|x| *x != r);
+        }
+        Request::SetRules { rules }
+    } else {
+        req
+    };
     match c.call(&req) {
         Ok(Reply::Ok { msg }) => println!("{msg}"),
         Ok(Reply::Error { msg }) => {
@@ -87,6 +112,11 @@ fn main() {
             }
         }
         Ok(Reply::State(st)) => println!("{}", serde_json::to_string_pretty(&st).unwrap_or_default()),
+        Ok(Reply::Rules { rules }) => {
+            for r in rules {
+                println!("{}\t{}", r.out, r.inp);
+            }
+        }
         Err(e) => {
             eprintln!("patchbox-ctl: {e}");
             std::process::exit(1);

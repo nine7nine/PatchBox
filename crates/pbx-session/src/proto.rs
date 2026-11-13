@@ -53,6 +53,10 @@ pub enum Request {
     SetAutoSnapshot { on: bool },
     /// Remember JACK's settings with this session (jackdbus): kept at save, restored at open.
     SetJackMemory { on: bool },
+    /// The connection rules (crate::rules).
+    Rules,
+    /// Replace the connection rules (saved; applied at once).
+    SetRules { rules: Vec<crate::rules::Rule> },
     Quit,
 }
 
@@ -64,6 +68,7 @@ pub enum Reply {
     Sessions { root: String, sessions: Vec<SessionEntry> },
     Snapshots { snapshots: Vec<SnapshotEntry> },
     Templates { templates: Vec<String> },
+    Rules { rules: Vec<crate::rules::Rule> },
     State(State),
 }
 

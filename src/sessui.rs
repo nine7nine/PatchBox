@@ -92,6 +92,10 @@ impl App {
                         }
                     }
                 }
+                FromDaemon::Reply(Reply::Rules { rules }) => {
+                    self.rules = rules;
+                    self.refresh_rules_page();
+                }
                 FromDaemon::Reply(Reply::Templates { templates }) => {
                     self.sess.templates = templates;
                     let opts = self.template_options();

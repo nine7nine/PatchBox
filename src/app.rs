@@ -65,6 +65,12 @@ pub enum Action {
     PresetMenu(Rect),
     /// Ask for a name and save the server's settings under it.
     SavePresetPrompt,
+    /// The connection rules page (toggles).
+    RulesPage,
+    /// Add (true) or remove a rule for this connection: output, input.
+    Rule(String, String, bool),
+    /// Make every present connection of this node's ports a rule.
+    RulesFromNode(String),
     ToggleFreewheel,
     /// Split (true) or join (false) a client's nodes.
     Split(String, bool),
@@ -166,6 +172,8 @@ pub struct App {
     pub jack_now: Option<pbx_session::jackcfg::JackSettings>,
     /// A preset to be saved under this name when the server's settings come.
     preset_saving: Option<String>,
+    /// Connection rules (patchboxd keeps and applies them).
+    pub rules: Vec<pbx_session::rules::Rule>,
     /// Installed applications (.desktop), scanned when first needed.
     pub apps: Option<Vec<crate::session::App>>,
     pub log: Vec<LogLine>,
@@ -216,6 +224,7 @@ impl App {
             presets: crate::presets::load(),
             jack_now: None,
             preset_saving: None,
+            rules: Vec::new(),
             apps: None,
             jack: None,
             waker,
@@ -699,6 +708,8 @@ impl App {
             self.fit_pending = true;
         }
         self.refresh_hover();
+        // The rules page says which rules are connected now.
+        self.refresh_rules_page();
         self.redraw = true;
     }
 
@@ -1428,6 +1439,42 @@ impl App {
                 items.push(MenuItem::new("Presets on the settings page", Action::ServerSettings));
                 self.ui.open_menu([r.x, r.bottom() + 2.0], items);
             }
+            Action::RulesPage if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Rules) => self.dialog = None,
+            Action::RulesPage => {
+                let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::Rules, "Connection rules");
+                d.buttons = vec!["Close".into()];
+                d.note = "patchboxd keeps these connections whenever both ports are there, session or not.".into();
+                self.dialog = Some(d);
+                self.sess.send(&pbx_session::proto::Request::Rules);
+                self.refresh_rules_page();
+            }
+            Action::Rule(o, i, on) => {
+                let mut rules = self.rules.clone();
+                let r = pbx_session::rules::Rule { out: o, inp: i };
+                if on {
+                    rules.push(r);
+                } else {
+                    rules.retain(|x| *x != r);
+                }
+                self.send_rules(rules);
+            }
+            Action::RulesFromNode(id) => {
+                let Some(n) = self.model.node_by_id(&id) else { return };
+                let mine: std::collections::HashSet<usize> = self.model.nodes[n].ins.iter().chain(&self.model.nodes[n].outs).copied().collect();
+                let mut rules = self.rules.clone();
+                let before = rules.len();
+                for &(o, i) in &self.graph.conns {
+                    if mine.contains(&o) || mine.contains(&i) {
+                        let r = pbx_session::rules::Rule { out: self.graph.ports[o].name.clone(), inp: self.graph.ports[i].name.clone() };
+                        if !rules.contains(&r) {
+                            rules.push(r);
+                        }
+                    }
+                }
+                let added = rules.len() - before;
+                self.say(format!("{added} connection rule{} added", if added == 1 { "" } else { "s" }), false);
+                self.send_rules(rules);
+            }
             Action::SavePresetPrompt => {
                 use crate::dialog::{Control, Dialog, Kind, Row};
                 let mut d = Dialog::new(Kind::SavePreset, "Save the JACK settings as a preset");
@@ -1660,6 +1707,48 @@ impl App {
     }
 
     // ---- JACK server settings (jackdbus) ----
+
+    /// Send the rules to patchboxd (it saves, applies and sends them back).
+    pub fn send_rules(&mut self, rules: Vec<pbx_session::rules::Rule>) {
+        if !self.sess.connected {
+            return self.say("The session daemon isn't running: rules can't be kept", true);
+        }
+        self.sess.send(&pbx_session::proto::Request::SetRules { rules });
+    }
+
+    /// Does a rule ask for this connection?
+    pub fn rule_wants(&self, o: &str, i: &str) -> bool {
+        self.rules.iter().any(|r| pbx_session::rules::glob(&r.out, o) && pbx_session::rules::glob(&r.inp, i))
+    }
+
+    pub fn refresh_rules_page(&mut self) {
+        use crate::dialog::{Control, Row};
+        if !self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Rules) {
+            return;
+        }
+        let mut rows = vec![Row::header("Rules")];
+        if self.rules.is_empty() {
+            rows.push(Row::info("None yet", "right-click a wire or a block, or add one below"));
+        }
+        for (k, r) in self.rules.iter().enumerate() {
+            let present = self.graph.conns.iter().any(|&(o, i)| pbx_session::rules::glob(&r.out, &self.graph.ports[o].name) && pbx_session::rules::glob(&r.inp, &self.graph.ports[i].name));
+            rows.push(Row {
+                id: format!("rule:del:{k}"),
+                label: r.out.clone(),
+                help: format!("{} → {}{}; click to remove the rule (the connection stays)", r.out, r.inp, if present { " (connected now)" } else { "" }),
+                control: Control::Link(format!("→ {}{} · remove", r.inp, if present { "" } else { "  (not now)" })),
+                modified: false,
+            });
+        }
+        rows.push(Row::header("Add a rule"));
+        let (o, i) = self.dialog.as_ref().map(|d| (d.value("rule:out").unwrap_or_default(), d.value("rule:in").unwrap_or_default())).unwrap_or_default();
+        rows.push(Row { id: "rule:out".into(), label: "Output".into(), help: "A port's full name, e.g. PipeWire:capture_FL; * matches any run of characters (PipeWire*:capture_FL)".into(), control: Control::Text(o), modified: false });
+        rows.push(Row { id: "rule:in".into(), label: "Input".into(), help: "A port's full name, e.g. system:playback_1; * matches any run of characters".into(), control: Control::Text(i), modified: false });
+        rows.push(Row { id: "rule:add".into(), label: "Keep this connection".into(), help: String::new(), control: Control::Link("add".into()), modified: false });
+        if let Some(d) = &mut self.dialog {
+            d.set_rows(rows);
+        }
+    }
 
     /// The event log page: tab 0 our events, 1 jackdbus's log.
     pub fn open_log(&mut self, tab: usize) {
@@ -2280,6 +2369,31 @@ impl App {
             }
             (Kind::Server | Kind::PipeWire, Event::Tab(t)) => self.open_settings(t),
             (Kind::Log, Event::Tab(t)) => self.open_log(t),
+            (Kind::Rules, Event::Set(id, v)) => {
+                if let Some(k) = id.strip_prefix("rule:del:").and_then(|k| k.parse::<usize>().ok()) {
+                    let mut rules = self.rules.clone();
+                    if k < rules.len() {
+                        rules.remove(k);
+                        self.send_rules(rules);
+                    }
+                } else if id == "rule:add" {
+                    let Some(d) = &self.dialog else { return };
+                    let (o, i) = (d.value("rule:out").unwrap_or_default().trim().to_string(), d.value("rule:in").unwrap_or_default().trim().to_string());
+                    if o.is_empty() || i.is_empty() {
+                        return self.say("A rule needs an output and an input", true);
+                    }
+                    let mut rules = self.rules.clone();
+                    rules.push(pbx_session::rules::Rule { out: o, inp: i });
+                    if let Some(d) = &mut self.dialog {
+                        d.set_local("rule:out", "");
+                        d.set_local("rule:in", "");
+                    }
+                    self.send_rules(rules);
+                } else if let Some(d) = &mut self.dialog {
+                    d.set_local(&id, &v);
+                }
+            }
+            (Kind::Rules, Event::Button(_)) => self.dialog = None,
             (Kind::SavePreset, Event::Set(id, v)) => {
                 if let Some(d) = &mut self.dialog {
                     d.set_local(&id, &v);

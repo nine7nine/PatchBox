@@ -101,6 +101,7 @@ impl UiState {
         let items = vec![
             MenuItem::new(format!("Interface scale: {:.0} % …", ui_scale * 100.0), Action::ScaleMenu(Rect::new(under.x, under.bottom() + 2.0, 0.0, 0.0))),
             MenuItem::new("Event log (xruns, server, clients)", Action::EventLog),
+            MenuItem::new("Connection rules…", Action::RulesPage),
             MenuItem::new("Undo (Ctrl+Z)", Action::Undo).enabled(undo.0),
             MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo).enabled(undo.1),
             MenuItem::new("Show sidebar", Action::ToggleSidebar).checked(sidebar),

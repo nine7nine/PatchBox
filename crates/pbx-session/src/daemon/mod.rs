@@ -100,6 +100,8 @@ pub struct Daemon {
     idle_since: Option<Instant>,
     /// When the clients' logs were last checked for size.
     logs_checked: Instant,
+    /// Connection rules: made whenever their ports are there, session or not.
+    pub(crate) rules: crate::rules::Rules,
 }
 
 const IDLE_EXIT: Duration = Duration::from_secs(30);
@@ -161,6 +163,7 @@ pub fn run() -> Result<(), String> {
         quit: false,
         idle_since: Some(Instant::now()),
         logs_checked: Instant::now(),
+        rules: crate::rules::Rules::load(),
     };
     eprintln!("[patchboxd] {} · NSM at {} · sessions in {}", sock.display(), d.nsm_url, d.root.display());
     d.main_loop();
@@ -581,6 +584,15 @@ impl Daemon {
                 self.session.as_mut().unwrap().file.auto_snapshot = Some(on);
                 ok(if on { "automatic snapshots on" } else { "automatic snapshots off" })
             }
+            Request::Rules => Reply::Rules { rules: self.rules.list.clone() },
+            Request::SetRules { rules } => match self.rules.set(rules) {
+                Ok(()) => {
+                    // Applied to the ports there now, then as ports appear.
+                    self.patch.due = Some(Instant::now());
+                    Reply::Rules { rules: self.rules.list.clone() }
+                }
+                Err(e) => Reply::Error { msg: format!("rules: {e}") },
+            },
             Request::Quit => {
                 self.quit = true;
                 ok("bye")
@@ -665,8 +677,9 @@ impl Daemon {
                 break;
             }
         }
-        // Nothing to manage and nobody watching: go away.
-        let idle = self.session.is_none() && self.op.is_none() && self.ctls.is_empty();
+        // Nothing to manage and nobody watching: go away. Connection rules are something to
+        // manage: they hold whenever ports appear, the window open or not.
+        let idle = self.session.is_none() && self.op.is_none() && self.ctls.is_empty() && self.rules.list.is_empty();
         match (idle, self.idle_since) {
             (true, None) => self.idle_since = Some(now),
             (true, Some(t)) if now >= t + IDLE_EXIT && std::env::var_os("PATCHBOXD_STAY").is_none() => {
@@ -1250,7 +1263,9 @@ impl Daemon {
     fn restore_connections(&mut self) {
         let Some(j) = &self.jack else { return };
         let g = j.snapshot();
-        let (connect, disconnect) = self.patch.plan(&g);
+        let (connect, mut disconnect) = self.patch.plan(&g);
+        // A session never undoes what a rule asks for.
+        disconnect.retain(|(o, i)| !self.rules.wants(o, i));
         for (o, i) in &disconnect {
             j.disconnect(o, i);
         }
@@ -1260,8 +1275,13 @@ impl Daemon {
                 made += 1;
             }
         }
+        let ruled = self.rules.plan(&g);
+        let ruled = ruled.into_iter().filter(|(o, i)| j.connect(o, i)).count();
         if made > 0 || !disconnect.is_empty() {
             self.log(format!("connections: {made} restored, {} removed", disconnect.len()), false);
+        }
+        if ruled > 0 {
+            self.log(format!("connection rules: {ruled} made"), false);
         }
     }
 }

@@ -767,6 +767,10 @@ impl App {
             Hover::Wire(o, i) => {
                 let (on, inn) = (self.graph.ports[o].name.clone(), self.graph.ports[i].name.clone());
                 items.push(I::header(format!("{} → {}", self.model.labels[o], self.model.labels[i])));
+                if self.source == crate::app::Source::Jack {
+                    let ruled = self.rule_wants(&on, &inn);
+                    items.push(I::new(if ruled { "Stop keeping it (rule)" } else { "Always keep it (a rule)" }, Action::Rule(on.clone(), inn.clone(), !ruled)));
+                }
                 items.push(I::new("Disconnect", Action::Disconnect(on, inn)));
             }
             Hover::Port(i, p) => {
@@ -813,6 +817,9 @@ impl App {
         items.push(I::new(format!("Disconnect all {}", self.kind.label()), Action::DisconnectNode(id.clone())));
         items.push(I::new(format!("Copy its {} connections", self.kind.label()), Action::CopyConns(id.clone(), false)));
         items.push(I::new("Paste connections", Action::PasteConns(id.clone())).enabled(self.clip.as_ref().is_some_and(|c| c.kind == self.kind)));
+        if self.source == crate::app::Source::Jack {
+            items.push(I::new("Always keep its connections (rules)", Action::RulesFromNode(id.clone())));
+        }
         if self.source == crate::app::Source::Jack && is_pipewire(&n.key.group) {
             items.push(I::new("Open PipeWire's graph", Action::OpenPipeWire));
         }
@@ -1014,11 +1021,13 @@ impl App {
         if let Hover::Wire(o, i) = self.canvas.hover
             && matches!(self.canvas.drag, Drag::None)
         {
-            let lines = vec![
+            let mut lines = vec![
                 (format!("{}  →  {}", self.graph.ports[o].name, self.graph.ports[i].name), TEXT_BRIGHT),
                 ("drag an end off: disconnect, or onto another port: move".to_string(), TEXT_DIM),
+                (if self.rule_wants(&self.graph.ports[o].name, &self.graph.ports[i].name) { "kept by a connection rule".to_string() } else { String::new() }, LCD_TEXT),
                 ("right-click: disconnect".to_string(), TEXT_DIM),
             ];
+            lines.retain(|(t, _)| !t.is_empty());
             self.draw_tooltip(g, self.canvas.mouse, &lines);
         }
         if let Hover::MatWire(mi, _) = self.canvas.hover

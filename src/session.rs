@@ -87,6 +87,7 @@ impl SessionLink {
                 self.lost = false;
                 self.send(&Request::Subscribe);
                 self.send(&Request::ListSessions);
+                self.send(&Request::Rules);
                 Some("Connected to the session daemon".into())
             }
             Err(_) => {

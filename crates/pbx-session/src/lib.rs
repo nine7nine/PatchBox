@@ -6,4 +6,5 @@ pub mod daemon;
 pub mod jackcfg;
 pub mod osc;
 pub mod proto;
+pub mod rules;
 pub mod store;
