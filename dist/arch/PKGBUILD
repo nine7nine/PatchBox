@@ -5,10 +5,11 @@
 # Builds the committed state of a local clone (this repository by default):
 #   cd dist/arch && makepkg
 #   PATCHBOX_REPO=/path/to/PatchBox [PATCHBOX_BRANCH=main] makepkg
-# Uncommitted changes are not in the package.
+# Uncommitted changes are not in the package. makepkg rewrites pkgver= above when it builds; that
+# change isn't meant to be committed.
 
 pkgname=patchbox
-pkgver=0.1.0.r33.gfaa7a0b
+pkgver=0.1.0.r0.g0
 pkgrel=1
 pkgdesc="JACK patchbay, jackdbus control and NSM session manager (PatchMatrix + RaySession, in SDL3)"
 arch=(x86_64)
