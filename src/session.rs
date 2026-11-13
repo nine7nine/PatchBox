@@ -8,6 +8,13 @@ use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// What to add once a session is open.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum AddNext {
+    App,
+    Exe,
+}
+
 pub struct SessionLink {
     tx: Option<UnixStream>,
     inbox: Arc<Mutex<Vec<FromDaemon>>>,
@@ -25,6 +32,10 @@ pub struct SessionLink {
     spawned_at: Option<Instant>,
     /// Lost the daemon (it was there before): say so once.
     pub lost: bool,
+    /// "+ Application" or "Executable" with no session open: what to open once the new session is.
+    pub add_after_open: Option<AddNext>,
+    /// "Delete this session…" on the open one: deleted once it has closed.
+    pub delete_after_close: Option<String>,
 }
 
 /// patchboxd next to our executable (a build tree, an install), else on PATH.
@@ -52,6 +63,8 @@ impl SessionLink {
             retry_at: Instant::now(),
             spawned_at: None,
             lost: false,
+            add_after_open: None,
+            delete_after_close: None,
         }
     }
 

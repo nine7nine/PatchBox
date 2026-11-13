@@ -28,6 +28,8 @@ pub enum Control {
     /// A row that does something when clicked (open this session, add this application); the
     /// text is shown on the right.
     Link(String),
+    /// A Link with a × at its right end: Event::Set(id, "remove").
+    LinkRemove(String),
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +58,22 @@ pub enum Kind {
     NewSession,
     OpenSession,
     AddApp,
+    /// One command line (the sidebar's Executable).
+    AddExe,
+    /// Confirm deleting a session (`tag`: its name).
+    DeleteSession,
+    /// Confirm removing a running client (`tag`: its id).
+    RemoveClient,
+    /// Confirm deleting a removed client with its files (`tag`: its id).
+    DeleteClient,
+    /// Confirm stopping a client with unsaved changes (`tag`: its id).
+    StopClient,
+    /// Confirm closing the session without saving.
+    AbortSession,
+    /// Session and client templates, to use or delete.
+    Templates,
+    /// Confirm deleting a template (`tag`: "s:<name>" or "c:<name>").
+    DeleteTemplate,
     Rename,
     Duplicate,
     Notes,
@@ -92,6 +110,7 @@ enum Part {
     Edit,
     Reset,
     Link,
+    Remove,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -123,6 +142,8 @@ pub struct Dialog {
     pub title: String,
     pub rows: Vec<Row>,
     pub buttons: Vec<String>,
+    /// A paragraph above the rows (wrapped): what a confirmation is about.
+    pub message: String,
     pub note: String,
     /// Tabs after the title (pages that are one of several), and the one shown.
     pub tabs: Vec<String>,
@@ -147,6 +168,7 @@ impl Dialog {
             title: title.into(),
             rows: Vec::new(),
             buttons: Vec::new(),
+            message: String::new(),
             note: String::new(),
             tabs: Vec::new(),
             tab: 0,
@@ -203,7 +225,7 @@ impl Dialog {
             return Some(t.clone());
         }
         match &self.rows[i].control {
-            Control::Text(v) | Control::Info(v) | Control::Link(v) => Some(v.clone()),
+            Control::Text(v) | Control::Info(v) | Control::Link(v) | Control::LinkRemove(v) => Some(v.clone()),
             Control::Choice { value, .. } => Some(value.clone()),
             Control::Toggle(b) => Some(if *b { "on" } else { "off" }.into()),
             Control::Number { value, .. } => Some(value.to_string()),
@@ -270,7 +292,8 @@ impl Dialog {
                 let id = row.id.clone();
                 match (&row.control, part) {
                     (_, Part::Reset) => Some(Event::Reset(id)),
-                    (Control::Link(_), _) => Some(Event::Set(id, "activate".into())),
+                    (Control::LinkRemove(_), Part::Remove) => Some(Event::Set(id, "remove".into())),
+                    (Control::Link(_) | Control::LinkRemove(_), _) => Some(Event::Set(id, "activate".into())),
                     (Control::Toggle(on), _) => Some(Event::Set(id, if *on { "off" } else { "on" }.into())),
                     (Control::Choice { .. }, Part::Choice) => Some(Event::Options(i, r)),
                     (Control::Number { value, min, .. }, Part::Minus) => Some(Event::Set(id, (*value - 1).max(*min).to_string())),
@@ -303,13 +326,18 @@ impl Dialog {
             let bi = self.buttons.iter().position(|l| l == b)?;
             return self.hits.iter().find(|(_, h)| *h == Hit::Button(bi)).map(|(r, _)| center(r));
         }
+        // "remove:<label>": a removable row's ×.
+        if let Some(l) = what.strip_prefix("remove:") {
+            let i = self.rows.iter().position(|r| r.label == l)?;
+            return self.hits.iter().find(|(_, h)| *h == Hit::Row(i, Part::Remove)).map(|(r, _)| center(r));
+        }
         let i = self.rows.iter().position(|r| r.label == what)?;
         self.hits.iter().find(|(_, h)| matches!(h, Hit::Row(j, p) if *j == i && *p != Part::Reset)).map(|(r, _)| center(r))
     }
 
     /// Pages (settings, lists) fill the canvas; prompts are a card over it.
     pub fn is_page(&self) -> bool {
-        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Log | Kind::Rules | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views)
+        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Log | Kind::Rules | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views | Kind::Templates)
     }
 
     /// Draw over `area` (the canvas): a page fills it, a prompt is a card in its middle. The
@@ -324,7 +352,11 @@ impl Dialog {
         let title_h = (if page { 48.0 } else { 40.0 } * s).round();
         let foot_h = (52.0 * s).round();
         let pad = 14.0 * s;
-        self.content_h = self.rows.iter().map(|r| if matches!(r.control, Control::Header) { row_h * 1.2 } else { row_h }).sum::<f32>() + pad;
+        // The message, wrapped to the width the rows get.
+        let msg_w = if page { (820.0 * s).min(area.w - 2.0 * pad) } else { (560.0 * s).min(area.w - 40.0 * s) } - 2.0 * pad;
+        let msg_lines = if self.message.is_empty() { Vec::new() } else { crate::ui::wrap(g, px, &self.message, msg_w) };
+        let msg_h = if msg_lines.is_empty() { 0.0 } else { msg_lines.len() as f32 * (lh + 4.0 * s) + pad };
+        self.content_h = self.rows.iter().map(|r| if matches!(r.control, Control::Header) { row_h * 1.2 } else { row_h }).sum::<f32>() + pad + msg_h;
         let panel = if page {
             // The whole canvas; the graph is behind it, not shown.
             g.rect(area, PANEL_BG);
@@ -377,6 +409,14 @@ impl Dialog {
         self.scroll = self.scroll.clamp(0.0, (self.content_h - content.h).max(0.0));
         g.push_clip(content);
         let mut y = content.y + pad * 0.5 - self.scroll;
+        if !msg_lines.is_empty() {
+            y += pad * 0.5;
+            for l in &msg_lines {
+                g.text(Face::Regular, px, col_x + pad, y, TEXT_BRIGHT, l);
+                y += lh + 4.0 * s;
+            }
+            y += pad * 0.5;
+        }
         let label_w = w * 0.42;
         let ctl_x = col_x + pad + label_w;
         let ctl_w = col_x + col_w - pad - ctl_x;
@@ -427,14 +467,30 @@ impl Dialog {
                 Control::Info(t) => {
                     g.text_fit(Face::Regular, px, cr.x, rr.cy() - lh / 2.0, cr.w, TEXT_BRIGHT, t);
                 }
-                Control::Link(t) => {
+                Control::Link(t) | Control::LinkRemove(t) => {
+                    let removable = matches!(row.control, Control::LinkRemove(_));
                     let whole = Rect::new(col_x + pad / 2.0, rr.y + 1.0, col_w - pad, rr.h - 2.0);
+                    let xr = Rect::new(whole.right() - whole.h, whole.y, whole.h, whole.h);
+                    let text_w = if removable { cr.w - xr.w - 4.0 * s } else { cr.w };
                     if hov(&whole) {
                         g.rrect(whole, 3.0 * s, BUTTON_HOVER);
                         g.text_fit(Face::Regular, px, label_r.x, rr.cy() - lh / 2.0, label_r.w, HILIGHT, &row.label);
                     }
-                    g.text_fit(Face::Regular, FONT_SMALL * s, cr.x, rr.cy() - g.line_height(Face::Regular, FONT_SMALL * s) / 2.0, cr.w, TEXT_DIM, t);
+                    g.text_fit(Face::Regular, FONT_SMALL * s, cr.x, rr.cy() - g.line_height(Face::Regular, FONT_SMALL * s) / 2.0, text_w, TEXT_DIM, t);
                     self.hits.push((whole, Hit::Row(i, Part::Link)));
+                    if removable {
+                        // The ×: dim, red under the pointer.
+                        let on = hov(&xr);
+                        if on {
+                            g.rrect(xr, 3.0 * s, BUTTON);
+                            self.hover_help = Some(("Delete (asks first)".into(), mouse));
+                        }
+                        let (c, k) = ([xr.cx(), xr.cy()], 4.5 * s);
+                        let col = if on { BAD } else if hov(&whole) { TEXT } else { TEXT_DIM };
+                        g.line([c[0] - k, c[1] - k], [c[0] + k, c[1] + k], 1.5 * s, col);
+                        g.line([c[0] - k, c[1] + k], [c[0] + k, c[1] - k], 1.5 * s, col);
+                        self.hits.push((xr, Hit::Row(i, Part::Remove)));
+                    }
                 }
                 Control::Toggle(on) => {
                     let tw = 40.0 * s;

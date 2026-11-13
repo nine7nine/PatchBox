@@ -474,6 +474,16 @@ impl App {
         if let Some(t) = self.sess.retry_at() {
             at(t);
         }
+        // A tooltip comes up once the pointer has rested on a control.
+        if self.ui.hover_hit.is_some() && !self.ui.tip_shown && !self.ui.tip_off {
+            let due = self.ui.hover_since + crate::ui::TIP_DELAY;
+            if now >= due {
+                self.ui.tip_shown = true;
+                self.redraw = true;
+            } else {
+                at(due);
+            }
+        }
         if self.jack.is_none() {
             if now >= self.retry_at {
                 self.try_connect();

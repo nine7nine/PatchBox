@@ -13,7 +13,8 @@ fi
 [ "$(findmnt -no SOURCE /dev/shm | tail -1)" = "pb-test-shm" ] && [ -z "$(ls -A /dev/shm)" ] || { echo "not isolated; refusing"; exit 1; }
 W=$HOME/.cache/patchbox-work/session-test; rm -rf "$W"; mkdir -p "$W"
 BIN=${PB_BIN:-$ROOT/target/debug}
-export PATH="$BIN:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOXD_STAY=1 PATCHBOX_TEMPLATES="$W/templates" PATCHBOX_CONFIG_DIR="$W/config"
+# XDG_DATA_HOME: deleting moves things to a scratch Trash, never the owner's.
+export PATH="$BIN:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOXD_STAY=1 PATCHBOX_TEMPLATES="$W/templates" PATCHBOX_CONFIG_DIR="$W/config" XDG_DATA_HOME="$W/xdg-data"
 jackd --no-realtime -d dummy --rate 48000 --period 256 --capture 2 --playback 2 > "$W/jackd.log" 2>&1 &
 for i in $(seq 50); do ls /dev/shm/jack_default_* >/dev/null 2>&1 && break; sleep 0.1; done; sleep 0.3
 # PB_VALGRIND=1: the daemon under memcheck (invalid reads/writes, uninitialised values in the FFI
@@ -140,6 +141,32 @@ NEW=$(ids | tr ' ' '\n' | grep -vx "$FK" | head -1)
 check "a client added from the template gets its own copy of the files ($NEW)" 'ls "$W"/sessions/from-band/*."$NEW"/state.txt >/dev/null 2>&1'
 wait_for '[ -s "$W/sessions/from-band/hook-start-$NEW" ]'
 check "the per-client start hook ran for it" '[ -s "$W/sessions/from-band/hook-start-$NEW" ]'
+# Removing clients, deleting templates and sessions (to the scratch Trash).
+T="$W/xdg-data/Trash"
+inlist() { st | python3 -I -c "import sys,json; s=json.load(sys.stdin); sys.exit(0 if any(c['id']=='$2' for c in s['$1']) else 1)"; }
+status_of() { st | python3 -I -c "import sys,json; print(next((c['status'] for c in json.load(sys.stdin)['clients'] if c['id']=='$1'), ''))"; }
+NEWPID=$(st | python3 -I -c "import sys,json; print(next(c['pid'] for c in json.load(sys.stdin)['clients'] if c['id']=='$NEW'))")
+ctl remove "$NEW" --save >/dev/null
+wait_for '! inlist clients "$NEW" && inlist trash "$NEW"'
+check "a running client removed: saved, stopped, then in the session's trash" '! inlist clients "$NEW" && inlist trash "$NEW" && ! kill -0 "$NEWPID" 2>/dev/null'
+ctl restore "$NEW" >/dev/null
+check "and brought back" 'inlist clients "$NEW" && ! inlist trash "$NEW"'
+ctl remove "$NEW" >/dev/null
+check "a stopped client is removed at once" '! inlist clients "$NEW" && inlist trash "$NEW"'
+ctl forget "$NEW" --files >/dev/null
+check "deleted with its files: out of the session folder, into the Trash with .trashinfo" '! ls -d "$W"/sessions/from-band/*."$NEW" >/dev/null 2>&1 && ls "$T"/files/*."$NEW"/state.txt >/dev/null 2>&1 && ls "$T"/info/*."$NEW".trashinfo >/dev/null 2>&1 && ! inlist trash "$NEW"'
+rm -f "$W"/sessions/from-band/FakeApp."$FK"/state.txt
+ctl save-stop "$FK" >/dev/null
+wait_for '[ "$(status_of "$FK")" = stopped ]'
+check "save and stop: saved first, then stopped" '[ "$(status_of "$FK")" = stopped ] && ls "$W"/sessions/from-band/*."$FK"/state.txt >/dev/null 2>&1'
+ctl delete from-band 2>/dev/null
+check "the open session can't be deleted" '[ -f "$W/sessions/from-band/session.toml" ]'
+ctl delete-template band >/dev/null
+check "a session template deleted (to the Trash)" '[ ! -e "$W/templates/band" ] && [ -f "$T/files/band/session.toml" ]'
+ctl delete-template fake-tpl --client >/dev/null
+check "a client template deleted (to the Trash)" '[ ! -e "$W/config/client-templates/fake-tpl" ] && [ -f "$T/files/fake-tpl/client.toml" ] && ! ctl client-templates | grep -qx fake-tpl'
+ctl delete t2 >/dev/null
+check "a closed session deleted: to the Trash, with where it was" '[ ! -e "$W/sessions/t2" ] && [ -f "$T/files/t2/session.toml" ] && grep -qx "Path=$W/sessions/t2" "$T/info/t2.trashinfo" && ! ctl sessions | grep -q "^t2"'
 ctl abort >/dev/null
 wait_for 'st | grep -q "\"session\": null"'
 check "aborted" 'st | grep -q "\"session\": null"'

@@ -24,11 +24,15 @@ pub enum Request {
     Abort,
     Duplicate { name: String },
     Rename { name: String },
+    /// Move a session that is not open to the desktop's Trash.
+    Delete { name: String },
     SetNotes { notes: String },
     /// Add a client and start it. `nsm`: speaks NSM (else a plain program, stopped with SIGTERM).
     Add { exe: String, #[serde(default)] args: Vec<String>, nsm: bool, #[serde(default)] label: String },
     Start { id: String },
     Stop { id: String },
+    /// Save it, then stop it once the save is confirmed (a failed save leaves it running).
+    SaveStop { id: String },
     Kill { id: String },
     SaveClient { id: String },
     ShowGui { id: String },
@@ -36,8 +40,25 @@ pub enum Request {
     /// Move a stopped client to the trash.
     Trash { id: String },
     Restore { id: String },
-    /// Forget a trashed client (its files stay).
-    Forget { id: String },
+    /// Forget a removed client: its files stay, unless `files` (then they go to the desktop's Trash).
+    Forget {
+        id: String,
+        #[serde(default)]
+        files: bool,
+    },
+    /// Remove a client from the session (to its trash, where Restore brings it back). A running
+    /// one is stopped first (saved first if `save`; a failed save leaves it running and in place).
+    Remove {
+        id: String,
+        #[serde(default)]
+        save: bool,
+    },
+    /// Move a session template (or, `client`, a client template) to the desktop's Trash.
+    DeleteTemplate {
+        name: String,
+        #[serde(default)]
+        client: bool,
+    },
     SetLabel { id: String, label: String },
     /// JACK connections, through the daemon's own client (scripts, tests).
     Connect { src: String, dst: String },

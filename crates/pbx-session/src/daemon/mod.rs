@@ -211,6 +211,7 @@ impl Daemon {
             }
             self.ctls.retain(|c| !c.dead);
             self.timers();
+            self.sweep_removed();
             self.push_state();
         }
         // Leaving: stop what runs, like close without saving would.
@@ -219,6 +220,25 @@ impl Daemon {
                 c.stop();
             }
             let _ = std::fs::remove_file(s.dir.join(store::LOCK));
+        }
+    }
+
+    /// Clients removed while running go to the trash once they have stopped.
+    fn sweep_removed(&mut self) {
+        let Some(s) = &mut self.session else { return };
+        let mut gone = Vec::new();
+        let mut i = 0;
+        while i < s.clients.len() {
+            if s.clients[i].remove_after_stop && !s.clients[i].running() {
+                let c = s.clients.remove(i);
+                gone.push(c.entry.id.clone());
+                s.trash.push(c.entry);
+            } else {
+                i += 1;
+            }
+        }
+        for id in gone {
+            self.log(format!("{id} stopped and removed"), false);
         }
     }
 
@@ -475,6 +495,32 @@ impl Daemon {
                     ok("renaming")
                 }
             },
+            Request::Delete { name } => {
+                let n = name.trim();
+                if let Err(e) = store::valid_name(n) {
+                    return Reply::Error { msg: e };
+                }
+                let dir = self.root.join(n);
+                if !dir.join(store::FILE).is_file() {
+                    return Reply::Error { msg: format!("no session \"{n}\"") };
+                }
+                if self.session.as_ref().is_some_and(|s| s.dir == dir || s.name == n) {
+                    return Reply::Error { msg: format!("{n} is open: close it first") };
+                }
+                if self.op.is_some() {
+                    return busy();
+                }
+                if let Some(pid) = locked_by_other(&dir) {
+                    return Reply::Error { msg: format!("{n} is open in another patchboxd (pid {pid})") };
+                }
+                match crate::trash::to_trash(&dir) {
+                    Ok(_) => {
+                        self.log(format!("{n} moved to the Trash"), false);
+                        ok("deleted")
+                    }
+                    Err(e) => Reply::Error { msg: format!("{n} not deleted: {e}") },
+                }
+            }
             Request::SetNotes { notes } => match &mut self.session {
                 Some(s) => {
                     s.file.notes = notes;
@@ -487,6 +533,11 @@ impl Daemon {
             Request::Stop { id } => self.with_client(&id, |d, i| {
                 d.session.as_mut().unwrap().clients[i].stop();
                 Ok("stopping".into())
+            }),
+            Request::SaveStop { id } => self.with_client(&id, |d, i| {
+                d.save_client(i)?;
+                d.session.as_mut().unwrap().clients[i].stop_after_save = true;
+                Ok("saving, then stopping".into())
             }),
             Request::Kill { id } => self.with_client(&id, |d, i| {
                 d.session.as_mut().unwrap().clients[i].kill();
@@ -538,13 +589,69 @@ impl Daemon {
                 },
                 None => Reply::Error { msg: "no session is open".into() },
             },
-            Request::Forget { id } => match &mut self.session {
+            Request::Forget { id, files } => match &mut self.session {
                 Some(s) => {
+                    let Some(e) = s.trash.iter().find(|e| e.id == id).cloned() else {
+                        return Reply::Error { msg: format!("no removed client {id}") };
+                    };
+                    if files {
+                        // Its files: those named after it in the session folder (the path NSM gave it).
+                        let p = ctemplates::prefix(&e);
+                        let mut n = 0;
+                        for f in std::fs::read_dir(&s.dir).into_iter().flatten().flatten() {
+                            let name = f.file_name().to_string_lossy().into_owned();
+                            if name == p || name.starts_with(&format!("{p}.")) {
+                                if let Err(err) = crate::trash::to_trash(&f.path()) {
+                                    return Reply::Error { msg: format!("{id}: {err}") };
+                                }
+                                n += 1;
+                            }
+                        }
+                        s.trash.retain(|e| e.id != id);
+                        self.log(format!("{id} deleted; {n} file{} moved to the Trash", if n == 1 { "" } else { "s" }), false);
+                        return ok("deleted");
+                    }
                     s.trash.retain(|e| e.id != id);
                     ok("forgotten")
                 }
                 None => Reply::Error { msg: "no session is open".into() },
             },
+            Request::Remove { id, save } => self.with_client(&id, |d, i| {
+                let s = d.session.as_mut().unwrap();
+                if !s.clients[i].running() {
+                    let c = s.clients.remove(i);
+                    s.trash.push(c.entry);
+                    return Ok("removed".into());
+                }
+                if save {
+                    d.save_client(i)?;
+                    let c = &mut d.session.as_mut().unwrap().clients[i];
+                    c.stop_after_save = true;
+                    c.remove_after_stop = true;
+                    return Ok("saving, stopping, then removing".into());
+                }
+                let c = &mut s.clients[i];
+                c.remove_after_stop = true;
+                c.stop();
+                Ok("stopping, then removing".into())
+            }),
+            Request::DeleteTemplate { name, client } => {
+                let n = name.trim();
+                if n.is_empty() || n.contains('/') || n.starts_with('.') {
+                    return Reply::Error { msg: format!("no template \"{n}\"") };
+                }
+                let dir = if client { proto::client_templates_root().map(|r| r.join(n)) } else { Some(proto::templates_root().join(n)) };
+                match dir.filter(|d| d.is_dir()) {
+                    None => Reply::Error { msg: format!("no template \"{n}\"") },
+                    Some(d) => match crate::trash::to_trash(&d) {
+                        Ok(_) => {
+                            self.log(format!("template {n} moved to the Trash"), false);
+                            ok("deleted")
+                        }
+                        Err(e) => Reply::Error { msg: format!("template {n} not deleted: {e}") },
+                    },
+                }
+            }
             Request::Connect { src, dst } | Request::Disconnect { src, dst } if self.jack.is_none() => {
                 let _ = (src, dst);
                 Reply::Error { msg: "not connected to JACK".into() }
@@ -1139,13 +1246,10 @@ impl Daemon {
         } else {
             SessionFile::load(&dir)?
         };
-        let lock = dir.join(store::LOCK);
-        if let Ok(pid) = std::fs::read_to_string(&lock).map(|s| s.trim().parse::<i32>().unwrap_or(0)) {
-            if pid > 0 && pid != std::process::id() as i32 && unsafe { libc::kill(pid, 0) } == 0 {
-                return Err(format!("{name} is open in another patchboxd (pid {pid})"));
-            }
+        if let Some(pid) = locked_by_other(&dir) {
+            return Err(format!("{name} is open in another patchboxd (pid {pid})"));
         }
-        let _ = std::fs::write(&lock, std::process::id().to_string());
+        let _ = std::fs::write(dir.join(store::LOCK), std::process::id().to_string());
         self.patch = patch::PatchMem::from_file(&file.connections);
         let clients = file.clients.iter().cloned().map(Client::new).collect();
         let trash = file.trash.clone();
@@ -1361,4 +1465,11 @@ pub(crate) fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> std::io::Result
         }
     }
     Ok(())
+}
+
+/// The pid of another live patchboxd holding `dir`'s session lock.
+fn locked_by_other(dir: &std::path::Path) -> Option<i32> {
+    let pid = std::fs::read_to_string(dir.join(store::LOCK)).ok()?.trim().parse::<i32>().ok()?;
+    // SAFETY: kill(pid, 0) only checks the process exists.
+    (pid > 0 && pid != std::process::id() as i32 && unsafe { libc::kill(pid, 0) } == 0).then_some(pid)
 }

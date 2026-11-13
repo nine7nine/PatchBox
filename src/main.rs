@@ -267,6 +267,9 @@ fn main() {
                     if ch != app.ui.csd_hover || hh != app.ui.hover_hit {
                         app.ui.csd_hover = ch;
                         app.ui.hover_hit = hh;
+                        app.ui.hover_since = std::time::Instant::now();
+                        app.ui.tip_shown = false;
+                        app.ui.tip_off = false;
                         app.redraw = true;
                     }
                     let dragging = !matches!(app.canvas.drag, canvas::Drag::None);
@@ -280,6 +283,11 @@ fn main() {
                 Event::MouseButtonDown { mouse_btn, x, y, clicks, .. } => {
                     let (px, py) = (x * density, y * density);
                     app.ui.mouse = [px, py];
+                    // A click puts the tooltip away until the pointer moves to another control.
+                    if app.ui.tip_shown || !app.ui.tip_off {
+                        app.ui.tip_off = true;
+                        app.redraw |= app.ui.tip_shown;
+                    }
                     if app.ui.menu.is_some() {
                         app.menu_click(px, py);
                         continue;
@@ -315,6 +323,13 @@ fn main() {
                         // XRUNS: a click resets the count, a right-click opens the event log.
                         if mouse_btn == MouseButton::Right && matches!(app.hit_action(px, py), Some(Action::ResetXruns)) {
                             app.apply(Action::EventLog);
+                        }
+                        // A session client's menu, at the pointer.
+                        if mouse_btn == MouseButton::Right
+                            && let Some(Action::Sess(crate::sessui::SessAction::ClientMenu(id, _))) = app.hit_action(px, py)
+                        {
+                            app.apply(Action::Sess(crate::sessui::SessAction::ClientMenu(id, gfx::Rect::new(px, py, 0.0, 0.0))));
+                            app.redraw = true;
                         }
                         // A client row's menu.
                         if mouse_btn == MouseButton::Right
@@ -516,6 +531,7 @@ fn main() {
                     app.draw_tooltip(&mut gfx, at, &[(text, theme::TEXT_BRIGHT)]);
                 }
             }
+            app.draw_hover_tip(&mut gfx);
             app.draw_menu(&mut gfx);
             if !app.maximized {
                 gfx.erase_corners(CORNER_RADIUS * density);

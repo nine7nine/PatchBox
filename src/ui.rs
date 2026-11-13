@@ -57,7 +57,15 @@ pub struct UiState {
     pub bar_h: f32,
     /// The zoom slider's track while it is being dragged.
     pub slider: Option<Rect>,
+    /// Since when the pointer rests on the control under it (its tooltip shows after TIP_DELAY).
+    pub hover_since: std::time::Instant,
+    /// The tooltip is up (or, `tip_off`, was dismissed by a click until the pointer moves on).
+    pub tip_shown: bool,
+    pub tip_off: bool,
 }
+
+/// How long the pointer rests on a control before its tooltip shows.
+pub const TIP_DELAY: std::time::Duration = std::time::Duration::from_millis(550);
 
 impl UiState {
     pub fn new() -> UiState {
@@ -73,6 +81,9 @@ impl UiState {
             title_h: 0.0,
             bar_h: 0.0,
             slider: None,
+            hover_since: std::time::Instant::now(),
+            tip_shown: false,
+            tip_off: false,
         }
     }
 
@@ -277,12 +288,14 @@ pub fn lbutton_text(tint: crate::gfx::Color, hover: bool, active: bool, enabled:
 /// What a button does, as Luluda colours it.
 pub fn tint_for(label: &str) -> crate::gfx::Color {
     match label {
-        "Stop" | "Kill" | "Quit" => TINT_RED,
+        "Stop" | "Kill" | "Quit" | "Move to Trash" | "Delete" | "Stop without saving" | "Close without saving" | "Stop and remove" => TINT_RED,
+        "Save and stop" | "Save, stop and remove" => TINT_GREEN,
         "Start" | "Create" | "Add command" | "Save the current view" | "Take" => TINT_GREEN,
         "Restart" | "Save" | "Rename" | "Duplicate" => TINT_AMBER,
         "Settings" | "Open" => TINT_BLUE,
-        "New" | "+ Application" => TINT_GREEN,
+        "New" | "+ Application" | "Executable" | "Add" => TINT_GREEN,
         l if l.starts_with("Trash") => TINT_RED,
+        l if l.starts_with("Removed") => TINT_AMBER,
         _ => TINT_GREY,
     }
 }
@@ -972,6 +985,79 @@ impl App {
         }
     }
 
+    /// What a control does, for its tooltip (controls whose label says it all have none).
+    pub fn tip_for(&self, a: &Action) -> Option<String> {
+        use crate::sessui::SessAction as S;
+        let client = |id: &str| self.sess.state.clients.iter().find(|c| c.id == id);
+        Some(match a {
+            Action::Sess(s) => match s {
+                S::New => "Create a session (from a template, if you like)".into(),
+                S::Open => "Open, or delete, a session (the open one is saved first)".into(),
+                S::Save => "Save the session: every client, the connections, the layout".into(),
+                S::Close => "Save the session, stop its clients and close it".into(),
+                S::Menu(_) => "More: rename, duplicate, notes, templates, snapshots, the session folder, close without saving".into(),
+                S::AddApp => "Add an installed application to the session".into(),
+                S::AddExe => "Add any command line to the session".into(),
+                S::Start(_) => "Start it".into(),
+                S::Stop(id) => match client(id) {
+                    Some(c) if crate::sessui::unsaved(c) => "Stop it (it has unsaved changes: asks first)".into(),
+                    _ => "Stop it".into(),
+                },
+                S::SaveClient(_) => "Save it".into(),
+                S::Gui(_, true) => "Show its window".into(),
+                S::Gui(_, false) => "Hide its window".into(),
+                S::Remove(id) => match client(id) {
+                    Some(c) if c.pid.is_some() => "Remove it from the session (it is stopped first: asks)".into(),
+                    _ => "Remove it from the session (Removed, below, brings it back)".into(),
+                },
+                S::TrashMenu(_) => "Clients removed from the session: bring one back, or delete it".into(),
+                S::ClientMenu(id, _) => {
+                    let c = client(id)?;
+                    let mut t = format!("{} · {}", c.id, crate::sessui::status_text(c.status));
+                    if c.dirty == Some(true) {
+                        t.push_str(" · * unsaved changes");
+                    }
+                    if !c.message.is_empty() && c.status == pbx_session::proto::Status::Error {
+                        t.push_str(&format!(" · {}", c.message));
+                    }
+                    t.push_str(". Click (or right-click) for its menu: start, stop, properties, remove…");
+                    t
+                }
+                _ => return None,
+            },
+            Action::AppMenu(_) => "Menu: view, interface scale, rules, undo, export names…".into(),
+            Action::TransportRewind => "Transport: back to the start".into(),
+            Action::TransportToggle => "Transport: play / pause".into(),
+            Action::TransportStop => "Transport: stop".into(),
+            Action::FitAll => "Fit everything in the view".into(),
+            Action::ZoomBy(z) if *z > 1.0 => "Zoom in".into(),
+            Action::ZoomBy(_) => "Zoom out".into(),
+            Action::ZoomSlider(_) => "Zoom".into(),
+            Action::ZoomTo(_) => "Zoom: click for 100 %".into(),
+            Action::ResetXruns => "Xruns since the last reset: click resets, right-click shows the event log".into(),
+            Action::BufferMenu(_) => "Buffer size (frames): click to change it".into(),
+            Action::PresetMenu(_) => "Switch the JACK server to a saved preset".into(),
+            Action::CenterNode(_) => "Find it in the graph; right-click for its menu".into(),
+            Action::EventLog => "Click for the whole event log".into(),
+            Action::BackToJack => "Back to the JACK graph".into(),
+            _ => return None,
+        })
+    }
+
+    /// The tooltip of the control under the pointer, once it has rested there TIP_DELAY.
+    pub fn draw_hover_tip(&self, g: &mut Gfx) {
+        if !self.ui.tip_shown || self.ui.tip_off || self.ui.menu.is_some() {
+            return;
+        }
+        let [x, y] = self.ui.mouse;
+        if self.dialog.is_some() && self.canvas.area.contains(x, y) {
+            return;
+        }
+        if let Some(t) = self.hit_action(x, y).and_then(|a| self.tip_for(&a)) {
+            self.draw_tooltip(g, [x, y], &[(t, TEXT_BRIGHT)]);
+        }
+    }
+
     /// A box of text lines near `at` (window pixels), kept inside the window; long lines wrap at
     /// a compact width.
     pub fn draw_tooltip(&self, g: &mut Gfx, at: [f32; 2], lines: &[(String, crate::gfx::Color)]) {
@@ -1047,9 +1133,10 @@ impl App {
                 Action::TransportRewind => name == "rew",
                 Action::Sess(a) => {
                     use crate::sessui::SessAction as S;
-                    matches!((a, name), (S::New, "sess-new") | (S::Open, "sess-open") | (S::Save, "sess-save") | (S::Close, "sess-close") | (S::AddApp, "sess-add") | (S::Menu(_), "sess-menu"))
+                    matches!((a, name), (S::New, "sess-new") | (S::Open, "sess-open") | (S::Save, "sess-save") | (S::Close, "sess-close") | (S::AddApp, "sess-add") | (S::AddExe, "sess-exe") | (S::TrashMenu(_), "sess-removed") | (S::Menu(_), "sess-menu"))
                         || matches!(a, S::ClientMenu(id, _) if name == format!("client:{id}"))
                         || matches!(a, S::Start(id) | S::Stop(id) if name == format!("startstop:{id}"))
+                        || matches!(a, S::Remove(id) if name == format!("remove:{id}"))
                 }
                 Action::BackToJack => name == "back",
                 Action::ServerStart => name == "start",

@@ -2,19 +2,21 @@
 //!
 //!   patchbox-ctl state | sessions | new NAME [--template T] | open NAME | save | close | abort
 //!                templates | save-template NAME
-//!                duplicate NAME | rename NAME | add [--plain] EXE [ARGS…]
-//!                start ID | stop ID | kill ID | save-client ID | show-gui ID | hide-gui ID
-//!                trash ID | restore ID | notes TEXT | connect SRC DST | disconnect SRC DST
+//!                duplicate NAME | rename NAME | delete NAME | add [--plain] EXE [ARGS…]
+//!                start ID | stop ID | save-stop ID | kill ID | save-client ID | show-gui ID | hide-gui ID
+//!                remove ID [--save] | trash ID | restore ID | forget ID [--files] | notes TEXT
+//!                connect SRC DST | disconnect SRC DST
 //!                graph | snapshot [LABEL] | snapshots | rewind ID | auto-snapshot on|off | jack-memory on|off
 //!                rules | rule-add OUT IN | rule-del OUT IN   (names may hold *)
 //!                props ID [label=L] [save=SIG] [stop=SIG] [terminal=on|off] [env=K=V…] [-- CMD ARGS…]
 //!                client-templates | save-client-template ID NAME | add-template NAME
+//!                delete-template NAME [--client]
 //!                quit | watch
 
 use pbx_session::proto::{Conn, FromDaemon, Push, Reply, Request};
 
 fn usage() -> ! {
-    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(10).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
+    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(12).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
     std::process::exit(2)
 }
 
@@ -33,6 +35,7 @@ fn main() {
         Some("abort") => Request::Abort,
         Some("duplicate") => Request::Duplicate { name: arg(1) },
         Some("rename") => Request::Rename { name: arg(1) },
+        Some("delete") => Request::Delete { name: arg(1) },
         Some("notes") => Request::SetNotes { notes: a[1..].join(" ") },
         Some("add") => {
             let plain = a.get(1).is_some_and(|x| x == "--plain");
@@ -42,11 +45,15 @@ fn main() {
         Some("start") => Request::Start { id: arg(1) },
         Some("stop") => Request::Stop { id: arg(1) },
         Some("kill") => Request::Kill { id: arg(1) },
+        Some("save-stop") => Request::SaveStop { id: arg(1) },
         Some("save-client") => Request::SaveClient { id: arg(1) },
         Some("show-gui") => Request::ShowGui { id: arg(1) },
         Some("hide-gui") => Request::HideGui { id: arg(1) },
         Some("trash") => Request::Trash { id: arg(1) },
         Some("restore") => Request::Restore { id: arg(1) },
+        Some("remove") => Request::Remove { id: arg(1), save: a.iter().any(|x| x == "--save") },
+        Some("forget") => Request::Forget { id: arg(1), files: a.iter().any(|x| x == "--files") },
+        Some("delete-template") => Request::DeleteTemplate { name: arg(1), client: a.iter().any(|x| x == "--client") },
         Some("connect") => Request::Connect { src: arg(1), dst: arg(2) },
         Some("disconnect") => Request::Disconnect { src: arg(1), dst: arg(2) },
         Some("graph") => Request::Graph,

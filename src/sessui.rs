@@ -3,6 +3,7 @@
 
 use crate::app::{Action, App};
 use crate::dialog::{Control, Dialog, Event, Kind, Row};
+use crate::session::AddNext;
 use crate::gfx::{Gfx, Rect};
 use crate::text::Face;
 use crate::theme::*;
@@ -27,16 +28,24 @@ pub enum SessAction {
     SaveTemplate,
     JackMemory(bool),
     AddApp,
+    AddExe,
     Start(String),
     Stop(String),
     Kill(String),
     SaveClient(String),
     Gui(String, bool),
-    Trash(String),
     Restore(String),
     Forget(String),
     ClientMenu(String, Rect),
     TrashMenu(Rect),
+    /// Remove a client from the session (asks first if it runs).
+    Remove(String),
+    /// Delete a removed client and its files (asks first).
+    DeleteClient(String),
+    /// The templates page.
+    Templates,
+    /// Delete the open session (asks first; closes it without saving, then deletes).
+    DeleteOpen,
     /// A client's properties dialog.
     Props(String),
     /// Keep a client as a client template (asks the name).
@@ -53,7 +62,7 @@ fn status_color(s: Status) -> crate::gfx::Color {
     }
 }
 
-fn status_text(s: Status) -> &'static str {
+pub fn status_text(s: Status) -> &'static str {
     match s {
         Status::Stopped => "stopped",
         Status::Launching => "starting",
@@ -67,6 +76,16 @@ fn status_text(s: Status) -> &'static str {
     }
 }
 
+/// Stopping it would lose work: an NSM client with changes it reports unsaved, or (one that
+/// doesn't report them) not saved in the last minute.
+pub fn unsaved(c: &pbx_session::proto::ClientState) -> bool {
+    let running = c.pid.is_some() && matches!(c.status, Status::Ready | Status::Saving);
+    running && c.nsm && match c.dirty {
+        Some(d) => d,
+        None => c.last_save.is_none_or(|t| pbx_session::store::now().saturating_sub(t) >= 60),
+    }
+}
+
 impl App {
     /// What patchboxd said.
     pub fn on_daemon(&mut self) {
@@ -74,8 +93,21 @@ impl App {
             match m {
                 FromDaemon::Push(Push::State(st)) => {
                     let dir = st.path.clone().map(std::path::PathBuf::from);
+                    let opened = st.session.is_some() && st.busy.is_none();
                     self.sess.state = st;
                     self.session_dir_changed(dir);
+                    if self.sess.state.session.is_none() && self.sess.state.busy.is_none()
+                        && let Some(name) = self.sess.delete_after_close.take()
+                    {
+                        self.send(Request::Delete { name });
+                    }
+                    if opened && self.dialog.is_none() {
+                        match self.sess.add_after_open.take() {
+                            Some(AddNext::App) => self.add_app_dialog(),
+                            Some(AddNext::Exe) => self.add_exe_dialog(),
+                            None => {}
+                        }
+                    }
                 }
                 FromDaemon::Push(Push::Log { text, bad }) => self.say(text, bad),
                 FromDaemon::Reply(Reply::Sessions { sessions, recent, .. }) => {
@@ -99,6 +131,7 @@ impl App {
                 }
                 FromDaemon::Reply(Reply::ClientTemplates { templates }) => {
                     self.sess.client_templates = templates;
+                    self.refresh_templates_page();
                     if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::AddApp) {
                         let rows = self.add_app_rows();
                         if let Some(d) = &mut self.dialog {
@@ -112,6 +145,7 @@ impl App {
                 }
                 FromDaemon::Reply(Reply::Templates { templates }) => {
                     self.sess.templates = templates;
+                    self.refresh_templates_page();
                     let opts = self.template_options();
                     if let Some(d) = self.dialog.as_mut().filter(|d| d.kind == Kind::NewSession)
                         && let Some(r) = d.rows.iter_mut().find(|r| r.id == "template")
@@ -121,7 +155,11 @@ impl App {
                     }
                 }
                 FromDaemon::Reply(Reply::State(st)) => self.sess.state = st,
-                FromDaemon::Reply(Reply::Error { msg }) => self.say(msg, true),
+                FromDaemon::Reply(Reply::Error { msg }) => {
+                    self.sess.add_after_open = None;
+                    self.sess.delete_after_close = None;
+                    self.say(msg, true);
+                }
                 FromDaemon::Reply(Reply::Ok { .. }) => {}
             }
             self.redraw = true;
@@ -159,7 +197,7 @@ impl App {
         if !recent.is_empty() {
             rows.push(Row::header("Recent"));
             for s in recent {
-                rows.push(Row { id: format!("session:{}", s.name), label: s.name.clone(), help: String::new(), control: Control::Link(ago(s.modified)), modified: false });
+                rows.push(Row { id: format!("session:{}", s.name), label: s.name.clone(), help: String::new(), control: self.session_link(&s.name, ago(s.modified)), modified: false });
             }
             rows.push(Row::header("All sessions"));
         }
@@ -169,12 +207,77 @@ impl App {
             if !s.notes.is_empty() {
                 text.push_str(&format!(" · {}", s.notes));
             }
-            rows.push(Row { id: format!("session:{}", s.name), label: s.name.clone(), help: String::new(), control: Control::Link(text), modified: false });
+            rows.push(Row { id: format!("session:{}", s.name), label: s.name.clone(), help: String::new(), control: self.session_link(&s.name, text), modified: false });
         }
         rows
     }
 
-    fn template_options(&self) -> Vec<(String, String)> {
+    /// A confirmation card: `message` says what happens; the last button does it.
+    fn confirm(&mut self, kind: Kind, tag: &str, title: &str, message: &str, buttons: &[&str]) {
+        let mut d = Dialog::new(kind, title);
+        d.tag = tag.to_string();
+        d.message = message.to_string();
+        d.buttons = buttons.iter().map(|b| b.to_string()).collect();
+        self.dialog = Some(d);
+    }
+
+    fn client_name(&self, id: &str) -> String {
+        let st = &self.sess.state;
+        st.clients.iter().map(|c| (&c.id, &c.label, &c.name)).chain(st.trash.iter().map(|c| (&c.id, &c.label, &c.name)))
+            .find(|(i, _, _)| *i == id)
+            .map(|(_, l, n)| if l.is_empty() { n.clone() } else { l.clone() })
+            .unwrap_or_else(|| id.to_string())
+    }
+
+    fn templates_rows(&self) -> Vec<Row> {
+        let mut rows = vec![Row::header("Session templates: a new session starts as a copy")];
+        if self.sess.templates.is_empty() {
+            rows.push(Row::info("None yet", "the session's ... menu → Save as template…"));
+        }
+        for t in &self.sess.templates {
+            rows.push(Row { id: format!("stemplate:{t}"), label: t.clone(), help: String::new(), control: Control::LinkRemove("new session from it".into()), modified: false });
+        }
+        rows.push(Row::header("Client templates: a client with its settings and files"));
+        if self.sess.client_templates.is_empty() {
+            rows.push(Row::info("None yet", "a client's menu → Save as a client template…"));
+        }
+        let open = self.sess.state.session.is_some();
+        for t in &self.sess.client_templates {
+            let text = if open { "add it to the session" } else { "open a session to add it" };
+            rows.push(Row { id: format!("ctemplate:{t}"), label: t.clone(), help: String::new(), control: Control::LinkRemove(text.into()), modified: false });
+        }
+        rows
+    }
+
+    fn refresh_templates_page(&mut self) {
+        if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::Templates) {
+            let rows = self.templates_rows();
+            if let Some(d) = &mut self.dialog {
+                d.set_rows(rows);
+            }
+        }
+    }
+
+    fn templates_page(&mut self) {
+        self.sess.send(&Request::ListTemplates);
+        self.sess.send(&Request::ListClientTemplates);
+        let mut d = Dialog::new(Kind::Templates, "Templates");
+        d.rows = self.templates_rows();
+        d.buttons = vec!["Close".into()];
+        d.note = "Click one to use it; × deletes it (to the desktop's Trash).".into();
+        self.dialog = Some(d);
+    }
+
+    /// A session's row in the open list: removable unless it is the open one.
+    fn session_link(&self, name: &str, text: String) -> Control {
+        if self.sess.state.session.as_deref() == Some(name) {
+            Control::Link(format!("open now · {text}"))
+        } else {
+            Control::LinkRemove(text)
+        }
+    }
+
+        fn template_options(&self) -> Vec<(String, String)> {
         std::iter::once((String::new(), "(an empty session)".to_string())).chain(self.sess.templates.iter().map(|t| (t.clone(), t.clone()))).collect()
     }
 
@@ -204,6 +307,26 @@ impl App {
         d.rows = rows;
         d.buttons = vec!["Cancel".into(), "Add command".into()];
         d.note = "Click an application to add it to the session and start it.".into();
+        self.dialog = Some(d);
+    }
+
+    /// RaySession's "Executable": one command line, NSM or not.
+    fn add_exe_dialog(&mut self) {
+        let mut d = Dialog::new(Kind::AddExe, "Add an executable");
+        d.rows = vec![
+            Row { id: "cmd".into(), label: "Command".into(), help: "The program and its arguments; quote an argument with spaces".into(), control: Control::Text(String::new()), modified: false },
+            Row { id: "label".into(), label: "Label".into(), help: "Its name in the session (empty: the program's)".into(), control: Control::Text(String::new()), modified: false },
+            Row {
+                id: "nsm".into(),
+                label: "Speaks NSM".into(),
+                help: "On: it gets NSM_URL and is asked to open and save. Off: a plain program, started and stopped.".into(),
+                control: Control::Toggle(true),
+                modified: false,
+            },
+        ];
+        d.buttons = vec!["Cancel".into(), "Add".into()];
+        d.note = "It is started now, and with the session from then on.".into();
+        d.edit("cmd");
         self.dialog = Some(d);
     }
 
@@ -265,6 +388,7 @@ impl App {
             }
             SessAction::Open if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::OpenSession) => self.dialog = None,
             SessAction::AddApp if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::AddApp) => self.dialog = None,
+            SessAction::AddExe if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::AddExe) => self.dialog = None,
             SessAction::Open => {
                 self.sess.send(&Request::ListSessions);
                 let mut d = Dialog::new(Kind::OpenSession, "Open a session");
@@ -276,7 +400,35 @@ impl App {
             SessAction::Save => self.send(Request::Save),
             SessAction::JackMemory(on) => self.send(Request::SetJackMemory { on }),
             SessAction::Close => self.send(Request::Close),
-            SessAction::Abort => self.send(Request::Abort),
+            SessAction::Abort => {
+                let name = st.session.clone().unwrap_or_default();
+                self.confirm(Kind::AbortSession, "", "Close without saving?", &format!("{name} closes and its clients stop without being asked to save: changes since the last save are lost."), &["Cancel", "Close without saving"]);
+            }
+            SessAction::DeleteOpen => {
+                let name = st.session.clone().unwrap_or_default();
+                self.confirm(Kind::DeleteSession, &name, "Delete this session?", &format!("{name} is closed without saving (its clients stop), then its folder, with every client's files in it, goes to the desktop's Trash, where you can restore it from."), &["Cancel", "Move to Trash"]);
+            }
+            SessAction::Templates => self.templates_page(),
+            SessAction::Remove(id) => {
+                let Some(c) = st.clients.iter().find(|c| c.id == id) else { return };
+                let name = self.client_name(&id);
+                if c.pid.is_none() {
+                    self.send(Request::Remove { id, save: false });
+                    self.say(format!("{name} removed: Removed, below the clients, brings it back"), false);
+                } else {
+                    let mut b = vec!["Cancel", "Stop and remove"];
+                    let can_save = c.nsm && c.status == Status::Ready;
+                    if can_save {
+                        b.push("Save, stop and remove");
+                    }
+                    let detail = if unsaved(c) { "is running, with unsaved changes" } else { "is running" };
+                    self.confirm(Kind::RemoveClient, &id, &format!("Remove {name}?"), &format!("{name} {detail}: it is stopped first. Removed, below the session's clients, brings it back."), &b);
+                }
+            }
+            SessAction::DeleteClient(id) => {
+                let name = self.client_name(&id);
+                self.confirm(Kind::DeleteClient, &id, &format!("Delete {name}?"), &format!("{name} leaves the session for good; the files it saved in the session's folder go to the desktop's Trash."), &["Cancel", "Delete"]);
+            }
             SessAction::Menu(r) => {
                 let open = st.session.is_some();
                 let items = vec![
@@ -288,7 +440,9 @@ impl App {
                     MenuItem::new("Take a snapshot…", Action::Sess(SessAction::Snapshot)).enabled(open),
                     MenuItem::new("Go back to a snapshot…", Action::Sess(SessAction::Snapshots)).enabled(open),
                     MenuItem::new("Open the session folder", Action::Sess(SessAction::OpenFolder)).enabled(open),
-                    MenuItem::new("Close without saving", Action::Sess(SessAction::Abort)).enabled(open),
+                    MenuItem::new("Close without saving…", Action::Sess(SessAction::Abort)).enabled(open),
+                    MenuItem::new("Delete this session…", Action::Sess(SessAction::DeleteOpen)).enabled(open),
+                    MenuItem::new("Templates…", Action::Sess(SessAction::Templates)),
                 ];
                 self.ui.open_menu([r.x, r.bottom() + 2.0], items);
             }
@@ -321,21 +475,35 @@ impl App {
                     let _ = std::process::Command::new("xdg-open").arg(p).stdin(std::process::Stdio::null()).spawn();
                 }
             }
-            SessAction::AddApp => {
+            SessAction::AddApp | SessAction::AddExe => {
+                let next = if matches!(a, SessAction::AddApp) { AddNext::App } else { AddNext::Exe };
                 if st.session.is_none() {
-                    self.say("Create or open a session first", true);
-                } else {
+                    // Programs live in a session: name one first, then pick the program.
+                    self.session_action(SessAction::New);
+                    self.sess.add_after_open = Some(next);
+                    if let Some(d) = &mut self.dialog {
+                        d.note = "Name the session first, then add to it.".into();
+                    }
+                } else if next == AddNext::App {
                     self.add_app_dialog();
+                } else {
+                    self.add_exe_dialog();
                 }
             }
             SessAction::Start(id) => self.send(Request::Start { id }),
-            SessAction::Stop(id) => self.send(Request::Stop { id }),
+            SessAction::Stop(id) => match st.clients.iter().find(|c| c.id == id) {
+                Some(c) if unsaved(c) => {
+                    let name = self.client_name(&id);
+                    let detail = if c.dirty == Some(true) { "has unsaved changes" } else { "was not saved in the last minute" };
+                    self.confirm(Kind::StopClient, &id, &format!("Stop {name}?"), &format!("{name} {detail}. Save and stop waits for its save; if the save fails, it keeps running."), &["Cancel", "Stop without saving", "Save and stop"]);
+                }
+                _ => self.send(Request::Stop { id }),
+            },
             SessAction::Kill(id) => self.send(Request::Kill { id }),
             SessAction::SaveClient(id) => self.send(Request::SaveClient { id }),
             SessAction::Gui(id, show) => self.send(if show { Request::ShowGui { id } } else { Request::HideGui { id } }),
-            SessAction::Trash(id) => self.send(Request::Trash { id }),
             SessAction::Restore(id) => self.send(Request::Restore { id }),
-            SessAction::Forget(id) => self.send(Request::Forget { id }),
+            SessAction::Forget(id) => self.send(Request::Forget { id, files: false }),
             SessAction::ClientMenu(id, r) => {
                 let Some(c) = st.clients.iter().find(|c| c.id == id) else { return };
                 let running = c.pid.is_some();
@@ -352,7 +520,7 @@ impl App {
                 }
                 items.push(MenuItem::new("Properties…", Action::Sess(SessAction::Props(id.clone()))));
                 items.push(MenuItem::new("Save as a client template…", Action::Sess(SessAction::ClientTemplate(id.clone()))));
-                items.push(MenuItem::new("Move to the trash", Action::Sess(SessAction::Trash(id.clone()))).enabled(!running));
+                items.push(MenuItem::new(if running { "Remove from the session…" } else { "Remove from the session" }, Action::Sess(SessAction::Remove(id.clone()))));
                 if !c.jack_name.is_empty() {
                     let node = format!("M:{}", c.jack_name);
                     items.push(MenuItem::new("Find in the graph", Action::CenterNode(node)));
@@ -397,8 +565,10 @@ impl App {
                 let mut items = Vec::new();
                 for c in &st.trash {
                     let name = if c.label.is_empty() { c.name.clone() } else { c.label.clone() };
-                    items.push(MenuItem::new(format!("Restore {name} ({})", c.id), Action::Sess(SessAction::Restore(c.id.clone()))));
-                    items.push(MenuItem::new(format!("Forget {name} (files stay)"), Action::Sess(SessAction::Forget(c.id.clone()))));
+                    items.push(MenuItem::header(format!("{name} ({})", c.id)));
+                    items.push(MenuItem::new("Bring it back", Action::Sess(SessAction::Restore(c.id.clone()))));
+                    items.push(MenuItem::new("Forget it (its files stay)", Action::Sess(SessAction::Forget(c.id.clone()))));
+                    items.push(MenuItem::new("Delete it and its files…", Action::Sess(SessAction::DeleteClient(c.id.clone()))));
                 }
                 self.ui.open_menu([r.x, r.bottom() + 2.0], items);
             }
@@ -409,7 +579,29 @@ impl App {
     pub fn session_dialog_event(&mut self, kind: Kind, ev: Event) {
         let Some(d) = &mut self.dialog else { return };
         match ev {
-            Event::Set(id, v) if id.starts_with("session:") && v == "activate" => {
+            Event::Set(id, v) if (id.starts_with("stemplate:") || id.starts_with("ctemplate:")) && v == "remove" => {
+                let (client, name) = (id.starts_with("ctemplate:"), id.split_once(':').map(|x| x.1).unwrap_or_default().to_string());
+                let tag = format!("{}:{name}", if client { "c" } else { "s" });
+                let what = if client { "client template" } else { "session template" };
+                self.confirm(Kind::DeleteTemplate, &tag, &format!("Delete the {what}?"), &format!("{name}, with the files kept with it, goes to the desktop's Trash, where you can restore it from."), &["Cancel", "Move to Trash"]);
+            }
+            Event::Set(id, v) if id.starts_with("stemplate:") && v == "activate" => {
+                let t = id.trim_start_matches("stemplate:").to_string();
+                self.dialog = None;
+                self.session_action(SessAction::New);
+                if let Some(d) = &mut self.dialog
+                    && let Some(r) = d.rows.iter_mut().find(|r| r.id == "template")
+                    && let Control::Choice { value, .. } = &mut r.control
+                {
+                    *value = t;
+                }
+            }
+            Event::Set(id, v) if id.starts_with("session:") && v == "remove" => {
+                let name = id.trim_start_matches("session:").to_string();
+                let msg = format!("{name} goes to the desktop's Trash: its folder, with every client's files in it. You can restore it from there.");
+                self.confirm(Kind::DeleteSession, &name, "Delete this session?", &msg, &["Cancel", "Move to Trash"]);
+            }
+                        Event::Set(id, v) if id.starts_with("session:") && v == "activate" => {
                 let name = id.trim_start_matches("session:").to_string();
                 self.dialog = None;
                 self.send(Request::Open { name });
@@ -435,7 +627,47 @@ impl App {
                 self.send(Request::Add { exe: a.exe, args: a.args, nsm: a.nsm, label: if a.nsm { String::new() } else { a.name } });
             }
             Event::Set(id, v) => d.set_local(&id, &v),
-            Event::Button(b) if kind == Kind::ClientProps => {
+            Event::Button(b) if kind == Kind::DeleteSession => {
+                let delete = d.buttons.get(b).is_some_and(|l| l == "Move to Trash");
+                let name = d.tag.clone();
+                self.dialog = None;
+                if delete && self.sess.state.session.as_deref() == Some(name.as_str()) {
+                    // The open one: closed (unsaved) first, deleted once closed.
+                    self.sess.delete_after_close = Some(name);
+                    self.send(Request::Abort);
+                    return;
+                }
+                if delete {
+                    self.send(Request::Delete { name });
+                }
+                // Back to the list.
+                self.session_action(SessAction::Open);
+            }
+            Event::Button(b) if matches!(kind, Kind::RemoveClient | Kind::DeleteClient | Kind::StopClient | Kind::AbortSession | Kind::DeleteTemplate) => {
+                let label = d.buttons.get(b).cloned().unwrap_or_default();
+                let tag = d.tag.clone();
+                self.dialog = None;
+                let req = match (kind, label.as_str()) {
+                    (_, "Cancel") => None,
+                    (Kind::RemoveClient, l) => Some(Request::Remove { id: tag, save: l.starts_with("Save") }),
+                    (Kind::DeleteClient, _) => Some(Request::Forget { id: tag, files: true }),
+                    (Kind::StopClient, "Save and stop") => Some(Request::SaveStop { id: tag }),
+                    (Kind::StopClient, _) => Some(Request::Stop { id: tag }),
+                    (Kind::AbortSession, _) => Some(Request::Abort),
+                    (Kind::DeleteTemplate, _) => {
+                        let (k, name) = tag.split_once(':').unwrap_or(("s", ""));
+                        Some(Request::DeleteTemplate { name: name.to_string(), client: k == "c" })
+                    }
+                    _ => None,
+                };
+                if let Some(r) = req {
+                    self.send(r);
+                }
+                if kind == Kind::DeleteTemplate {
+                    self.templates_page();
+                }
+            }
+                        Event::Button(b) if kind == Kind::ClientProps => {
                 let ok = d.buttons.get(b).map(String::as_str) == Some("Apply");
                 let d = self.dialog.take().unwrap();
                 if !ok {
@@ -466,7 +698,10 @@ impl App {
                 let label = d.buttons.get(b).cloned().unwrap_or_default();
                 let name = d.value("name").unwrap_or_default();
                 let req = match (kind, label.as_str()) {
-                    (_, "Cancel") => None,
+                    (_, "Cancel") => {
+                        self.sess.add_after_open = None;
+                        None
+                    }
                     (Kind::NewSession, _) => Some(Request::New { name, template: d.value("template").filter(|t| !t.is_empty()) }),
                     (Kind::SaveTemplate, _) => Some(Request::SaveTemplate { name }),
                     (Kind::ClientTemplate, _) => Some(Request::SaveClientTemplate { id: d.tag.clone(), name }),
@@ -474,11 +709,20 @@ impl App {
                     (Kind::Duplicate, _) => Some(Request::Duplicate { name }),
                     (Kind::Notes, _) => Some(Request::SetNotes { notes: d.value("notes").unwrap_or_default() }),
                     (Kind::Snapshot, _) => Some(Request::Snapshot { label: name }),
-                    (Kind::AddApp, _) => {
-                        let cmd = d.value("cmd").unwrap_or_default();
+                    (Kind::AddApp | Kind::AddExe, _) => {
+                        let mut words = pbx_session::store::split_args(&d.value("cmd").unwrap_or_default());
                         let nsm = d.value("nsm").as_deref() == Some("on");
-                        let mut w = cmd.split_whitespace().map(str::to_string);
-                        w.next().map(|exe| Request::Add { exe, args: w.collect(), nsm, label: String::new() })
+                        let label = d.value("label").unwrap_or_default().trim().to_string();
+                        if words.is_empty() {
+                            if kind == Kind::AddExe {
+                                // Keep the dialog: nothing to add yet.
+                                return self.say("Type the command to run", true);
+                            }
+                            None
+                        } else {
+                            let exe = words.remove(0);
+                            Some(Request::Add { exe, args: words, nsm, label })
+                        }
                     }
                     _ => None,
                 };
@@ -487,7 +731,10 @@ impl App {
                     self.send(r);
                 }
             }
-            Event::Close => self.dialog = None,
+            Event::Close => {
+                self.dialog = None;
+                self.sess.add_after_open = None;
+            }
             _ => {}
         }
     }
@@ -537,6 +784,19 @@ impl App {
         self.sbutton(g, mr, "⋯", Action::Sess(SessAction::Menu(mr)));
         y += bh + 8.0 * s;
         if !open {
+            // Nothing open: say what a session is for, and offer "+ Application" anyway (it makes
+            // the session first).
+            if self.sess.connected && st.busy.is_none() {
+                let spx = FONT_SMALL * s;
+                let slh = g.line_height(Face::Regular, spx);
+                let hint = "A session keeps programs, their files and their connections. New starts one; adding a program below starts one too.";
+                for line in crate::ui::wrap(g, spx, hint, r.w - 2.0 * pad) {
+                    g.text(Face::Regular, spx, r.x + pad, y, TEXT_SOFT, &line);
+                    y += slh;
+                }
+                y += 6.0 * s;
+                y = self.add_buttons(g, r, y, bh);
+            }
             return y;
         }
         // The session's clients.
@@ -553,10 +813,12 @@ impl App {
             if c.dirty == Some(true) {
                 name.push_str(" *");
             }
-            // Icons on the right: GUI eye, save, start/stop.
+            // Icons on the right: GUI eye, save, start/stop, remove.
             let ib = row_h - 4.0 * s;
             let mut ix = rr.right() - ib - 2.0 * s;
             let running = c.pid.is_some();
+            self.icon(g, Rect::new(ix, rr.y + 2.0 * s, ib, ib), Icon::Remove, Action::Sess(SessAction::Remove(c.id.clone())));
+            ix -= ib + 2.0 * s;
             let ssr = Rect::new(ix, rr.y + 2.0 * s, ib, ib);
             let act = if running { SessAction::Stop(c.id.clone()) } else { SessAction::Start(c.id.clone()) };
             self.icon(g, ssr, if running { Icon::Stop } else { Icon::Play }, Action::Sess(act));
@@ -583,20 +845,32 @@ impl App {
             }
             self.add_hit_pub(label_r, Action::Sess(SessAction::ClientMenu(c.id.clone(), Rect::new(label_r.x, label_r.y, 0.0, label_r.h))));
         }
-        // + Add application, trash.
-        let ar = Rect::new(r.x + pad, y + 2.0 * s, (r.w - 2.0 * pad) * 0.62, bh);
-        self.sbutton(g, ar, "+ Application", Action::Sess(SessAction::AddApp));
+        // + Application, Executable; the trash.
+        y = self.add_buttons(g, r, y + 2.0 * s, bh);
         if !st.trash.is_empty() {
-            let tr = Rect::new(ar.right() + 6.0 * s, ar.y, r.right() - pad - ar.right() - 6.0 * s, bh);
-            self.sbutton(g, tr, &format!("Trash {}", st.trash.len()), Action::Sess(SessAction::TrashMenu(tr)));
+            let label = format!("Removed {}", st.trash.len());
+            let tw = g.measure(Face::Regular, px, &label) + 24.0 * s;
+            let tr = Rect::new(r.right() - pad - tw, y - 4.0 * s, tw, bh);
+            self.sbutton(g, tr, &label, Action::Sess(SessAction::TrashMenu(tr)));
+            y += bh + 6.0 * s;
         }
-        y += bh + 10.0 * s;
         if st.connections_saved > 0 {
             let t = format!("connections: {} saved, {} present", st.connections_saved, st.connections_present);
             g.text_fit(Face::Regular, FONT_SMALL * s, r.x + pad, y, r.w - 2.0 * pad, TEXT_SOFT, &t);
             y += lh;
         }
         y
+    }
+
+    /// "+ Application" (from the installed ones) and "Executable" (any command), as RaySession.
+    fn add_buttons(&mut self, g: &mut Gfx, r: Rect, y: f32, bh: f32) -> f32 {
+        let s = self.scale;
+        let pad = 10.0 * s;
+        let gap = 6.0 * s;
+        let w = ((r.w - 2.0 * pad - gap) / 2.0).floor();
+        self.sbutton(g, Rect::new(r.x + pad, y, w, bh), "+ Application", Action::Sess(SessAction::AddApp));
+        self.sbutton(g, Rect::new(r.x + pad + w + gap, y, w, bh), "Executable", Action::Sess(SessAction::AddExe));
+        y + bh + 10.0 * s
     }
 
     fn sbutton(&mut self, g: &mut Gfx, r: Rect, label: &str, a: Action) {
@@ -624,6 +898,12 @@ impl App {
         let (cx, cy, k) = (r.cx(), r.cy(), r.w * 0.28);
         let col = if hov { HILIGHT } else { TEXT };
         match icon {
+            Icon::Remove => {
+                let c = if hov { BAD } else { TEXT };
+                let k = k * 0.8;
+                g.line([cx - k, cy - k], [cx + k, cy + k], 1.5 * s, c);
+                g.line([cx - k, cy + k], [cx + k, cy - k], 1.5 * s, c);
+            }
             Icon::Play => g.triangle([cx - k * 0.7, cy - k], [cx - k * 0.7, cy + k], [cx + k, cy], OK),
             Icon::Stop => g.rect(Rect::new(cx - k * 0.8, cy - k * 0.8, k * 1.6, k * 1.6), col),
             Icon::Save => {
@@ -645,6 +925,7 @@ impl App {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Icon {
+    Remove,
     Play,
     Stop,
     Save,

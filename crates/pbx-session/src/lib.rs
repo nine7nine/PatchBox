@@ -8,3 +8,4 @@ pub mod osc;
 pub mod proto;
 pub mod rules;
 pub mod store;
+pub mod trash;

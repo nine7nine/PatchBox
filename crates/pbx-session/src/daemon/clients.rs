@@ -38,6 +38,10 @@ pub struct Client {
     announce_by: Option<Instant>,
     pub reply_by: Option<(Pending, Instant)>,
     kill_at: Option<Instant>,
+    /// Stop it once its save is done (the GUI's "Save and stop"); a failed save leaves it running.
+    pub stop_after_save: bool,
+    /// Removed while running: to the trash once it has stopped.
+    pub remove_after_stop: bool,
     alive_check: Option<Instant>,
     open_sent: Option<Instant>,
     /// Its stdout/stderr file (.patchbox/<id>.log), cut back when it grows too big.
@@ -113,6 +117,8 @@ impl Client {
             announce_by: None,
             reply_by: None,
             kill_at: None,
+            stop_after_save: false,
+            remove_after_stop: false,
             alive_check: None,
             open_sent: None,
             log: None,
@@ -332,13 +338,19 @@ impl Client {
                 if self.dirty.is_some() {
                     self.dirty = Some(false);
                 }
+                if std::mem::take(&mut self.stop_after_save) {
+                    self.stop();
+                    return Some((format!("{id} saved; stopping"), false));
+                }
                 None
             }
             ("/nsm/client/save", false) => {
                 self.status = Status::Ready;
                 self.reply_by = None;
                 self.message = format!("save failed: {msg}");
-                Some((format!("{id}: save failed: {msg}"), true))
+                let left = if std::mem::take(&mut self.stop_after_save) { "; left running" } else { "" };
+                self.remove_after_stop = false;
+                Some((format!("{id}: save failed: {msg}{left}"), true))
             }
             _ => None,
         }
@@ -443,12 +455,17 @@ impl Client {
                 Pending::Save if !self.entry.nsm => {
                     // A plain program told by signal: no confirmation comes.
                     self.status = Status::Running;
+                    if std::mem::take(&mut self.stop_after_save) {
+                        self.stop();
+                    }
                     return None;
                 }
                 Pending::Save => {
                     self.status = Status::Ready;
                     self.message = "save not confirmed".into();
-                    (format!("{id} did not confirm its save"), true)
+                    let left = if std::mem::take(&mut self.stop_after_save) { "; left running" } else { "" };
+                self.remove_after_stop = false;
+                    (format!("{id} did not confirm its save{left}"), true)
                 }
             });
         }

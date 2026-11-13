@@ -71,13 +71,26 @@ A session is a folder under `~/PatchBox Sessions` (`PATCHBOX_SESSIONS`): `sessio
 format: clients, trash, notes, connections), `patchbox-layout.json` (the canvas as you left it),
 each NSM client's files in `<name>.<id>/`, client logs in `.patchbox/`.
 
-From the sidebar: New / Open / Save / Close, ⋯ (duplicate, rename, notes, open the folder, close
-without saving), + Application (NSM-capable `.desktop` entries, other audio applications, or any
-command), per-client start/stop, save, show/hide window, trash. From a shell:
+From the sidebar (hover any icon for what it does):
+
+- **Sessions**: New / Open / Save / Close; Open lists them, × deletes one (asks first). ⋯ has
+  duplicate, rename, notes, templates (use or delete), snapshots, open the folder, close without
+  saving, delete this session (both ask first).
+- **Programs**: + Application (NSM-capable `.desktop` entries, other audio applications, your
+  client templates) and Executable (any command line), as in RaySession; both work with no session
+  open (they ask for its name first).
+- **Each client**: start/stop, save, show/hide its window, × to remove it. Stopping or removing one
+  with unsaved changes asks first (save and stop, or stop without saving). Click or right-click its
+  name for the rest (kill, properties, keep as a client template, find in the graph).
+- **Removed n** brings removed clients back, forgets them, or deletes them with their files.
+
+Nothing is deleted outright: sessions, templates and client files go to the desktop's Trash
+(freedesktop spec), where a file manager can restore them. From a shell:
 
 ```sh
-patchbox-ctl sessions | new NAME | open NAME | save | close | abort | duplicate NAME | rename NAME
-patchbox-ctl add [--plain] EXE [ARGS…] | start ID | stop ID | kill ID | save-client ID | show-gui ID
+patchbox-ctl sessions | new NAME | open NAME | save | close | abort | duplicate NAME | rename NAME | delete NAME
+patchbox-ctl add [--plain] EXE [ARGS…] | start ID | stop ID | save-stop ID | kill ID | save-client ID | show-gui ID
+patchbox-ctl remove ID [--save] | restore ID | forget ID [--files] | delete-template NAME [--client]
 patchbox-ctl connect SRC DST | disconnect SRC DST | graph | state | watch | quit
 ```
 
