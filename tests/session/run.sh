@@ -15,12 +15,21 @@ W=$HOME/.cache/patchbox-work/session-test; rm -rf "$W"; mkdir -p "$W"
 export PATH="$ROOT/target/debug:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOXD_STAY=1 PATCHBOX_TEMPLATES="$W/templates"
 jackd --no-realtime -d dummy --rate 48000 --period 256 --capture 2 --playback 2 > "$W/jackd.log" 2>&1 &
 for i in $(seq 50); do ls /dev/shm/jack_default_* >/dev/null 2>&1 && break; sleep 0.1; done; sleep 0.3
-patchboxd > "$W/patchboxd.log" 2>&1 &
-for i in $(seq 50); do [ -S "$W/daemon.sock" ] && break; sleep 0.1; done
+# PB_VALGRIND=1: the daemon under memcheck (invalid reads/writes, uninitialised values in the FFI
+# and libc code); errors fail the run.
+if [ -n "${PB_VALGRIND:-}" ]; then
+  # Needs a dynamic linker valgrind can read (glibc debug info); say so instead of failing later.
+  valgrind -q --error-exitcode=99 true 2>"$W/valgrind-check.log" || { echo "valgrind cannot run here:"; grep -m3 -E 'Fatal|install' "$W/valgrind-check.log"; exit 2; }
+  valgrind --error-exitcode=99 --track-origins=yes --leak-check=no --log-file="$W/valgrind.log" "$ROOT/target/debug/patchboxd" > "$W/patchboxd.log" 2>&1 &
+else
+  patchboxd > "$W/patchboxd.log" 2>&1 &
+fi
+VPID=$!
+for i in $(seq 200); do [ -S "$W/daemon.sock" ] && break; sleep 0.1; done
 fail=0
 ctl() { patchbox-ctl "$@"; }
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
-wait_for() { for i in $(seq 60); do eval "$1" && return 0; sleep 0.1; done; return 1; }
+wait_for() { for i in $(seq ${PB_WAIT:-60}); do eval "$1" && return 0; sleep 0.1; done; return 1; }
 st() { ctl state; }
 
 ctl new t1 >/dev/null
@@ -85,5 +94,10 @@ ctl abort >/dev/null
 wait_for 'st | grep -q "\"session\": null"'
 check "aborted" 'st | grep -q "\"session\": null"'
 ctl quit >/dev/null
+wait $VPID; DRC=$?
+if [ -n "${PB_VALGRIND:-}" ]; then
+  check "valgrind: no memory errors in patchboxd (exit $DRC)" '[ $DRC -ne 99 ] && grep -q "ERROR SUMMARY: 0 errors" "$W/valgrind.log"'
+  grep -E "ERROR SUMMARY" "$W/valgrind.log"
+fi
 echo "--- patchboxd log"; tail -n 25 "$W/patchboxd.log"
 exit $fail
