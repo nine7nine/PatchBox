@@ -439,6 +439,11 @@ impl App {
     }
 
     fn canvas_release(&mut self, drag: Drag, x: f32, y: f32, ctrl: bool) {
+        if let Drag::Node { id, .. } = &drag
+            && let Some(i) = self.model.node_by_id(id)
+        {
+            self.repulse(i);
+        }
         if let Drag::Port { name } = &drag
             && let Some(&a) = self.graph.by_name.get(name)
         {
@@ -540,6 +545,7 @@ impl App {
                 items.push(I::new("Matrices (PatchMatrix view)", Action::ToggleMatrices).checked(self.layout.view.matrices));
                 items.push(I::new("Show grid", Action::ToggleGrid).checked(self.layout.view.grid));
                 items.push(I::new("Snap to grid", Action::ToggleSnap).checked(self.layout.view.snap));
+                items.push(I::new("Prevent overlap", Action::ToggleNoOverlap).checked(self.layout.view.no_overlap));
             }
         }
         self.ui.open_menu([x, y], items);

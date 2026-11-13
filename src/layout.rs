@@ -24,6 +24,8 @@ pub struct View {
     pub matrices: bool,
     /// Moving a block or a matrix lands its top-left corner on the grid.
     pub snap: bool,
+    /// A moved block pushes the ones it lands on out of the way (RaySession's default).
+    pub no_overlap: bool,
     /// Interface scale for the window's contents (top bar, sidebar, canvas at zoom 1), on top of
     /// the desktop's scale. The window buttons follow the desktop's scale only.
     pub ui_scale: f32,
@@ -31,7 +33,7 @@ pub struct View {
 
 impl Default for View {
     fn default() -> View {
-        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, snap: false, ui_scale: 1.25 }
+        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, matrices: false, snap: false, no_overlap: true, ui_scale: 1.25 }
     }
 }
 

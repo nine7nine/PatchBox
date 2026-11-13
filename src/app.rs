@@ -27,6 +27,7 @@ pub enum Action {
     ToggleSidebar,
     ToggleLabels,
     ToggleGrid,
+    ToggleNoOverlap,
     /// Ports on the blocks with a wire per connection, or PatchMatrix's matrices.
     ToggleMatrices,
     /// Remove one connection (by port names).
@@ -706,14 +707,36 @@ impl App {
                 *b = b.max(self.node_extent(i).bottom());
             }
         }
-        let mut order = missing;
-        order.sort_by_key(|&i| (depths[i], self.model.nodes[i].title.to_lowercase()));
-        for i in order {
-            let col = depths[i];
-            let y = bottom.get(&col).map_or(80.0, |b| b + GAP + theme::NODE_H / 2.0);
-            let x = X0 + col as f32 * COL_W;
-            self.layout.nodes.insert(self.model.nodes[i].key.id(), [x, y]);
-            bottom.insert(col, self.node_extent(i).bottom());
+        // Column by column, left to right; within a column, blocks in the order of where what
+        // feeds them sits (the mean height of their upstream neighbours, a barycentre pass), so
+        // wires cross as little as they can; the rest by name.
+        let mut cols: Vec<usize> = missing.iter().map(|&i| depths[i]).collect();
+        cols.sort_unstable();
+        cols.dedup();
+        let mut feeds: HashMap<usize, Vec<usize>> = HashMap::new();
+        for &(o, inp) in &self.graph.conns {
+            if let (Some(&a), Some(&b)) = (self.model.port_node.get(&o), self.model.port_node.get(&inp))
+                && a != b
+            {
+                feeds.entry(b).or_default().push(a);
+            }
+        }
+        for col in cols {
+            let mut here: Vec<usize> = missing.iter().copied().filter(|&i| depths[i] == col).collect();
+            let key = |i: usize, me: &App| -> f32 {
+                let ys: Vec<f32> = feeds
+                    .get(&i)
+                    .map(|v| v.iter().filter(|&&a| depths[a] < col).filter_map(|&a| me.layout.nodes.get(&me.model.nodes[a].key.id()).map(|p| p[1])).collect())
+                    .unwrap_or_default();
+                if ys.is_empty() { f32::MAX } else { ys.iter().sum::<f32>() / ys.len() as f32 }
+            };
+            here.sort_by(|&a, &b| key(a, self).total_cmp(&key(b, self)).then(self.model.nodes[a].title.to_lowercase().cmp(&self.model.nodes[b].title.to_lowercase())));
+            for i in here {
+                let y = bottom.get(&col).map_or(80.0, |b| b + GAP + theme::NODE_H / 2.0);
+                let x = X0 + col as f32 * COL_W;
+                self.layout.nodes.insert(self.model.nodes[i].key.id(), [x, y]);
+                bottom.insert(col, self.node_extent(i).bottom());
+            }
         }
         self.layout_changed();
     }
@@ -774,6 +797,51 @@ impl App {
             p[1] += dy * f;
         }
         self.layout_changed();
+    }
+
+    /// Prevent overlap (RaySession's repulse, in short): blocks that `from` now overlaps move
+    /// out of its way: sideways when they sit level with it and further to one side, else up or
+    /// down; a moved block pushes in turn (each a few times at most, so it always ends).
+    pub fn repulse(&mut self, from: usize) {
+        if !self.layout.view.no_overlap {
+            return;
+        }
+        const GAP: f32 = 18.0;
+        let grow = |r: Rect| Rect::new(r.x - 3.0 * theme::HANDLE_R, r.y - 14.0, r.w + 6.0 * theme::HANDLE_R, r.h + 14.0);
+        let mut queue = vec![from];
+        let mut moved: HashMap<usize, u32> = HashMap::new();
+        let mut steps = 0;
+        while let Some(p) = queue.pop() {
+            steps += 1;
+            if steps > 500 {
+                break;
+            }
+            let pr = grow(self.node_extent(p));
+            for j in 0..self.model.nodes.len() {
+                if j == p || j == from || self.layout.hidden.contains(&self.model.nodes[j].key.id()) {
+                    continue;
+                }
+                let jr = grow(self.node_extent(j));
+                if !(pr.x < jr.right() + GAP && jr.x < pr.right() + GAP && pr.y < jr.bottom() + GAP && jr.y < pr.bottom() + GAP) {
+                    continue;
+                }
+                let level = (jr.y < pr.cy() && pr.cy() < jr.bottom()) || (pr.y < jr.cy() && jr.cy() < pr.bottom());
+                let (dx, dy) = if level && (jr.cx() - pr.cx()).abs() > pr.w * 0.5 {
+                    if jr.cx() > pr.cx() { (pr.right() + GAP - jr.x, 0.0) } else { (pr.x - GAP - jr.right(), 0.0) }
+                } else if jr.cy() >= pr.cy() {
+                    (0.0, pr.bottom() + GAP - jr.y)
+                } else {
+                    (0.0, pr.y - GAP - jr.bottom())
+                };
+                let id = self.model.nodes[j].key.id();
+                self.move_node(&id, dx, dy);
+                let n = moved.entry(j).or_insert(0);
+                *n += 1;
+                if *n < 6 {
+                    queue.push(j);
+                }
+            }
+        }
     }
 
     /// After node `i` grew: push the nodes below it in its column down until nothing overlaps
@@ -943,6 +1011,10 @@ impl App {
                 self.layout_changed();
             }
             Action::Disconnect(o, i) => self.disconnect_names(&o, &i),
+            Action::ToggleNoOverlap => {
+                self.layout.view.no_overlap = !self.layout.view.no_overlap;
+                self.layout_changed();
+            }
             Action::ToggleGrid => {
                 self.layout.view.grid = !self.layout.view.grid;
                 self.layout_changed();
