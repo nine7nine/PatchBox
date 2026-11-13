@@ -107,6 +107,10 @@ pub struct App {
     pub server: crate::server::Server,
     pub dialog: Option<crate::dialog::Dialog>,
     pub sess: crate::session::SessionLink,
+    /// The open session's folder, whose canvas is in use (None: the global one).
+    pub layout_dir: Option<std::path::PathBuf>,
+    /// The global canvas, put aside while a session's is in use.
+    global_canvas: Option<Layout>,
     /// Installed applications (.desktop), scanned when first needed.
     pub apps: Option<Vec<crate::session::App>>,
     pub log: Vec<LogLine>,
@@ -141,6 +145,8 @@ impl App {
             server,
             dialog: None,
             sess,
+            layout_dir: None,
+            global_canvas: None,
             apps: None,
             jack: None,
             waker,
@@ -351,8 +357,51 @@ impl App {
 
     pub fn save_layout(&mut self) {
         self.layout.view.kind = self.kind.label().to_string();
-        self.layout.save();
+        match &self.layout_dir {
+            // A session's canvas goes with it; the view (and the canvas we left) stays global.
+            Some(dir) => {
+                if dir.is_dir() {
+                    self.layout.save_session(dir);
+                }
+                let mut global = self.global_canvas.clone().unwrap_or_default();
+                global.view = self.layout.view.clone();
+                global.window = self.layout.window;
+                global.save();
+            }
+            None => self.layout.save(),
+        }
         self.layout_dirty = None;
+    }
+
+    /// The open session changed (or closed): switch the canvas to its own, keeping the view.
+    pub fn session_dir_changed(&mut self, dir: Option<std::path::PathBuf>) {
+        if dir == self.layout_dir {
+            return;
+        }
+        // Keep what was arranged where it belongs.
+        if self.layout_dirty.is_some() || self.layout_dir.is_some() {
+            self.save_layout();
+        }
+        match (&self.layout_dir, &dir) {
+            (None, Some(_)) => self.global_canvas = Some(self.layout.clone()),
+            (Some(_), None) => {
+                if let Some(g) = self.global_canvas.take() {
+                    self.layout.take_canvas(g);
+                }
+            }
+            _ => {}
+        }
+        if let Some(d) = &dir {
+            // A session opened for the first time starts from the current arrangement.
+            if let Some(l) = crate::layout::Layout::load_session(d) {
+                self.layout.take_canvas(l);
+            }
+        }
+        self.layout_dir = dir;
+        if self.jack.is_some() {
+            self.rebuild();
+        }
+        self.redraw = true;
     }
 
     pub fn layout_changed(&mut self) {

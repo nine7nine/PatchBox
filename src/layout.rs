@@ -60,7 +60,35 @@ fn path() -> Option<PathBuf> {
     Some(base.join("layout.json"))
 }
 
+/// The file of a session's canvas, in its folder.
+pub const SESSION_FILE: &str = "patchbox-layout.json";
+
 impl Layout {
+    /// A session's canvas (positions, pins, splits, hidden and expanded nodes), if it has one.
+    pub fn load_session(dir: &std::path::Path) -> Option<Layout> {
+        let b = std::fs::read(dir.join(SESSION_FILE)).ok()?;
+        serde_json::from_slice(&b).ok()
+    }
+
+    /// Write the canvas into a session folder.
+    pub fn save_session(&mut self, dir: &std::path::Path) {
+        self.version = 1;
+        let p = dir.join(SESSION_FILE);
+        let tmp = dir.join(".patchbox-layout.json.tmp");
+        let Ok(body) = serde_json::to_vec_pretty(self) else { return };
+        if std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &p)).is_err() {
+            eprintln!("[layout] could not write {}", p.display());
+        }
+    }
+
+    /// Take the canvas of `other`, keeping our view and window (those stay global).
+    pub fn take_canvas(&mut self, other: Layout) {
+        let (view, window) = (self.view.clone(), self.window);
+        *self = other;
+        self.view = view;
+        self.window = window;
+    }
+
     pub fn load() -> Layout {
         let Some(p) = path() else { return Layout::default() };
         match std::fs::read(&p) {

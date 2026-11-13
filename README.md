@@ -5,7 +5,8 @@ A JACK patchbay — and, next, session manager — for one Linux audio box: the 
 RaySession's flexibility underneath and its session management beside it. Rust, SDL3 (vendored,
 static, Wayland-only) and GL drawn by the app itself. No Qt.
 
-Status: phase 1 of `docs/PLAN.md` — the live patchbay works; sessions come in phase 3.
+Status: the live patchbay, JACK server control (jackdbus), transport and the session manager
+(`patchboxd`, an NSM server) work; see `docs/PLAN.md` for what comes next.
 
 ## Build
 
@@ -44,6 +45,34 @@ metadata pretty-names, else RaySession-style graceful names.
 The layout (positions, pinned matrices, split/hidden clients, view) is kept in
 `~/.config/patchbox/layout.json`.
 
+## Sessions
+
+`patchboxd` runs the session: an NSM server (Ardour, Carla, Hydrogen… are told to open and save),
+plain programs started and stopped with it, and the session's JACK connections, restored as ports
+appear (RaySession's rules: a connection you removed stays removed; an application auto-connecting
+against the session is undone). The GUI starts it when needed; it keeps running the session if the
+GUI quits, and exits when idle with no session.
+
+A session is a folder under `~/PatchBox Sessions` (`PATCHBOX_SESSIONS`): `session.toml` (our
+format: clients, trash, notes, connections), `patchbox-layout.json` (the canvas as you left it),
+each NSM client's files in `<name>.<id>/`, client logs in `.patchbox/`.
+
+From the sidebar: New / Open / Save / Close, ⋯ (duplicate, rename, notes, open the folder, close
+without saving), + Application (NSM-capable `.desktop` entries, other audio applications, or any
+command), per-client start/stop, save, show/hide window, trash. From a shell:
+
+```sh
+patchbox-ctl sessions | new NAME | open NAME | save | close | abort | duplicate NAME | rename NAME
+patchbox-ctl add [--plain] EXE [ARGS…] | start ID | stop ID | kill ID | save-client ID | show-gui ID
+patchbox-ctl connect SRC DST | disconnect SRC DST | graph | state | watch | quit
+```
+
+## JACK server
+
+The sidebar's JACK section starts, stops and restarts the server through jackdbus, and Settings
+edits its driver and engine parameters (what jackdbus offers, with its constraints and
+descriptions). The transport (bottom left; Space) plays, pauses, stops and shows time and BBT.
+
 ## Layout of the tree
 
 ```
@@ -51,7 +80,9 @@ src/                 GUI: main loop (main.rs), app state and actions (app.rs), c
                      chrome and menus (ui.rs), decorations (csd.rs), KWin shadow (shadow.rs),
                      renderer (gfx.rs) and glyph atlas (text.rs), graph model (model.rs),
                      layout file (layout.rs), scripted test input (testscript.rs)
-crates/pbx-jack/     libjack FFI, graph snapshot, events; pbx-fake-clients (test tool)
+crates/pbx-jack/     libjack FFI, graph snapshot, events, transport; pbx-fake-clients (test tool)
+crates/pbx-session/  patchboxd (NSM server, clients, connection memory), patchbox-ctl, the
+                     session format and control protocol; pbx-fake-nsm (test tool)
 third_party/         sdl3-src (our CMake wrapper for sdl3-sys), SDL (gitignored, provisioned)
 patches/             our SDL changes
 tests/nested/        isolated GUI + JACK test harness
@@ -70,6 +101,10 @@ desktop are never touched. `PATCHBOX_TEST` scripts input (see `src/testscript.rs
 tests/nested/run.sh /tmp/x.png PATCHBOX_SNAPSHOT_DELAY_MS=600000 \
   "PATCHBOX_TEST=wait 300; click cell:Dragonfly+Room+Reverb>K:system:0:2 shift; wait 300; shot /tmp/a.png; quit"
 ```
+
+`tests/session/run.sh` drives patchboxd end to end (sessions, an NSM client, connection memory)
+against a private jackd in its own namespace. `PB_JACKDBUS=1` makes the nested harness run
+jackdbus (scratch HOME) instead of jackd.
 
 `PATCHBOX_STATS=1` prints main-loop wake-ups and frames at exit (idle: the 1 Hz DSP poll, no
 frames).

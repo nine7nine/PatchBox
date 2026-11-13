@@ -64,7 +64,11 @@ impl App {
     pub fn on_daemon(&mut self) {
         for m in self.sess.take() {
             match m {
-                FromDaemon::Push(Push::State(st)) => self.sess.state = st,
+                FromDaemon::Push(Push::State(st)) => {
+                    let dir = st.path.clone().map(std::path::PathBuf::from);
+                    self.sess.state = st;
+                    self.session_dir_changed(dir);
+                }
                 FromDaemon::Push(Push::Log { text, bad }) => self.say(text, bad),
                 FromDaemon::Reply(Reply::Sessions { sessions, .. }) => {
                     self.sess.sessions = sessions;
