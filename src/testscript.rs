@@ -156,6 +156,8 @@ impl Script {
                         "f9" => Keycode::F9,
                         "space" => Keycode::Space,
                         "enter" => Keycode::Return,
+                        "z" => Keycode::Z,
+                        "y" => Keycode::Y,
                         _ => Keycode::Escape,
                     };
                     push(

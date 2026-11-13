@@ -62,6 +62,8 @@ pub enum Kind {
     Snapshot,
     Snapshots,
     SaveTemplate,
+    /// Rename a node or a port; `Dialog::tag` holds the layout key.
+    RenameItem,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -96,6 +98,8 @@ pub enum Event {
 
 pub struct Dialog {
     pub kind: Kind,
+    /// The owner's data (what the dialog is about).
+    pub tag: String,
     pub title: String,
     pub rows: Vec<Row>,
     pub buttons: Vec<String>,
@@ -103,6 +107,8 @@ pub struct Dialog {
     pub scroll: f32,
     /// The row whose text is being edited, and the text.
     pub editing: Option<(usize, String)>,
+    /// The edit's text is the prefilled value, all "selected": the first key replaces it.
+    fresh: bool,
     hits: Vec<(Rect, Hit)>,
     pub panel: Rect,
     content: Rect,
@@ -114,12 +120,14 @@ impl Dialog {
     pub fn new(kind: Kind, title: impl Into<String>) -> Dialog {
         Dialog {
             kind,
+            tag: String::new(),
             title: title.into(),
             rows: Vec::new(),
             buttons: Vec::new(),
             note: String::new(),
             scroll: 0.0,
             editing: None,
+            fresh: false,
             hits: Vec::new(),
             panel: Rect::default(),
             content: Rect::default(),
@@ -161,6 +169,7 @@ impl Dialog {
             && let Control::Text(v) = &self.rows[i].control
         {
             self.editing = Some((i, v.clone()));
+            self.fresh = !v.is_empty();
         }
     }
 
@@ -195,13 +204,20 @@ impl Dialog {
 
     pub fn text_input(&mut self, s: &str) {
         if let Some((_, t)) = &mut self.editing {
+            if std::mem::take(&mut self.fresh) {
+                t.clear();
+            }
             t.push_str(s);
         }
     }
 
     pub fn backspace(&mut self) {
         if let Some((_, t)) = &mut self.editing {
-            t.pop();
+            if std::mem::take(&mut self.fresh) {
+                t.clear();
+            } else {
+                t.pop();
+            }
         }
     }
 

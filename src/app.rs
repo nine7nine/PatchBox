@@ -67,6 +67,12 @@ pub enum Action {
     ServerSettings,
     /// A choice picked from a dialog row's options: (row id, value).
     DialogSet(String, String),
+    Undo,
+    Redo,
+    /// Rename a node (its id) or a port ("port:<full name>"): opens a dialog.
+    Rename(String),
+    /// Set (or, empty, clear) a user name: (layout key, name).
+    SetName(String, String),
     /// Session manager actions (sessui.rs).
     Sess(crate::sessui::SessAction),
     Quit,
@@ -107,6 +113,7 @@ pub struct App {
     pub server: crate::server::Server,
     pub dialog: Option<crate::dialog::Dialog>,
     pub sess: crate::session::SessionLink,
+    pub history: crate::undo::History,
     /// The open session's folder, whose canvas is in use (None: the global one).
     pub layout_dir: Option<std::path::PathBuf>,
     /// The global canvas, put aside while a session's is in use.
@@ -145,6 +152,7 @@ impl App {
             server,
             dialog: None,
             sess,
+            history: Default::default(),
             layout_dir: None,
             global_canvas: None,
             apps: None,
@@ -432,19 +440,79 @@ impl App {
     }
 
     pub fn connect(&mut self, out: usize, inp: usize) {
-        let (Some(c), Some(o), Some(i)) = (&self.jack, self.graph.ports.get(out), self.graph.ports.get(inp)) else { return };
+        let (Some(o), Some(i)) = (self.graph.ports.get(out), self.graph.ports.get(inp)) else { return };
         let (o, i) = (o.name.clone(), i.name.clone());
-        if !c.connect(&o, &i) {
+        self.connect_names(&o, &i);
+    }
+
+    pub fn connect_names(&mut self, o: &str, i: &str) {
+        let Some(c) = &self.jack else { return };
+        if c.connect(o, i) {
+            self.history.connected(o, i);
+        } else {
             self.say(format!("Could not connect {o} → {i}"), true);
         }
     }
 
-    pub fn disconnect(&mut self, out: usize, inp: usize) {
-        let (Some(c), Some(o), Some(i)) = (&self.jack, self.graph.ports.get(out), self.graph.ports.get(inp)) else { return };
-        let (o, i) = (o.name.clone(), i.name.clone());
-        if !c.disconnect(&o, &i) {
+    pub fn disconnect_names(&mut self, o: &str, i: &str) {
+        let Some(c) = &self.jack else { return };
+        if c.disconnect(o, i) {
+            self.history.disconnected(o, i);
+        } else {
             self.say(format!("Could not disconnect {o} → {i}"), true);
         }
+    }
+
+    pub fn undo(&mut self) {
+        let Some(step) = self.history.pop_undo() else { return self.say("Nothing to undo", false) };
+        self.history.replaying = true;
+        for (o, i) in &step.made {
+            self.disconnect_names(o, i);
+        }
+        for (o, i) in &step.removed {
+            self.connect_names(o, i);
+        }
+        let after = step.canvas.as_ref().map(|before| {
+            let now = self.layout.clone();
+            self.layout.take_canvas(before.clone());
+            now
+        });
+        self.history.replaying = false;
+        self.history.push_redo(crate::undo::Step { made: step.made, removed: step.removed, canvas: after });
+        self.after_history();
+    }
+
+    pub fn redo(&mut self) {
+        let Some(step) = self.history.pop_redo() else { return self.say("Nothing to redo", false) };
+        self.history.replaying = true;
+        for (o, i) in &step.made {
+            self.connect_names(o, i);
+        }
+        for (o, i) in &step.removed {
+            self.disconnect_names(o, i);
+        }
+        let before = step.canvas.as_ref().map(|after| {
+            let now = self.layout.clone();
+            self.layout.take_canvas(after.clone());
+            now
+        });
+        self.history.replaying = false;
+        self.history.push_undo(crate::undo::Step { made: step.made, removed: step.removed, canvas: before });
+        self.after_history();
+    }
+
+    fn after_history(&mut self) {
+        let own = self.jack.as_ref().map(|c| c.name().to_string()).unwrap_or_default();
+        self.model = Model::build(&self.graph, &self.layout, &own);
+        self.refresh_matrices();
+        self.layout_changed();
+    }
+
+    pub fn disconnect(&mut self, out: usize, inp: usize) {
+        let (Some(c), Some(o), Some(i)) = (&self.jack, self.graph.ports.get(out), self.graph.ports.get(inp)) else { return };
+        let _ = c;
+        let (o, i) = (o.name.clone(), i.name.clone());
+        self.disconnect_names(&o, &i);
     }
 
     // ---- placement ----
@@ -740,7 +808,14 @@ impl App {
 
     pub fn apply(&mut self, a: Action) {
         self.redraw = true;
+        let record = !matches!(a, Action::Undo | Action::Redo);
+        if record {
+            self.history.begin(&self.layout);
+        }
         self.apply_inner(a);
+        if record {
+            self.history.end(&self.layout);
+        }
         // Geometry may have changed under the pointer.
         self.refresh_hover();
     }
@@ -939,6 +1014,39 @@ impl App {
                 self.dialog = Some(d);
             }
             Action::DialogSet(id, v) => self.dialog_event(crate::dialog::Event::Set(id, v)),
+            Action::Undo => self.undo(),
+            Action::Redo => self.redo(),
+            Action::Rename(key) => {
+                let current = match key.strip_prefix("port:") {
+                    Some(p) => self.graph.by_name.get(p).map(|&i| self.model.labels[i].clone()).unwrap_or_default(),
+                    None => self.model.node_by_id(&key).map(|i| self.model.nodes[i].title.clone()).unwrap_or_default(),
+                };
+                let what = if key.starts_with("port:") { "port" } else { "client" };
+                let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::RenameItem, format!("Rename the {what}"));
+                d.tag = key;
+                d.rows = vec![crate::dialog::Row {
+                    id: "name".into(),
+                    label: "Name".into(),
+                    help: "Empty: the name from JACK again".into(),
+                    control: crate::dialog::Control::Text(current),
+                    modified: false,
+                }];
+                d.buttons = vec!["Cancel".into(), "Rename".into()];
+                d.note = "Kept with the canvas (and with the session when one is open).".into();
+                d.edit("name");
+                self.dialog = Some(d);
+            }
+            Action::SetName(key, name) => {
+                if name.trim().is_empty() {
+                    self.layout.names.remove(&key);
+                } else {
+                    self.layout.names.insert(key, name.trim().to_string());
+                }
+                let own = self.jack.as_ref().map(|c| c.name().to_string()).unwrap_or_default();
+                self.model = Model::build(&self.graph, &self.layout, &own);
+                self.refresh_matrices();
+                self.layout_changed();
+            }
             Action::Sess(a) => self.session_action(a),
             Action::Quit => self.quit = true,
         }
@@ -1078,6 +1186,18 @@ impl App {
                     "Stop" => self.apply(Action::ServerStop),
                     "Restart" => self.apply(Action::ServerRestart),
                     _ => self.dialog = None,
+                }
+            }
+            (Kind::RenameItem, Event::Set(id, v)) => {
+                if let Some(d) = &mut self.dialog {
+                    d.set_local(&id, &v);
+                }
+            }
+            (Kind::RenameItem, Event::Button(b)) => {
+                let Some(d) = self.dialog.take() else { return };
+                if d.buttons.get(b).map(String::as_str) == Some("Rename") {
+                    let name = d.value("name").unwrap_or_default();
+                    self.apply(Action::SetName(d.tag.clone(), name));
                 }
             }
             (k, ev) => self.session_dialog_event(k, ev),

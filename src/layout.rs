@@ -44,6 +44,8 @@ pub struct Layout {
     pub hidden: BTreeSet<String>,
     /// Node ids showing their port list.
     pub expanded: BTreeSet<String>,
+    /// Names given by the user: node id -> name, "port:<full port name>" -> name.
+    pub names: BTreeMap<String, String>,
     pub view: View,
     /// Window size in points.
     pub window: Option<[u32; 2]>,

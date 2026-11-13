@@ -195,6 +195,26 @@ impl App {
     // ---- input ----
 
     pub fn canvas_down(&mut self, button: sdl3::mouse::MouseButton, x: f32, y: f32, ctrl: bool, shift: bool, clicks: u8) {
+        // A gesture is one undo step: it starts here and ends with the button (canvas_up).
+        if button == sdl3::mouse::MouseButton::Left {
+            self.history.begin(&self.layout);
+            self.canvas_press(button, x, y, ctrl, shift, clicks);
+            if matches!(self.canvas.drag, Drag::None) {
+                self.history.end(&self.layout);
+            }
+        } else {
+            self.canvas_press(button, x, y, ctrl, shift, clicks);
+        }
+    }
+
+    /// Escape during a drag: it ends where it is.
+    pub fn cancel_drag(&mut self) {
+        if !matches!(std::mem::take(&mut self.canvas.drag), Drag::None) {
+            self.history.end(&self.layout);
+        }
+    }
+
+    fn canvas_press(&mut self, button: sdl3::mouse::MouseButton, x: f32, y: f32, ctrl: bool, shift: bool, clicks: u8) {
         use sdl3::mouse::MouseButton as B;
         self.canvas.mouse = [x, y];
         let h = self.hit(x, y);
@@ -317,6 +337,14 @@ impl App {
 
     pub fn canvas_up(&mut self, x: f32, y: f32, ctrl: bool) {
         let drag = std::mem::take(&mut self.canvas.drag);
+        let gesture = !matches!(drag, Drag::None | Drag::Pan { .. }) || matches!(drag, Drag::Pan { .. });
+        self.canvas_release(drag, x, y, ctrl);
+        if gesture {
+            self.history.end(&self.layout);
+        }
+    }
+
+    fn canvas_release(&mut self, drag: Drag, x: f32, y: f32, ctrl: bool) {
         if let Drag::Port { name } = &drag
             && let Some(&a) = self.graph.by_name.get(name)
         {
@@ -394,7 +422,16 @@ impl App {
                 items.push(I::new("Disconnect all", Action::DisconnectMatrix(m.key.clone())).enabled(!m.conns.is_empty()));
                 items.push(I::new("Remove matrix", Action::Unpin(m.key.clone())).enabled(m.conns.is_empty()));
             }
-            Hover::Node(i) | Hover::In(i) | Hover::Out(i) | Hover::Port(i, _) => items = self.node_menu(i, false),
+            Hover::Port(i, p) => {
+                let name = self.graph.ports[p].name.clone();
+                items.push(I::header(self.model.labels[p].clone()));
+                items.push(I::new("Rename this port…", Action::Rename(format!("port:{name}"))));
+                if self.layout.names.contains_key(&format!("port:{name}")) {
+                    items.push(I::new("Its JACK name again", Action::SetName(format!("port:{name}"), String::new())));
+                }
+                items.extend(self.node_menu(i, false));
+            }
+            Hover::Node(i) | Hover::In(i) | Hover::Out(i) => items = self.node_menu(i, false),
             Hover::None => {
                 items.push(I::new("Arrange (signal chain)", Action::Arrange));
                 items.push(I::new("Fit to window", Action::FitAll));
@@ -419,6 +456,10 @@ impl App {
         }
         items.push(I::new(if split { "Join inputs and outputs" } else { "Split inputs and outputs" }, Action::Split(n.key.group.clone(), !split)));
         items.push(I::new(format!("Disconnect all {}", self.kind.label()), Action::DisconnectNode(id.clone())));
+        items.push(I::new("Rename…", Action::Rename(id.clone())));
+        if self.layout.names.contains_key(&id) {
+            items.push(I::new("Its JACK name again", Action::SetName(id.clone(), String::new())));
+        }
         let expanded = self.is_expanded(i);
         items.push(I::new(if expanded { "Fold ports" } else { "Show all ports" }, Action::Expand(id.clone(), !expanded)));
         items.push(if hidden { I::new("Show", Action::Show(id)) } else { I::new("Hide", Action::Hide(id)) });

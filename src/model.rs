@@ -224,6 +224,7 @@ impl Model {
                     let sub = sub.or_else(|| {
                         (hw && role != Role::Main).then(|| if role == Role::Source { "capture" } else { "playback" }.to_string())
                     });
+                    let title = layout.names.get(&key.id()).cloned().unwrap_or(title);
                     m.nodes.push(Node { key: key.clone(), title, sub, ins: Vec::new(), outs: Vec::new(), physical: hw });
                     m.index.insert(key, m.nodes.len() - 1);
                     m.nodes.len() - 1
@@ -235,7 +236,13 @@ impl Model {
                 m.nodes[ni].ins.push(i);
             }
             m.port_node.insert(i, ni);
-            m.labels[i] = p.pretty.clone().unwrap_or_else(|| graceful_port(&p.client, &p.short));
+            // The user's name first, then the application's pretty name, then a graceful one.
+            m.labels[i] = layout
+                .names
+                .get(&format!("port:{}", p.name))
+                .cloned()
+                .or_else(|| p.pretty.clone())
+                .unwrap_or_else(|| graceful_port(&p.client, &p.short));
         }
         for n in &m.nodes {
             find_pairs(g, &n.outs, n.physical, &mut m.partner);

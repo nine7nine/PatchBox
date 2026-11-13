@@ -19,6 +19,7 @@ mod text;
 mod testscript;
 mod theme;
 mod ui;
+mod undo;
 
 use app::{Action, App, WindowCmd};
 use sdl3::event::{Event, WindowEvent};
@@ -349,7 +350,7 @@ fn main() {
                         Keycode::Escape => app.dialog = None,
                         Keycode::Return | Keycode::KpEnter => {
                             // Enter commits a field; in a one-field dialog it also confirms.
-                            let one_field = matches!(d.kind, dialog::Kind::NewSession | dialog::Kind::Rename | dialog::Kind::Duplicate | dialog::Kind::Notes | dialog::Kind::Snapshot | dialog::Kind::SaveTemplate);
+                            let one_field = matches!(d.kind, dialog::Kind::NewSession | dialog::Kind::Rename | dialog::Kind::Duplicate | dialog::Kind::Notes | dialog::Kind::Snapshot | dialog::Kind::SaveTemplate | dialog::Kind::RenameItem);
                             let last = d.buttons.len().saturating_sub(1);
                             if let Some(ev) = d.commit() {
                                 app.dialog_event(ev);
@@ -366,10 +367,13 @@ fn main() {
                     let a = match k {
                         Keycode::Escape => {
                             app.ui.menu = None;
-                            app.canvas.drag = canvas::Drag::None;
+                            app.cancel_drag();
                             app.redraw = true;
                             None
                         }
+                        Keycode::Z if ctrl && shift => Some(Action::Redo),
+                        Keycode::Z if ctrl => Some(Action::Undo),
+                        Keycode::Y if ctrl => Some(Action::Redo),
                         Keycode::_1 => Some(Action::SetKind(pbx_jack::PortKind::Audio)),
                         Keycode::_2 => Some(Action::SetKind(pbx_jack::PortKind::Midi)),
                         Keycode::_3 => Some(Action::SetKind(pbx_jack::PortKind::Cv)),
