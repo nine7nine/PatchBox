@@ -552,20 +552,25 @@ impl App {
             lit_nodes.insert(n);
         }
 
-        // Wires (under everything).
-        let ww = (1.25 * self.scale).max(1.0);
+        // Wires (under everything): PatchMatrix's routing through the matrix (in at its top, out
+        // at its right), Luluda's look: coloured by port type, curves that scale with the
+        // distance, brighter when lit.
+        let ww = (2.0 * self.scale).max(1.0);
         let bend = WIRE_BEND * z;
         let cs = HANDLE_R * z;
+        let wire = kind_color(self.kind);
         for (mi, m) in self.mats.iter().enumerate() {
             let r = self.matrix_rect(&xf, m);
-            let col = if lit_mats.contains(&mi) { HILIGHT } else { HANDLE };
+            let col = if lit_mats.contains(&mi) { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA) };
             let (out, _) = self.handles(m.src);
             let (_, inp) = self.handles(m.dst);
             let (l0, l1) = (xf.s(out), xf.s(inp));
             let top = [r.cx(), r.y];
             let right = [r.right(), r.cy()];
-            g.bezier(l0, [l0[0] + bend, l0[1]], [top[0], top[1] - bend], top, ww, col);
-            g.bezier(right, [right[0] + bend, right[1]], [l1[0] - bend, l1[1]], l1, ww, col);
+            let b0 = ((top[0] - l0[0]).abs().max((top[1] - l0[1]).abs()) * 0.5).clamp(bend * 0.4, bend * 2.5);
+            let b1 = ((l1[0] - right[0]).abs() * 0.5).clamp(bend * 0.4, bend * 2.5);
+            g.bezier(l0, [l0[0] + b0, l0[1]], [top[0], top[1] - b0], top, ww, col);
+            g.bezier(right, [right[0] + b1, right[1]], [l1[0] - b1, l1[1]], l1, ww, col);
             g.pie(top, cs, std::f32::consts::PI, std::f32::consts::TAU, col);
             g.pie(right, cs, -std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2, col);
         }
@@ -645,21 +650,25 @@ impl App {
         let body = self.body_rect(xf, i);
         let editable = nin + nout > 0 || body.is_some();
         let f = if editable { 1.0 } else { 0.33 };
-        let stroke = if lit { HILIGHT } else { BORDER };
-        let lw = self.scale.max(1.0);
-        match body {
-            Some(b) => {
-                let full = Rect::new(r.x, r.y, r.w, b.bottom() - r.y);
-                g.rrect(full, NODE_RADIUS * z, BODY_FILL);
-                g.rect(Rect::new(r.x + lw, r.y + lw, r.w - 2.0 * lw, r.h - lw), NODE_FILL);
-                g.rect(Rect::new(r.x, r.bottom() - lw, r.w, lw), alpha(stroke, 0.5));
-                g.rrect_stroke(full, NODE_RADIUS * z, lw, stroke);
-            }
-            None => {
-                g.rrect(r, NODE_RADIUS * z, alpha(NODE_FILL, f));
-                g.rrect_stroke(r, NODE_RADIUS * z, lw, alpha(stroke, f));
-            }
+        // Luluda's block: light fill, border in the node type's colour, dark inset line; lit
+        // (hovered, linked, dragged) borders go PatchMatrix orange.
+        let stroke = if lit { HILIGHT } else { self.node_color(i) };
+        let lw = (1.5 * self.scale).max(1.0);
+        let rad = 2.4 * z;
+        let fill = if lit { BLOCK_FILL_HOT } else { BLOCK_FILL };
+        let full = match body {
+            Some(b) => Rect::new(r.x, r.y, r.w, b.bottom() - r.y),
+            None => r,
+        };
+        if body.is_some() {
+            g.rrect(full, rad, BLOCK_BODY);
+            g.rect(Rect::new(r.x + lw, r.y + lw, r.w - 2.0 * lw, r.h - lw), fill);
+            g.rect(Rect::new(r.x, r.bottom() - 1.0, r.w, 1.0), BLOCK_INSET);
+        } else {
+            g.rrect(full, rad, alpha(fill, f));
         }
+        g.rrect_stroke(full, rad, lw, alpha(stroke, f));
+        g.rrect_stroke(full.inset(lw), (rad - lw).max(0.5), 1.0, alpha(BLOCK_INSET, f));
         let px = FONT * z;
         let lh = g.line_height(Face::Regular, px);
         let dx = 4.0 * z;
@@ -667,28 +676,34 @@ impl App {
         let ww = r.w - 2.0 * (dx + dw);
         let ty = r.cy() - lh / 2.0;
         let tw = g.measure(Face::Regular, px, &n.title).min(ww);
-        g.text_fit(Face::Regular, px, r.cx() - tw / 2.0, ty, ww, alpha(TEXT, f), &n.title);
+        g.text_fit(Face::Regular, px, r.cx() - tw / 2.0, ty, ww, alpha(BLOCK_TEXT, f), &n.title);
+        // PatchMatrix's port counts for the current type, either side.
         if nout > 0 {
             let s = format!("{nout:02}");
             let w = g.measure(Face::Regular, px, &s);
-            g.text(Face::Regular, px, r.right() - w - dx, ty, alpha(TEXT, f), &s);
+            g.text(Face::Regular, px, r.right() - w - dx - lw, ty, alpha(BLOCK_TEXT, f * 0.7), &s);
         }
         if nin > 0 {
             let s = format!("{nin:02}");
-            g.text(Face::Regular, px, r.x + dx, ty, alpha(TEXT, f), &s);
+            g.text(Face::Regular, px, r.x + dx + lw, ty, alpha(BLOCK_TEXT, f * 0.7), &s);
         }
         if let Some(sub) = &n.sub {
             let spx = FONT_SMALL * z;
             let sh = g.line_height(Face::Regular, spx);
             g.text(Face::Regular, spx, r.x + 2.0 * z, r.y - sh - 1.0 * z, alpha(TEXT_DIM, f), sub);
         }
-        // Handles.
+        // Handles: Luluda's port squares, in the current type's colour.
         let cw = HANDLE_R * z;
-        let col = if lit { HILIGHT } else { HANDLE };
+        let col = if lit { HILIGHT } else { kind_color(self.kind) };
         let (out, inp) = self.handles(i);
+        let port_sq = |g: &mut Gfx, p: [f32; 2]| {
+            let q = Rect::centered(p[0], p[1], 2.4 * cw, 2.4 * cw);
+            g.rrect(q, 0.5 * cw, col);
+            g.rrect_stroke(q, 0.5 * cw, 1.0, [0.0, 0.0, 0.0, 0.75]);
+        };
         if nout > 0 {
             let p = xf.s(out);
-            g.circle(p, cw, col);
+            port_sq(g, p);
             let hot = self.canvas.hover == crate::canvas::Hover::Out(i) && matches!(self.canvas.drag, Drag::None)
                 || matches!(&self.canvas.drag, Drag::Link { src } if *src == n.key.id());
             if hot {
@@ -697,7 +712,7 @@ impl App {
         }
         if nin > 0 {
             let p = xf.s(inp);
-            g.circle(p, cw, col);
+            port_sq(g, p);
             let linking = matches!(self.canvas.drag, Drag::Link { .. });
             let hot = linking && matches!(self.canvas.hover, Hover::Node(h) | Hover::In(h) | Hover::Out(h) if h == i);
             if hot {
@@ -707,6 +722,24 @@ impl App {
         if body.is_some() {
             self.draw_body(g, xf, i);
         }
+    }
+
+    /// The colour of a node's type: hardware audio green, MIDI devices orange, the PipeWire
+    /// bridge cyan, applications purple (Luluda's block borders). In PipeWire's graph, devices
+    /// (sinks, sources) count as hardware.
+    fn node_color(&self, i: usize) -> crate::gfx::Color {
+        let n = &self.model.nodes[i];
+        let midi_only = n.ins.iter().chain(&n.outs).all(|&p| self.graph.ports[p].kind == pbx_jack::PortKind::Midi);
+        if is_pipewire(&n.key.group) && self.source == crate::app::Source::Jack {
+            return NODE_BRIDGE;
+        }
+        if let Some(class) = self.graph.client_class.get(&n.key.group) {
+            return if class.contains("stream") { NODE_APP } else if class.contains("midi") { NODE_MIDI } else { NODE_HW };
+        }
+        if n.physical {
+            return if midi_only { NODE_MIDI } else { NODE_HW };
+        }
+        NODE_APP
     }
 
     /// An expanded node's ports: inputs (strip on the left), then outputs (strip on the right),
@@ -762,7 +795,7 @@ impl App {
             }
             let label = &self.model.labels[p];
             let max_w = row.w - 22.0 * z;
-            let col = alpha(if hovered { TEXT_BRIGHT } else { TEXT }, fa);
+            let col = alpha(if hovered { BLOCK_TEXT } else { mix(BLOCK_TEXT, TEXT_BRIGHT, 0.15) }, fa);
             if input {
                 g.text_fit(Face::Regular, px, dot[0] + 6.0 * z, row.cy() - lh / 2.0, max_w, col, label);
             } else {

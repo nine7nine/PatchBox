@@ -33,17 +33,33 @@ pub const OK: Color = rgb(151, 255, 71);
 pub const WARN: Color = rgb(255, 165, 48);
 pub const BAD: Color = rgb(255, 80, 80);
 
-/// Port-type accents (tabs, sidebar dots).
+/// Port-type colours: wires, port strips and dots, tabs. Luluda's palette (the owner's Element
+/// fork: src/ui/grapheditorcomponent.cpp), so the graph reads by type at a glance.
 pub fn kind_color(k: PortKind) -> Color {
     match k {
-        PortKind::Audio => rgb(0, 162, 255),
-        PortKind::Midi => rgb(255, 165, 48),
-        PortKind::Cv => rgb(151, 255, 71),
-        PortKind::Osc => rgb(191, 71, 255),
-        PortKind::Video => rgb(255, 90, 140),
-        PortKind::Other => rgb(150, 150, 150),
+        PortKind::Audio => rgb(0x00, 0xe6, 0x76),
+        PortKind::Midi => rgb(0xff, 0xa7, 0x26),
+        PortKind::Cv => rgb(0xba, 0x68, 0xc8),
+        PortKind::Osc => rgb(0x4d, 0xd0, 0xe1),
+        PortKind::Video => rgb(0xff, 0x5a, 0x8c),
+        PortKind::Other => rgb(0xbd, 0xbd, 0xbd),
     }
 }
+
+// Luluda's blocks: a light fill, black text, a border in the node type's colour with a dark
+// inset line inside it (src/ui/block.cpp).
+pub const BLOCK_FILL: Color = rgb(0x86, 0x86, 0x86);
+pub const BLOCK_FILL_HOT: Color = rgb(0x9c, 0x9c, 0x9c);
+pub const BLOCK_BODY: Color = rgb(0x6c, 0x6c, 0x6e);
+pub const BLOCK_TEXT: Color = rgb(0x0a, 0x0a, 0x0a);
+pub const BLOCK_INSET: Color = [0.0, 0.0, 0.0, 0.6];
+/// Node types: hardware audio, MIDI devices, the PipeWire bridge, applications.
+pub const NODE_HW: Color = rgb(0x00, 0xe6, 0x76);
+pub const NODE_MIDI: Color = rgb(0xff, 0xa7, 0x26);
+pub const NODE_BRIDGE: Color = rgb(0x4d, 0xd0, 0xe1);
+pub const NODE_APP: Color = rgb(0x95, 0x75, 0xcd);
+/// Wires: alpha at rest; hovered and lit wires go brighter and opaque.
+pub const WIRE_ALPHA: f32 = 0.78;
 
 // Sizes, in points (× the interface scale for pixels; × zoom too on the canvas).
 pub const FONT: f32 = 13.0;
