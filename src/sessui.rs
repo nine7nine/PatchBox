@@ -392,9 +392,9 @@ impl App {
         g.text(Face::Bold, px, r.x + pad, y, TEXT_BRIGHT, "Session");
         let x0 = r.x + pad + g.measure(Face::Bold, px, "Session") + 10.0 * s;
         let (name, col) = match (&st.session, self.sess.connected) {
-            (_, false) => ("starting the daemon…".to_string(), TEXT_DIM),
+            (_, false) => ("starting the daemon…".to_string(), TEXT_SOFT),
             (Some(n), _) => (n.clone(), HILIGHT),
-            (None, _) => ("none open".to_string(), TEXT_DIM),
+            (None, _) => ("none open".to_string(), TEXT_SOFT),
         };
         g.text_fit(Face::Bold, px, x0, y, r.right() - x0 - pad, col, &name);
         y += lh + 4.0 * s;
@@ -483,7 +483,7 @@ impl App {
         y += bh + 10.0 * s;
         if st.connections_saved > 0 {
             let t = format!("connections: {} saved, {} present", st.connections_saved, st.connections_present);
-            g.text_fit(Face::Regular, FONT_SMALL * s, r.x + pad, y, r.w - 2.0 * pad, TEXT_DIM, &t);
+            g.text_fit(Face::Regular, FONT_SMALL * s, r.x + pad, y, r.w - 2.0 * pad, TEXT_SOFT, &t);
             y += lh;
         }
         y

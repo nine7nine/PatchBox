@@ -119,7 +119,7 @@ impl UiState {
     }
 }
 
-/// A value over a small caption, centred in `r`.
+/// A value over a small caption (green, the LCD's), centred in `r`.
 fn readout(g: &mut Gfx, r: Rect, s: f32, value: &str, caption: &str, col: crate::gfx::Color) {
     let (px, spx) = (FONT * s, FONT_SMALL * s);
     let (lh, slh) = (g.line_height(Face::Regular, px), g.line_height(Face::Regular, spx));
@@ -127,7 +127,7 @@ fn readout(g: &mut Gfx, r: Rect, s: f32, value: &str, caption: &str, col: crate:
     let w = g.measure(Face::Regular, px, value);
     g.text(Face::Regular, px, (r.cx() - w / 2.0).round(), y0, col, value);
     let cw = g.measure(Face::Regular, spx, caption);
-    g.text(Face::Regular, spx, (r.cx() - cw / 2.0).round(), y0 + lh, TEXT_DIM, caption);
+    g.text(Face::Regular, spx, (r.cx() - cw / 2.0).round(), y0 + lh, LCD_CAPTION, caption);
 }
 
 /// The toolbar's icons, drawn (the fonts have no such glyphs).
@@ -582,8 +582,7 @@ impl App {
             g.rrect_stroke(lcd, 3.0 * s, s.max(1.0), PANEL_LINE);
             let secs = t.frame as f64 / t.rate.max(1) as f64;
             let time = format!("{}:{:02}:{:04.1}", (secs / 3600.0) as u32, ((secs / 60.0) as u32) % 60, secs % 60.0);
-            let lcd_col = crate::gfx::mix(kind_color(pbx_jack::PortKind::Osc), TEXT, 0.25);
-            let tcol = if playing { lcd_col } else { alpha(lcd_col, 0.75) };
+            let tcol = if playing { LCD_TEXT } else { alpha(LCD_TEXT, 0.8) };
             let tpx = px * 1.2;
             let lh = g.line_height(Face::Regular, tpx);
             let slh = g.line_height(Face::Regular, spx);
@@ -595,7 +594,7 @@ impl App {
             let w = g.measure(Face::Regular, tpx, &time);
             g.text(Face::Regular, tpx, lcd.cx() - w / 2.0, y0, tcol, &time);
             let sw = g.measure(Face::Regular, spx, &sub);
-            g.text(Face::Regular, spx, lcd.cx() - sw / 2.0, y0 + lh, TEXT_DIM, &sub);
+            g.text(Face::Regular, spx, lcd.cx() - sw / 2.0, y0 + lh, LCD_CAPTION, &sub);
             x += trans_w + gap;
         }
         // Graph: the port types, then the view.
@@ -634,31 +633,38 @@ impl App {
             let mut rx = r.right() - 4.0 * s;
             let dr = Rect::new(rx - dsp_w, by, dsp_w, bh);
             g.rrect(dr, 3.0 * s, LCD_BG);
+            g.rrect_stroke(dr, 3.0 * s, s.max(1.0), PANEL_LINE);
+            // The load as a level along the bottom: the face stays the LCD's, like the time's.
             if connected {
                 let frac = (st.dsp / 100.0).clamp(0.0, 1.0);
                 let col = if st.dsp < 50.0 { OK } else if st.dsp < 80.0 { WARN } else { BAD };
-                g.rrect(Rect::new(dr.x, dr.y, (dr.w * frac).max(2.0 * s), dr.h), 3.0 * s, alpha(col, 0.35));
+                let track = Rect::new(dr.x + 6.0 * s, dr.bottom() - 5.0 * s, dr.w - 12.0 * s, (2.0 * s).max(1.0));
+                g.rect(track, alpha(PANEL_LINE, 0.8));
+                if frac > 0.0 {
+                    g.rect(Rect::new(track.x, track.y, (track.w * frac).max(s), track.h), alpha(col, 0.85));
+                }
             }
-            g.rrect_stroke(dr, 3.0 * s, s.max(1.0), PANEL_LINE);
-            readout(g, dr, s, &dsp, "DSP LOAD", TEXT_BRIGHT);
+            readout(g, dr, s, &dsp, "DSP LOAD", if connected { LCD_TEXT } else { TEXT_DIM });
             rx -= dsp_w + bgap;
             let xr = Rect::new(rx - xr_w, by, xr_w, bh);
             let xt = if st.xruns > 0 { TINT_RED } else { TINT_GREY };
             let hov = self.hovered(&xr);
             lbutton(g, xr, s, xt, hov, st.xruns > 0, true);
-            readout(g, xr, s, &xs, "XRUNS", lbutton_text(xt, hov, st.xruns > 0, true));
+            readout(g, xr, s, &xs, "XRUNS", if st.xruns > 0 { crate::gfx::mix(BAD, TEXT_BRIGHT, 0.2) } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             self.add_hit(xr, Action::ResetXruns);
             rx -= xr_w + bgap;
             let br = Rect::new(rx - buf_w, by, buf_w, bh);
             let hov = connected && self.hovered(&br);
             lbutton(g, br, s, TINT_AMBER, hov, false, connected);
-            readout(g, br, s, &bs, "BUFFER", lbutton_text(TINT_AMBER, hov, false, connected));
+            readout(g, br, s, &bs, "BUFFER", if !connected { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             if connected {
                 self.add_hit(br, Action::BufferMenu(br));
             }
             rx -= buf_w + bgap;
             let rr = Rect::new(rx - rate_w, by, rate_w, bh);
-            let col = if connected { if st.freewheel { WARN } else { TEXT_BRIGHT } } else { BAD };
+            g.rrect(rr, 3.0 * s, LCD_BG);
+            g.rrect_stroke(rr, 3.0 * s, s.max(1.0), PANEL_LINE);
+            let col = if connected { if st.freewheel { WARN } else { LCD_TEXT } } else { BAD };
             readout(g, rr, s, &rate_v, &rate_c, col);
         }
     }
@@ -782,7 +788,7 @@ impl App {
             let cw = g.measure(Face::Regular, FONT_SMALL * s, &counts);
             g.text_fit(Face::Regular, px, tx, rr.cy() - lh / 2.0, rr.right() - tx - cw - 10.0 * s, col, &label);
             let slh = g.line_height(Face::Regular, FONT_SMALL * s);
-            g.text(Face::Regular, FONT_SMALL * s, rr.right() - cw - 6.0 * s, rr.cy() - slh / 2.0, TEXT_DIM, &counts);
+            g.text(Face::Regular, FONT_SMALL * s, rr.right() - cw - 6.0 * s, rr.cy() - slh / 2.0, if hidden { TEXT_DIM } else { TEXT_SOFT }, &counts);
             let vis = rr.intersect(&list);
             self.add_hit(vis, Action::CenterNode(id));
         }
@@ -797,7 +803,7 @@ impl App {
         let start = self.log.len().saturating_sub(fit);
         let mut ly = lr.y + pad * 0.6;
         for l in &self.log[start..] {
-            let col = if l.bad { WARN } else { TEXT_DIM };
+            let col = if l.bad { WARN } else { TEXT_SOFT };
             g.text_fit(Face::Regular, spx, lr.x + pad, ly, lr.w - 2.0 * pad, col, &l.text);
             ly += slh;
         }

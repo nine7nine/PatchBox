@@ -1099,10 +1099,18 @@ impl App {
             let s = format!("{nin:02}");
             g.text(Face::Regular, px, r.x + dx + lw, ty, alpha(BLOCK_TEXT, f * 0.85), &s);
         }
+        // "capture" / "playback": on the side no wire comes from. Vertical: above a block whose
+        // ports are below (outputs only), below one whose ports are on top (inputs only), beside
+        // one with both; horizontal and matrix views: above.
         if let Some(sub) = &n.sub {
             let spx = FONT_SMALL * z;
             let sh = g.line_height(Face::Regular, spx);
-            g.text(Face::Regular, spx, r.x + 2.0 * z, r.y - sh - 1.0 * z, alpha(TEXT_DIM, f), sub);
+            let (x, y) = match (self.vertical(), nin > 0, nout > 0) {
+                (true, true, false) => (r.x + 2.0 * z, r.bottom() + 2.0 * z),
+                (true, true, true) => (r.right() + 6.0 * z, r.cy() - sh / 2.0),
+                _ => (r.x + 2.0 * z, r.y - sh - 1.0 * z),
+            };
+            g.text(Face::Regular, spx, x, y, alpha(TEXT, f), sub);
         }
         // Ports view: the ports are on the body (or, vertical, on the top and bottom edges); no
         // node handles.

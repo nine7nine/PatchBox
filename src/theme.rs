@@ -19,6 +19,11 @@ pub const MATRIX_FILL: Color = rgb(50, 50, 50);
 pub const TEXT: Color = rgb(175, 175, 175);
 pub const TEXT_BRIGHT: Color = rgb(225, 225, 225);
 pub const TEXT_DIM: Color = rgb(110, 110, 110);
+/// Secondary text that still has to read well on the dark panels (counts, the log, notes).
+pub const TEXT_SOFT: Color = rgb(152, 155, 160);
+/// The LCD readouts' values (time, rate, buffer, xruns, DSP) and their captions.
+pub const LCD_TEXT: Color = rgb(112, 204, 218);
+pub const LCD_CAPTION: Color = rgb(96, 164, 116);
 
 // Window chrome.
 /// The window's top (title bar and toolbar, one dark grey), its control groups, the sidebar and
