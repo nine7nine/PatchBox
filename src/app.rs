@@ -157,6 +157,7 @@ pub struct App {
     retry_logged: bool,
     dsp_at: Instant,
     transport_at: Instant,
+    server_stats_at: Instant,
     pub quit: bool,
     pub window_cmd: Option<WindowCmd>,
     /// Fit the view to the graph at the next frame (the canvas size is known then).
@@ -213,6 +214,7 @@ impl App {
             retry_logged: false,
             dsp_at: Instant::now(),
             transport_at: Instant::now(),
+            server_stats_at: Instant::now(),
             quit: false,
             window_cmd: None,
             fit_pending: false,
@@ -284,6 +286,7 @@ impl App {
                     self.server.status = st;
                 }
                 Reply::Config(c) => self.server.config = Some(*c),
+                Reply::Stats(st) => self.server.stats = Some(st),
                 Reply::Done(m) => self.say(m, false),
                 Reply::Error(e) => self.say(e, true),
             }
@@ -389,6 +392,14 @@ impl App {
                 self.transport_at = now + Duration::from_millis(every);
             }
             at(self.transport_at);
+        }
+        // The server's figures, while its page is open.
+        if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Server) && self.server.status.started {
+            if now >= self.server_stats_at {
+                self.server.send(crate::server::Cmd::Stats);
+                self.server_stats_at = now + Duration::from_secs(2);
+            }
+            at(self.server_stats_at);
         }
         if let Some(t) = self.layout_dirty {
             if now >= t + LAYOUT_SAVE {
@@ -1524,6 +1535,16 @@ impl App {
             "stopped".to_string()
         };
         rows.push(Row::info("Status", state));
+        let link = |id: &str, label: &str, text: &str| Row { id: id.into(), label: label.into(), help: String::new(), control: Control::Link(text.into()), modified: false };
+        if st.started
+            && let Some(sx) = &self.server.stats
+        {
+            rows.push(Row::info("Load · latency", format!("{:.1} % · {:.2} ms{}", sx.load, sx.latency_ms, if sx.realtime { " · realtime" } else { "" })));
+            rows.push(link("act:reset-xruns", &format!("Server xruns: {}", sx.xruns), "reset them"));
+        }
+        if st.started {
+            rows.push(link("act:switch-master", "Switch master", "make the selected driver the running server's master, no restart"));
+        }
         let Some(cfg) = &self.server.config else {
             if st.available {
                 rows.push(Row::info("Settings", "loading…"));
@@ -1582,10 +1603,49 @@ impl App {
             let label = if p.short.is_empty() { p.name.clone() } else { p.short.clone() };
             Row { id, label, help: if p.long.is_empty() { p.short.clone() } else { p.long.clone() }, control, modified: p.is_set }
         };
-        rows.push(Row::header(format!("Driver: {}", cfg.driver)));
+        rows.push(Row::header(format!("Master driver: {}", cfg.driver)));
         rows.extend(cfg.driver_params.iter().map(to_row));
+        // Slave drivers: any other driver can run beside the master (alsarawmidi for MIDI,
+        // a second card…): added live while the server runs.
+        rows.push(Row::header("Slave drivers"));
+        for d in cfg.drivers.iter().filter(|d| **d != cfg.driver) {
+            rows.push(Row {
+                id: format!("slave:{d}"),
+                label: d.clone(),
+                help: "Run this driver as a slave of the master driver".into(),
+                control: Control::Toggle(cfg.slaves.contains(d)),
+                modified: false,
+            });
+        }
+        for (name, ps) in &cfg.slave_params {
+            rows.push(Row::header(format!("Slave driver: {name}")));
+            rows.extend(ps.iter().map(to_row));
+        }
+        // Internal clients jackdbus can load into the server (netmanager, audioadapter…).
+        rows.push(Row::header("Internal clients"));
+        if cfg.internals.is_empty() {
+            rows.push(Row::info("None", "jackdbus offers no internal clients"));
+        }
+        for i in &cfg.internals {
+            rows.push(Row {
+                id: format!("internal:{i}"),
+                label: i.clone(),
+                help: "Load this internal client into the running server (jackdbus can't tell which are loaded; this shows what was loaded from here)".into(),
+                control: Control::Toggle(self.server.internals_loaded.contains(i)),
+                modified: false,
+            });
+        }
+        for (name, ps) in &cfg.internal_params {
+            if ps.is_empty() {
+                continue;
+            }
+            rows.push(Row::header(format!("Internal client: {name}")));
+            rows.extend(ps.iter().map(to_row));
+        }
         rows.push(Row::header("Engine"));
-        rows.extend(cfg.engine.iter().filter(|p| p.name != "driver").map(to_row));
+        rows.extend(cfg.engine.iter().filter(|p| p.name != "driver" && p.name != "slave-drivers").map(to_row));
+        rows.push(Row::header("Service"));
+        rows.push(link("act:exit", "Quit jackdbus", "stops the server; the session bus starts jackdbus again when asked"));
         rows
     }
 
@@ -1606,6 +1666,28 @@ impl App {
                     self.ui.open_menu([under.x, under.bottom() + 2.0], items);
                 }
             }
+            (Kind::Server, Event::Set(id, text)) if id.starts_with("slave:") || id.starts_with("internal:") || id.starts_with("act:") => {
+                use crate::server::Cmd;
+                let on = text == "on";
+                if let Some(n) = id.strip_prefix("slave:") {
+                    self.server.run(Cmd::Slave(n.to_string(), on));
+                } else if let Some(n) = id.strip_prefix("internal:") {
+                    if on {
+                        self.server.internals_loaded.insert(n.to_string());
+                    } else {
+                        self.server.internals_loaded.remove(n);
+                    }
+                    self.server.run(Cmd::Internal(n.to_string(), on));
+                } else {
+                    match id.as_str() {
+                        "act:reset-xruns" => self.server.run(Cmd::ResetXruns),
+                        "act:switch-master" => self.server.run(Cmd::SwitchMaster),
+                        "act:exit" => self.server.run(Cmd::Exit),
+                        _ => {}
+                    }
+                }
+                self.server.send(Cmd::Stats);
+            }
             (Kind::Server, Event::Set(id, text)) => {
                 let path: Vec<String> = id.split('/').map(str::to_string).collect();
                 let value = if id == "engine/driver" {
@@ -1614,7 +1696,7 @@ impl App {
                     self.server
                         .config
                         .as_ref()
-                        .and_then(|c| c.engine.iter().chain(&c.driver_params).find(|p| p.path == path))
+                        .and_then(|c| c.all_params().find(|p| p.path == path))
                         .and_then(|p| p.value.parse_like(&text))
                 };
                 match value {

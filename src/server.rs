@@ -99,6 +99,28 @@ pub struct Config {
     pub drivers: Vec<String>,
     pub engine: Vec<Param>,
     pub driver_params: Vec<Param>,
+    /// Slave drivers in use (the engine's slave-drivers), and each one's parameters.
+    pub slaves: Vec<String>,
+    pub slave_params: std::collections::BTreeMap<String, Vec<Param>>,
+    /// Internal clients jackdbus offers, and each one's parameters.
+    pub internals: Vec<String>,
+    pub internal_params: std::collections::BTreeMap<String, Vec<Param>>,
+}
+
+impl Config {
+    /// Every parameter, wherever it is in the tree.
+    pub fn all_params(&self) -> impl Iterator<Item = &Param> {
+        self.engine.iter().chain(&self.driver_params).chain(self.slave_params.values().flatten()).chain(self.internal_params.values().flatten())
+    }
+}
+
+/// The running server's figures, as jackdbus reports them.
+#[derive(Clone, Debug, Default)]
+pub struct Stats {
+    pub load: f64,
+    pub latency_ms: f64,
+    pub xruns: u32,
+    pub realtime: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -116,10 +138,22 @@ pub enum Cmd {
     LoadConfig,
     Set(Vec<String>, Value),
     Reset(Vec<String>),
+    /// Make the selected driver the running server's master (no restart).
+    SwitchMaster,
+    /// Add or remove a slave driver (live when the server runs, else the engine's list).
+    Slave(String, bool),
+    /// Load or unload an internal client.
+    Internal(String, bool),
+    ResetXruns,
+    /// The server's figures (load, latency, xruns).
+    Stats,
+    /// Quit the jackdbus service (it stops the server).
+    Exit,
 }
 
 pub enum Reply {
     Status(Status),
+    Stats(Stats),
     Config(Box<Config>),
     /// A finished action, for the log.
     Done(String),
@@ -133,6 +167,9 @@ pub struct Server {
     pub config: Option<Config>,
     /// A command is running (Start can take seconds).
     pub busy: bool,
+    pub stats: Option<Stats>,
+    /// Internal clients loaded from here (jackdbus can't be asked which are).
+    pub internals_loaded: std::collections::BTreeSet<String>,
 }
 
 impl Server {
@@ -144,7 +181,9 @@ impl Server {
             .name("jackdbus".into())
             .spawn(move || worker(rx, r, waker))
             .expect("jackdbus thread");
-        let s = Server { tx, replies, status: Status::default(), config: None, busy: false };
+        let t2 = tx.clone();
+        let _ = std::thread::Builder::new().name("jackdbus-signals".into()).spawn(move || watch_signals(t2));
+        let s = Server { tx, replies, status: Status::default(), config: None, busy: false, stats: None, internals_loaded: Default::default() };
         s.send(Cmd::Refresh);
         s
     }
@@ -186,6 +225,23 @@ fn worker(rx: Receiver<Cmd>, out: Arc<Mutex<Vec<Reply>>>, waker: pbx_jack::Waker
         };
         let res = match cmd {
             Cmd::Refresh => Ok(None),
+            Cmd::Stats => {
+                if let Some(st) = stats(c) {
+                    push(Reply::Stats(st));
+                }
+                Ok(None)
+            }
+            Cmd::SwitchMaster => control(c, "SwitchMaster").map(|_| Some("Switched the master driver".to_string())),
+            Cmd::ResetXruns => control(c, "ResetXruns").map(|_| Some("Server xruns reset".to_string())),
+            Cmd::Exit => control(c, "Exit").map(|_| Some("jackdbus quit".to_string())),
+            Cmd::Slave(name, on) => slave(c, &name, on).and_then(|msg| {
+                let cfg = load_config(c)?;
+                push(Reply::Config(Box::new(cfg)));
+                Ok(Some(msg))
+            }),
+            Cmd::Internal(name, on) => proxy(c, CONTROL)
+                .and_then(|p| p.call_method(if on { "LoadInternal" } else { "UnloadInternal" }, &(name.clone(),)).map_err(err))
+                .map(|_| Some(format!("{} the internal client {name}", if on { "Loaded" } else { "Unloaded" }))),
             Cmd::Start => control(c, "StartServer").map(|_| Some("JACK server started".to_string())),
             Cmd::Stop => control(c, "StopServer").map(|_| Some("JACK server stopped".to_string())),
             Cmd::Restart => control(c, "StopServer")
@@ -277,5 +333,84 @@ fn load_config(c: &Connection) -> Result<Config, String> {
     let engine = params(&p, "engine")?;
     let driver = engine.iter().find(|e| e.name == "driver").map(|e| e.value.show()).unwrap_or_default();
     let driver_params = params(&p, "driver")?;
-    Ok(Config { driver, drivers, engine, driver_params })
+    let slaves: Vec<String> = engine
+        .iter()
+        .find(|e| e.name == "slave-drivers")
+        .map(|e| e.value.show().split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    let mut slave_params = std::collections::BTreeMap::new();
+    for s in &slaves {
+        if let Ok(ps) = params_at(&p, &["drivers", s]) {
+            slave_params.insert(s.clone(), ps);
+        }
+    }
+    let (_, internals): (bool, Vec<String>) = p.call("ReadContainer", &(vec!["internals".to_string()],)).map_err(err).unwrap_or((true, Vec::new()));
+    let mut internal_params = std::collections::BTreeMap::new();
+    for i in &internals {
+        if let Ok(ps) = params_at(&p, &["internals", i]) {
+            internal_params.insert(i.clone(), ps);
+        }
+    }
+    Ok(Config { driver, drivers, engine, driver_params, slaves, slave_params, internals, internal_params })
+}
+
+/// Parameters under any container (["drivers", "alsarawmidi"], ["internals", "netmanager"]).
+fn params_at(p: &Proxy<'_>, parent: &[&str]) -> Result<Vec<Param>, String> {
+    let base: Vec<String> = parent.iter().map(|s| s.to_string()).collect();
+    let infos: Vec<(u8, String, String, String)> = p.call("GetParametersInfo", &(base.clone(),)).map_err(err)?;
+    infos
+        .into_iter()
+        .map(|i| {
+            let mut path = base.clone();
+            path.push(i.1.clone());
+            param(p, path, i)
+        })
+        .collect()
+}
+
+/// Add or remove a slave driver. jackdbus takes both AddSlaveDriver and the engine's
+/// slave-drivers list only while the server is stopped, so a running server is stopped, changed
+/// and started again.
+fn slave(c: &Connection, name: &str, on: bool) -> Result<String, String> {
+    let started = status(c).started;
+    if started {
+        control(c, "StopServer")?;
+    }
+    let r = proxy(c, CONTROL)?.call_method(if on { "AddSlaveDriver" } else { "RemoveSlaveDriver" }, &(name.to_string(),)).map_err(err);
+    if started {
+        control(c, "StartServer")?;
+    }
+    r?;
+    Ok(format!(
+        "{} the slave driver {name}{}",
+        if on { "Added" } else { "Removed" },
+        if started { " (the server restarted for it)" } else { "" }
+    ))
+}
+
+fn stats(c: &Connection) -> Option<Stats> {
+    let p = proxy(c, CONTROL).ok()?;
+    let started: bool = p.call("IsStarted", &()).ok()?;
+    if !started {
+        return None;
+    }
+    Some(Stats {
+        load: p.call("GetLoad", &()).unwrap_or(0.0),
+        latency_ms: p.call("GetLatency", &()).unwrap_or(0.0),
+        xruns: p.call("GetXruns", &()).unwrap_or(0),
+        realtime: p.call("IsRealtime", &()).unwrap_or(false),
+    })
+}
+
+/// jackdbus's ServerStarted / ServerStopped, so a start or stop from elsewhere (jack_control,
+/// another program) shows at once: each one triggers a refresh.
+fn watch_signals(tx: Sender<Cmd>) {
+    let Ok(c) = Connection::session() else { return };
+    let Ok(p) = Proxy::new(&c, SERVICE, PATH, CONTROL) else { return };
+    let Ok(sigs) = p.receive_all_signals() else { return };
+    for _ in sigs {
+        if tx.send(Cmd::Refresh).is_err() {
+            break;
+        }
+    }
 }
