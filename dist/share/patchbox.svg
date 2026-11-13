@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- PatchBox: two blocks patched through a matrix, in the app's colours. -->
+  <rect x="2" y="2" width="60" height="60" rx="13" fill="#131416"/>
+  <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="12.5" fill="none" stroke="#2c4258" stroke-width="1.5"/>
+  <g fill="none" stroke="#00e676" stroke-width="2.6" stroke-linecap="round">
+    <path d="M23 21 C 31 21, 30 32, 32 32"/>
+    <path d="M32 32 C 34 32, 33 43, 41 43"/>
+  </g>
+  <rect x="8" y="15" width="16" height="12" rx="2" fill="#aaaaaa" stroke="#00e676" stroke-width="2"/>
+  <rect x="40" y="37" width="16" height="12" rx="2" fill="#aaaaaa" stroke="#00e676" stroke-width="2"/>
+  <g transform="translate(26 26)">
+    <rect width="12" height="12" fill="#16202a" stroke="#4dd0e1" stroke-width="1.4"/>
+    <path d="M4 0 V12 M8 0 V12 M0 4 H12 M0 8 H12" stroke="#4dd0e1" stroke-width="0.9"/>
+    <circle cx="2" cy="2" r="1.3" fill="#b2ff59"/>
+    <circle cx="6" cy="6" r="1.3" fill="#b2ff59"/>
+    <circle cx="10" cy="10" r="1.3" fill="#b2ff59"/>
+  </g>
+</svg>

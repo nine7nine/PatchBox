@@ -1,2 +1,9 @@
 /target
 /third_party/SDL/
+# makepkg's work in dist/arch
+/dist/arch/src/
+/dist/arch/pkg/
+/dist/arch/patchbox/
+/dist/arch/SDL/
+/dist/arch/*.pkg.tar.*
+/dist/arch/*.log

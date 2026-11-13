@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PatchBox
+GenericName=JACK Patchbay and Session Manager
+Comment=Patch JACK (and PipeWire), control jackdbus, manage NSM sessions
+Exec=patchbox
+Icon=patchbox
+Terminal=false
+StartupWMClass=patchbox
+Categories=AudioVideo;Audio;Midi;Music;
+Keywords=jack;jackdbus;patchbay;matrix;session;nsm;pipewire;qjackctl;raysession;

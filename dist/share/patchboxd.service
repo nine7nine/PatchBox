@@ -1,0 +1,14 @@
+# PatchBox's session daemon (the NSM server), for sessions without the window: patchbox-ctl
+# drives it, and the window connects to it when it opens. Not needed otherwise: the window
+# starts patchboxd itself when none runs.
+#   systemctl --user enable --now patchboxd
+[Unit]
+Description=PatchBox session daemon (NSM server)
+Documentation=file:///usr/share/doc/patchbox/README.md
+
+[Service]
+ExecStart=/usr/bin/patchboxd
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

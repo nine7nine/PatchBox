@@ -65,6 +65,8 @@ fn wake() {
 const CORNER_RADIUS: f32 = 6.0;
 
 fn main() {
+    // The Wayland app id: the desktop entry's name (patchbox.desktop), for its icon and grouping.
+    sdl3::hint::set("SDL_APP_ID", "patchbox");
     let sdl = sdl3::init().expect("SDL init");
     let video = sdl.video().expect("SDL video");
     let wake_type = unsafe { sdl3::sys::events::SDL_RegisterEvents(1) };

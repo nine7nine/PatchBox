@@ -1,0 +1,84 @@
+# PatchBox: a JACK patchbay (ports and PatchMatrix's matrices), jackdbus server control and an
+# NSM session manager, in Rust with a static, Wayland-only, patched SDL3 (docs/sdl-vendoring.md).
+# Built for jack2dbus-nspa; the PipeWire graph and settings use PipeWire's tools when present.
+#
+# Builds the committed state of a local clone (this repository by default):
+#   cd dist/arch && makepkg
+#   PATCHBOX_REPO=/path/to/PatchBox [PATCHBOX_BRANCH=main] makepkg
+# Uncommitted changes are not in the package.
+
+pkgname=patchbox
+pkgver=0.1.0.r0.g0
+pkgrel=1
+pkgdesc="JACK patchbay, jackdbus control and NSM session manager (PatchMatrix + RaySession, in SDL3)"
+arch=(x86_64)
+url="https://github.com/nine7nine/PatchBox"
+license=(GPL-2.0-or-later Apache-2.0 Zlib)
+depends=(
+  gcc-libs
+  glibc
+  libjack.so
+  libglvnd
+  libwayland-client.so libwayland-cursor.so libwayland-egl.so
+  libxkbcommon.so
+)
+makedepends=(cargo cmake dbus git mesa pkgconf wayland wayland-protocols libxkbcommon)
+optdepends=(
+  'jack2dbus-nspa: the JACK server PatchBox is built for (jackdbus control, settings, presets)'
+  'pipewire: the PipeWire graph and settings tab (pw-dump, pw-link, pw-metadata, pw-cli)'
+  'wireplumber: default devices and session manager settings on the PipeWire tab'
+  'git: session snapshots'
+  'xdg-utils: open session folders and configuration files'
+)
+_sdl_tag=release-3.4.18
+_sdl_commit=829a65d769d935c4852f8159e964312c0957260a
+source=(
+  "patchbox::git+file://${PATCHBOX_REPO:-$(realpath "$startdir/../..")}#branch=${PATCHBOX_BRANCH:-main}"
+  "SDL::git+https://github.com/libsdl-org/SDL.git#tag=$_sdl_tag"
+)
+sha512sums=('SKIP' 'SKIP')
+
+pkgver() {
+  cd patchbox
+  local v
+  v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+  printf '%s.r%s.g%s' "$v" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  # The pinned SDL release (scripts/sdl.sh's), with our patch.
+  [[ $(git -C SDL rev-parse HEAD) == "$_sdl_commit" ]] || {
+    echo "SDL $_sdl_tag is not commit $_sdl_commit"; return 1; }
+  [[ $(sed -n 's/^SDL_COMMIT=//p' patchbox/scripts/sdl.sh) == "$_sdl_commit" ]] || {
+    echo "scripts/sdl.sh pins another SDL: update _sdl_tag/_sdl_commit"; return 1; }
+  rm -rf patchbox/third_party/SDL
+  cp -a SDL patchbox/third_party/SDL
+  patchbox/scripts/sdl.sh apply
+
+  cd patchbox
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+  cd patchbox
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo build --frozen --release --workspace --bins
+}
+
+check() {
+  cd patchbox
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo test --frozen --release --workspace
+}
+
+package() {
+  cd patchbox
+  install -Dm755 target/release/patchbox target/release/patchboxd target/release/patchbox-ctl -t "$pkgdir/usr/bin"
+  install -Dm644 dist/share/patchbox.desktop -t "$pkgdir/usr/share/applications"
+  install -Dm644 dist/share/patchbox.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps"
+  install -Dm644 dist/share/patchboxd.service -t "$pkgdir/usr/lib/systemd/user"
+  install -Dm644 README.md docs/*.md -t "$pkgdir/usr/share/doc/$pkgname"
+  install -Dm644 assets/fonts/LICENSE "$pkgdir/usr/share/licenses/$pkgname/Cousine-LICENSE"
+  install -Dm644 third_party/SDL/LICENSE.txt "$pkgdir/usr/share/licenses/$pkgname/SDL-LICENSE"
+}
