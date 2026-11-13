@@ -99,6 +99,7 @@ impl UiState {
             MenuItem::new("Undo (Ctrl+Z)", Action::Undo),
             MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo),
             MenuItem::new("Show sidebar", Action::ToggleSidebar).checked(sidebar),
+            MenuItem::new("Views…", Action::ViewsPage),
             MenuItem::new("Matrices (PatchMatrix view, M)", Action::ToggleMatrices),
             MenuItem::new("Vertical flow (V)", Action::ToggleVertical),
             MenuItem::new("Port names on matrices", Action::ToggleLabels).checked(labels),

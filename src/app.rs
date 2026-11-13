@@ -37,6 +37,12 @@ pub enum Action {
     CopyConns(String, bool),
     /// Paste the copied connections onto a port or a node.
     PasteConns(String),
+    ViewsPage,
+    SaveView(String),
+    RecallView(String),
+    DeleteView(String),
+    /// Recall the n-th saved view (Ctrl+1…9).
+    RecallViewN(usize),
     ToggleSnap,
     BufferMenu(Rect),
     ScaleMenu(Rect),
@@ -471,6 +477,41 @@ impl App {
             self.pw = None;
             if self.source == Source::PipeWire {
                 self.apply(Action::BackToJack);
+            }
+        }
+    }
+
+    fn view_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::{Control, Row};
+        let mut rows = vec![Row { id: "name".into(), label: "Name for the current view".into(), help: String::new(), control: Control::Text(String::new()), modified: false }];
+        rows.push(Row::header("Saved views"));
+        if self.layout.views.is_empty() {
+            rows.push(Row::info("None yet", "arrange the canvas, then save it here"));
+        }
+        for (k, (name, v)) in self.layout.views.iter().enumerate() {
+            let what = format!(
+                "{}{} · {} · {} blocks{}",
+                if k < 9 { format!("Ctrl+{} · ", k + 1) } else { String::new() },
+                if v.matrix_view { "matrices" } else if v.vertical { "vertical" } else { "ports" },
+                v.kind,
+                v.nodes.len(),
+                if v.hidden.is_empty() { String::new() } else { format!(", {} hidden", v.hidden.len()) }
+            );
+            rows.push(Row { id: format!("view:{name}"), label: name.clone(), help: String::new(), control: Control::Link(what), modified: false });
+        }
+        if !self.layout.views.is_empty() {
+            let mut opts = vec![(String::new(), "—".to_string())];
+            opts.extend(self.layout.views.keys().map(|n| (n.clone(), n.clone())));
+            rows.push(Row { id: "delete".into(), label: "Remove a view".into(), help: String::new(), control: Control::Choice { value: String::new(), options: opts, editable: false }, modified: false });
+        }
+        rows
+    }
+
+    fn refresh_views_page(&mut self) {
+        if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Views) {
+            let rows = self.view_rows();
+            if let Some(d) = &mut self.dialog {
+                d.set_rows(rows);
             }
         }
     }
@@ -1078,6 +1119,60 @@ impl App {
                 self.layout_changed();
             }
             Action::Disconnect(o, i) => self.disconnect_names(&o, &i),
+            Action::ViewsPage => {
+                let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::Views, "Views");
+                d.rows = self.view_rows();
+                d.buttons = vec!["Close".into(), "Save the current view".into()];
+                d.note = "A view keeps positions, hidden and expanded blocks, the view style, the type and the camera. Ctrl+1…9 recalls them.".into();
+                self.dialog = Some(d);
+            }
+            Action::SaveView(name) => {
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    return self.say("A view needs a name", true);
+                }
+                let v = crate::layout::SavedView {
+                    nodes: self.layout.nodes.clone(),
+                    matrices: self.layout.matrices.clone(),
+                    hidden: self.layout.hidden.clone(),
+                    expanded: self.layout.expanded.clone(),
+                    kind: self.kind.label().to_string(),
+                    cam: self.layout.view.cam,
+                    zoom: self.layout.view.zoom,
+                    matrix_view: self.layout.view.matrices,
+                    vertical: self.layout.view.vertical,
+                };
+                self.layout.views.insert(name.clone(), v);
+                self.say(format!("Saved the view \"{name}\""), false);
+                self.layout_changed();
+                self.refresh_views_page();
+            }
+            Action::RecallView(name) => {
+                let Some(v) = self.layout.views.get(&name).cloned() else { return };
+                // Blocks the view doesn't know keep their place.
+                self.layout.nodes.extend(v.nodes);
+                self.layout.matrices.extend(v.matrices);
+                self.layout.hidden = v.hidden;
+                self.layout.expanded = v.expanded;
+                self.layout.view.cam = v.cam;
+                self.layout.view.zoom = v.zoom;
+                self.layout.view.matrices = v.matrix_view;
+                self.layout.view.vertical = v.vertical;
+                self.kind = kind_from(&v.kind);
+                self.dialog = None;
+                self.refresh_matrices();
+                self.layout_changed();
+            }
+            Action::DeleteView(name) => {
+                self.layout.views.remove(&name);
+                self.layout_changed();
+                self.refresh_views_page();
+            }
+            Action::RecallViewN(n) => {
+                if let Some(name) = self.layout.views.keys().nth(n).cloned() {
+                    self.apply_inner(Action::RecallView(name));
+                }
+            }
             Action::CopyConns(target, cut) => {
                 let ports = self.clip_ports(&target);
                 let peers = |p: usize, g: &Graph| -> Vec<String> {
@@ -1534,6 +1629,29 @@ impl App {
                     "Stop" => self.apply(Action::ServerStop),
                     "Restart" => self.apply(Action::ServerRestart),
                     _ => self.dialog = None,
+                }
+            }
+            (Kind::Views, Event::Set(id, v)) => {
+                if let Some(name) = id.strip_prefix("view:") {
+                    self.apply(Action::RecallView(name.to_string()));
+                } else if id == "delete" {
+                    if !v.is_empty() {
+                        self.apply(Action::DeleteView(v));
+                    }
+                } else if let Some(d) = &mut self.dialog {
+                    d.set_local(&id, &v);
+                }
+            }
+            (Kind::Views, Event::Button(b)) => {
+                let Some(d) = &self.dialog else { return };
+                if d.buttons.get(b).map(String::as_str) == Some("Save the current view") {
+                    let name = d.value("name").unwrap_or_default();
+                    self.apply(Action::SaveView(name));
+                    if let Some(d) = &mut self.dialog {
+                        d.set_local("name", "");
+                    }
+                } else {
+                    self.dialog = None;
                 }
             }
             (Kind::RenameItem, Event::Set(id, v)) => {

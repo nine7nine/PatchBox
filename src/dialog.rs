@@ -64,6 +64,7 @@ pub enum Kind {
     SaveTemplate,
     /// Rename a node or a port; `Dialog::tag` holds the layout key.
     RenameItem,
+    Views,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -280,7 +281,7 @@ impl Dialog {
 
     /// Pages (settings, lists) fill the canvas; prompts are a card over it.
     pub fn is_page(&self) -> bool {
-        matches!(self.kind, Kind::Server | Kind::AddApp | Kind::OpenSession | Kind::Snapshots)
+        matches!(self.kind, Kind::Server | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views)
     }
 
     /// Draw over `area` (the canvas): a page fills it, a prompt is a card in its middle. The

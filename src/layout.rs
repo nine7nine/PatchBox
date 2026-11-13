@@ -61,6 +61,23 @@ pub struct Layout {
     pub view: View,
     /// Window size in points.
     pub window: Option<[u32; 2]>,
+    /// Saved views: name -> what the canvas looked like.
+    pub views: BTreeMap<String, SavedView>,
+}
+
+/// A saved view: positions, hidden and expanded blocks, the view style and type, the camera.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct SavedView {
+    pub nodes: BTreeMap<String, [f32; 2]>,
+    pub matrices: BTreeMap<String, [f32; 2]>,
+    pub hidden: BTreeSet<String>,
+    pub expanded: BTreeSet<String>,
+    pub kind: String,
+    pub cam: [f32; 2],
+    pub zoom: f32,
+    pub matrix_view: bool,
+    pub vertical: bool,
 }
 
 fn path() -> Option<PathBuf> {
