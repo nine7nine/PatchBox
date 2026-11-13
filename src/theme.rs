@@ -53,6 +53,10 @@ pub const NODE_W: f32 = 200.0;
 pub const NODE_H: f32 = 24.0;
 pub const NODE_RADIUS: f32 = 4.0;
 pub const CELL: f32 = 16.0;
+/// A port row in an expanded node, and the padding around the rows.
+pub const PORT_ROW: f32 = 16.0;
+pub const BODY_PAD: f32 = 4.0;
+pub const BODY_FILL: crate::gfx::Color = rgb(28, 28, 30);
 pub const HANDLE_R: f32 = 4.0;
 pub const GRID: f32 = 28.0;
 pub const WIRE_BEND: f32 = 50.0;

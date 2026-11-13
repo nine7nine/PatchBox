@@ -44,6 +44,10 @@ pub enum Drag {
         pair: bool,
         done: HashSet<(usize, usize)>,
     },
+    /// From one port row of an expanded node (full JACK name) to another port.
+    Port {
+        name: String,
+    },
 }
 
 #[derive(Default, Clone, PartialEq, Debug)]
@@ -55,6 +59,8 @@ pub enum Hover {
     In(usize),
     /// (matrix index, column, row)
     Cell(usize, usize, usize),
+    /// (node index, graph port index): a row of an expanded node.
+    Port(usize, usize),
 }
 
 #[derive(Default)]
@@ -101,6 +107,47 @@ impl App {
         Rect::centered(c[0], c[1], s[0] * xf.z, s[1] * xf.z)
     }
 
+    /// An expanded node's port list, screen pixels.
+    fn body_rect(&self, xf: &Xf, i: usize) -> Option<Rect> {
+        let h = self.body_h(i);
+        if h <= 0.0 {
+            return None;
+        }
+        let r = self.node_rect(xf, i);
+        Some(Rect::new(r.x, r.bottom(), r.w, h * xf.z))
+    }
+
+    /// Each port row of an expanded node: (graph port index, row rectangle in pixels).
+    fn port_rows(&self, xf: &Xf, i: usize) -> Vec<(usize, Rect)> {
+        let Some(b) = self.body_rect(xf, i) else { return Vec::new() };
+        let rh = PORT_ROW * xf.z;
+        let top = b.y + BODY_PAD * xf.z;
+        self.body_ports(i).into_iter().enumerate().map(|(k, p)| (p, Rect::new(b.x, top + k as f32 * rh, b.w, rh))).collect()
+    }
+
+    /// Recompute what is under the pointer (after the layout or the graph changed).
+    pub fn refresh_hover(&mut self) {
+        if !matches!(self.canvas.drag, Drag::None) {
+            return;
+        }
+        let [x, y] = self.ui.mouse;
+        self.canvas.hover = if self.canvas.area.contains(x, y) && self.ui.menu.is_none() { self.hit(x, y) } else { Hover::None };
+    }
+
+    /// Centre of a port's row in its expanded node (tests).
+    pub fn port_point(&self, name: &str) -> Option<[f32; 2]> {
+        let &p = self.graph.by_name.get(name)?;
+        let &ni = self.model.port_node.get(&p)?;
+        let xf = self.xf();
+        self.port_rows(&xf, ni).into_iter().find(|(q, _)| *q == p).map(|(_, r)| [r.cx(), r.cy()])
+    }
+
+    /// Can a drag from port `a` end on port `b`? (opposite directions, same type)
+    fn compatible(&self, a: usize, b: usize) -> bool {
+        let (pa, pb) = (&self.graph.ports[a], &self.graph.ports[b]);
+        a != b && pa.kind == pb.kind && pa.type_name == pb.type_name && pa.is_output() != pb.is_output()
+    }
+
     fn visible(&self, i: usize) -> bool {
         !self.layout.hidden.contains(&self.model.nodes[i].key.id())
     }
@@ -133,13 +180,21 @@ impl App {
             if self.node_rect(&xf, i).contains(x, y) {
                 return Hover::Node(i);
             }
+            if let Some(b) = self.body_rect(&xf, i)
+                && b.contains(x, y)
+            {
+                return match self.port_rows(&xf, i).into_iter().find(|(_, r)| r.contains(x, y)) {
+                    Some((p, _)) => Hover::Port(i, p),
+                    None => Hover::Node(i),
+                };
+            }
         }
         Hover::None
     }
 
     // ---- input ----
 
-    pub fn canvas_down(&mut self, button: sdl3::mouse::MouseButton, x: f32, y: f32, ctrl: bool, shift: bool) {
+    pub fn canvas_down(&mut self, button: sdl3::mouse::MouseButton, x: f32, y: f32, ctrl: bool, shift: bool, clicks: u8) {
         use sdl3::mouse::MouseButton as B;
         self.canvas.mouse = [x, y];
         let h = self.hit(x, y);
@@ -160,6 +215,12 @@ impl App {
                         self.paint_cell(mi, c, r, connect, shift, &mut done);
                         self.canvas.drag = Drag::Paint { key, connect, pair: shift, done };
                     }
+                }
+                Hover::Port(_, p) => self.canvas.drag = Drag::Port { name: self.graph.ports[p].name.clone() },
+                Hover::Node(i) if clicks >= 2 => {
+                    let id = self.model.nodes[i].key.id();
+                    let on = !self.is_expanded(i);
+                    self.apply(Action::Expand(id, on));
                 }
                 Hover::Out(i) => self.canvas.drag = Drag::Link { src: self.model.nodes[i].key.id() },
                 Hover::Node(i) if shift && !self.model.nodes[i].outs_of(&self.graph, self.kind).is_empty() => {
@@ -217,20 +278,8 @@ impl App {
             Drag::Node { id, last } => {
                 let (dx, dy) = ((x - last[0]) / z, (y - last[1]) / z);
                 *last = [x, y];
-                if let Some(p) = self.layout.nodes.get_mut(id.as_str()) {
-                    p[0] += dx;
-                    p[1] += dy;
-                }
                 // Matrices follow halfway (PatchMatrix): they stay between their two nodes.
-                let src_pre = format!("{id}>");
-                let dst_suf = format!(">{id}");
-                for (k, p) in self.layout.matrices.iter_mut() {
-                    let (a, b) = (k.starts_with(&src_pre), k.ends_with(&dst_suf));
-                    let f = if a && b { 1.0 } else if a || b { 0.5 } else { 0.0 };
-                    p[0] += dx * f;
-                    p[1] += dy * f;
-                }
-                self.layout_changed();
+                self.move_node(id, dx, dy);
             }
             Drag::Matrix { key, last } => {
                 if let Some(p) = self.layout.matrices.get_mut(key.as_str()) {
@@ -240,7 +289,7 @@ impl App {
                 *last = [x, y];
                 self.layout_changed();
             }
-            Drag::Link { .. } => {
+            Drag::Link { .. } | Drag::Port { .. } => {
                 self.canvas.hover = self.hit(x, y);
                 self.redraw = true;
             }
@@ -268,6 +317,11 @@ impl App {
 
     pub fn canvas_up(&mut self, x: f32, y: f32, ctrl: bool) {
         let drag = std::mem::take(&mut self.canvas.drag);
+        if let Drag::Port { name } = &drag
+            && let Some(&a) = self.graph.by_name.get(name)
+        {
+            self.drop_port(a, self.hit(x, y));
+        }
         if let Drag::Link { src } = drag {
             let target = match self.hit(x, y) {
                 Hover::Node(i) | Hover::In(i) | Hover::Out(i) => Some(i),
@@ -291,14 +345,34 @@ impl App {
         self.redraw = true;
     }
 
+    /// A port dragged from an expanded node was dropped: onto a port, toggle that connection;
+    /// onto a node, connect to its first compatible port not yet connected to this one.
+    fn drop_port(&mut self, a: usize, target: Hover) {
+        let b = match target {
+            Hover::Port(_, b) if self.compatible(a, b) => Some(b),
+            Hover::Node(t) | Hover::In(t) | Hover::Out(t) => {
+                let n = &self.model.nodes[t];
+                let cands = if self.graph.ports[a].is_output() { &n.ins } else { &n.outs };
+                cands.iter().copied().find(|&b| {
+                    let (o, i) = if self.graph.ports[a].is_output() { (a, b) } else { (b, a) };
+                    self.compatible(a, b) && !self.graph.connected(o, i)
+                })
+            }
+            _ => None,
+        };
+        let Some(b) = b else { return };
+        let (o, i) = if self.graph.ports[a].is_output() { (a, b) } else { (b, a) };
+        if self.graph.connected(o, i) {
+            self.disconnect(o, i);
+        } else {
+            self.connect(o, i);
+        }
+    }
+
     pub fn canvas_wheel(&mut self, dx: f32, dy: f32, ctrl: bool) {
         let [mx, my] = self.canvas.mouse;
         if ctrl {
-            let before = self.xf().w([mx, my]);
-            let zoom = (self.layout.view.zoom * 1.12f32.powf(dy)).clamp(0.25, 3.0);
-            self.layout.view.zoom = zoom;
-            let z = self.z();
-            self.layout.view.cam = [before[0] - (mx - self.canvas.area.x) / z, before[1] - (my - self.canvas.area.y) / z];
+            self.zoom_at([mx, my], self.layout.view.zoom * 1.12f32.powf(dy));
         } else {
             let step = 40.0 / self.layout.view.zoom;
             self.layout.view.cam[0] -= dx * step;
@@ -320,7 +394,7 @@ impl App {
                 items.push(I::new("Disconnect all", Action::DisconnectMatrix(m.key.clone())).enabled(!m.conns.is_empty()));
                 items.push(I::new("Remove matrix", Action::Unpin(m.key.clone())).enabled(m.conns.is_empty()));
             }
-            Hover::Node(i) | Hover::In(i) | Hover::Out(i) => items = self.node_menu(i, false),
+            Hover::Node(i) | Hover::In(i) | Hover::Out(i) | Hover::Port(i, _) => items = self.node_menu(i, false),
             Hover::None => {
                 items.push(I::new("Arrange (signal chain)", Action::Arrange));
                 items.push(I::new("Fit to window", Action::FitAll));
@@ -345,6 +419,8 @@ impl App {
         }
         items.push(I::new(if split { "Join inputs and outputs" } else { "Split inputs and outputs" }, Action::Split(n.key.group.clone(), !split)));
         items.push(I::new(format!("Disconnect all {}", self.kind.label()), Action::DisconnectNode(id.clone())));
+        let expanded = self.is_expanded(i);
+        items.push(I::new(if expanded { "Fold ports" } else { "Show all ports" }, Action::Expand(id.clone(), !expanded)));
         items.push(if hidden { I::new("Show", Action::Show(id)) } else { I::new("Hide", Action::Hide(id)) });
         items
     }
@@ -383,7 +459,7 @@ impl App {
 
         // Which nodes and matrices light up: hovered ones and their neighbours.
         let hov_node = match self.canvas.hover {
-            Hover::Node(i) | Hover::In(i) | Hover::Out(i) => Some(i),
+            Hover::Node(i) | Hover::In(i) | Hover::Out(i) | Hover::Port(i, _) => Some(i),
             _ => None,
         };
         let hov_mat = match self.canvas.hover {
@@ -458,6 +534,19 @@ impl App {
                 g.arc(p0, cs * 2.0, 0.0, std::f32::consts::TAU, ww, HILIGHT);
             }
 
+        // A port being dragged from an expanded node.
+        if let Drag::Port { name } = &self.canvas.drag
+            && let Some(&a) = self.graph.by_name.get(name)
+            && let Some(&ni) = self.model.port_node.get(&a)
+            && let Some((_, row)) = self.port_rows(&xf, ni).into_iter().find(|(p, _)| *p == a)
+        {
+            let out = self.graph.ports[a].is_output();
+            let p0 = if out { [row.right(), row.cy()] } else { [row.x, row.cy()] };
+            let p1 = self.canvas.mouse;
+            let b = if out { bend } else { -bend };
+            g.bezier(p0, [p0[0] + b, p0[1]], [p1[0] - b, p1[1]], p1, ww * 1.4, kind_color(self.graph.ports[a].kind));
+        }
+
         // Port names around matrices: the hovered one, or all of them.
         for mi in 0..self.mats.len() {
             if self.layout.view.labels || Some(mi) == hov_mat {
@@ -468,6 +557,11 @@ impl App {
             && matches!(self.canvas.drag, Drag::None | Drag::Paint { .. }) {
                 self.draw_cell_tip(g, &xf, mi, c, r);
             }
+        if let Hover::Port(_, p) = self.canvas.hover
+            && matches!(self.canvas.drag, Drag::None)
+        {
+            self.draw_port_tip(g, p);
+        }
 
         if self.model.nodes.is_empty() {
             g.text_center(Face::Regular, FONT * self.scale, a, TEXT_DIM, "No ports on the server");
@@ -487,11 +581,24 @@ impl App {
         }
         let nin = n.ins_of(&self.graph, self.kind).len();
         let nout = n.outs_of(&self.graph, self.kind).len();
-        let editable = nin + nout > 0;
+        let body = self.body_rect(xf, i);
+        let editable = nin + nout > 0 || body.is_some();
         let f = if editable { 1.0 } else { 0.33 };
         let stroke = if lit { HILIGHT } else { BORDER };
-        g.rrect(r, NODE_RADIUS * z, alpha(NODE_FILL, f));
-        g.rrect_stroke(r, NODE_RADIUS * z, self.scale.max(1.0), alpha(stroke, f));
+        let lw = self.scale.max(1.0);
+        match body {
+            Some(b) => {
+                let full = Rect::new(r.x, r.y, r.w, b.bottom() - r.y);
+                g.rrect(full, NODE_RADIUS * z, BODY_FILL);
+                g.rect(Rect::new(r.x + lw, r.y + lw, r.w - 2.0 * lw, r.h - lw), NODE_FILL);
+                g.rect(Rect::new(r.x, r.bottom() - lw, r.w, lw), alpha(stroke, 0.5));
+                g.rrect_stroke(full, NODE_RADIUS * z, lw, stroke);
+            }
+            None => {
+                g.rrect(r, NODE_RADIUS * z, alpha(NODE_FILL, f));
+                g.rrect_stroke(r, NODE_RADIUS * z, lw, alpha(stroke, f));
+            }
+        }
         let px = FONT * z;
         let lh = g.line_height(Face::Regular, px);
         let dx = 4.0 * z;
@@ -536,6 +643,109 @@ impl App {
                 g.arc(p, 2.0 * cw, 0.0, std::f32::consts::TAU, self.scale.max(1.0), HILIGHT);
             }
         }
+        if body.is_some() {
+            self.draw_body(g, xf, i);
+        }
+    }
+
+    /// An expanded node's ports: inputs (strip on the left), then outputs (strip on the right),
+    /// coloured by type; the current tab's type bright, the others dimmer. A dot: connected.
+    fn draw_body(&self, g: &mut Gfx, xf: &Xf, i: usize) {
+        let z = xf.z;
+        let px = FONT_SMALL * z;
+        if px < 4.0 {
+            return;
+        }
+        let lh = g.line_height(Face::Regular, px);
+        let rows = self.port_rows(xf, i);
+        let dragged = match &self.canvas.drag {
+            Drag::Port { name } => self.graph.by_name.get(name).copied(),
+            _ => None,
+        };
+        let n_in = self.model.nodes[i].ins.len();
+        for (k, &(p, row)) in rows.iter().enumerate() {
+            if !row.overlaps(&self.canvas.area) {
+                continue;
+            }
+            let port = &self.graph.ports[p];
+            let input = port.is_input();
+            let fa = if port.kind == self.kind { 1.0 } else { 0.55 };
+            if k == n_in && k > 0 {
+                g.rect(Rect::new(row.x + 6.0 * z, row.y.round(), row.w - 12.0 * z, self.scale.max(1.0)), PANEL_LINE);
+            }
+            let hovered = self.canvas.hover == Hover::Port(i, p);
+            if dragged.is_some_and(|a| self.compatible(a, p)) {
+                g.rect(row.inset(1.0), alpha(HILIGHT, if hovered { 0.30 } else { 0.12 }));
+            } else if hovered {
+                g.rect(row.inset(1.0), [1.0, 1.0, 1.0, 0.07]);
+            }
+            let sw = (3.0 * z).max(2.0);
+            let strip = if input {
+                Rect::new(row.x + 2.0 * z, row.y + 2.0 * z, sw, row.h - 4.0 * z)
+            } else {
+                Rect::new(row.right() - 2.0 * z - sw, row.y + 2.0 * z, sw, row.h - 4.0 * z)
+            };
+            g.rect(strip, alpha(kind_color(port.kind), fa));
+            // Stereo pairs: the strip continues across both rows.
+            if let Some(&q) = self.model.partner.get(&p)
+                && rows.get(k + 1).is_some_and(|(n, _)| *n == q)
+            {
+                g.rect(Rect::new(strip.x, strip.bottom(), sw, 4.0 * z), alpha(kind_color(port.kind), fa * 0.6));
+            }
+            let connected = self.graph.conns.iter().any(|&(o, i2)| o == p || i2 == p);
+            let dot = if input { [strip.right() + 6.0 * z, row.cy()] } else { [strip.x - 6.0 * z, row.cy()] };
+            if connected {
+                g.circle(dot, 2.4 * z, alpha(TOGGLE, fa));
+            } else {
+                g.arc(dot, 2.4 * z, 0.0, std::f32::consts::TAU, self.scale.max(1.0) * 0.8, alpha(TEXT_DIM, fa));
+            }
+            let label = &self.model.labels[p];
+            let max_w = row.w - 22.0 * z;
+            let col = alpha(if hovered { TEXT_BRIGHT } else { TEXT }, fa);
+            if input {
+                g.text_fit(Face::Regular, px, dot[0] + 6.0 * z, row.cy() - lh / 2.0, max_w, col, label);
+            } else {
+                let w = g.measure(Face::Regular, px, label).min(max_w);
+                g.text_fit(Face::Regular, px, dot[0] - 6.0 * z - w, row.cy() - lh / 2.0, max_w, col, label);
+            }
+        }
+    }
+
+    /// Everything about one port: its full name, type, aliases, connections.
+    fn draw_port_tip(&self, g: &mut Gfx, p: usize) {
+        let port = &self.graph.ports[p];
+        let mut lines: Vec<(String, crate::gfx::Color)> = vec![(port.name.clone(), TEXT_BRIGHT)];
+        let dir = if port.is_input() { "input" } else { "output" };
+        let mut info = format!("{} {dir}", port.kind.label());
+        if port.is_physical() {
+            info.push_str(", physical");
+        }
+        if let Some(pretty) = &port.pretty {
+            info.push_str(&format!(", pretty name \"{pretty}\""));
+        }
+        lines.push((info, kind_color(port.kind)));
+        for a in &port.aliases {
+            lines.push((format!("alias {a}"), TEXT_DIM));
+        }
+        let others: Vec<&str> = self
+            .graph
+            .conns
+            .iter()
+            .filter_map(|&(o, i)| if o == p { Some(i) } else if i == p { Some(o) } else { None })
+            .map(|q| self.graph.ports[q].name.as_str())
+            .collect();
+        if others.is_empty() {
+            lines.push(("not connected".into(), TEXT_DIM));
+        }
+        let arrow = if port.is_input() { "←" } else { "→" };
+        for (k, o) in others.iter().enumerate() {
+            if k == 8 {
+                lines.push((format!("… {} more", others.len() - 8), TEXT_DIM));
+                break;
+            }
+            lines.push((format!("{arrow} {o}"), TOGGLE));
+        }
+        self.draw_tooltip(g, self.canvas.mouse, &lines);
     }
 
     fn draw_matrix(&self, g: &mut Gfx, xf: &Xf, mi: usize, lit: bool) {

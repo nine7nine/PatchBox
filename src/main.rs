@@ -27,6 +27,21 @@ use std::time::{Duration, Instant};
 /// The registered SDL event type JACK wakes us with, and whether one is already queued.
 static WAKE_TYPE: AtomicU32 = AtomicU32::new(0);
 static WAKE_PENDING: AtomicBool = AtomicBool::new(false);
+/// Touchpad pinch: the scale accumulated since the main loop last looked (f32 bits). The sdl3
+/// crate doesn't decode SDL 3.4's pinch events, so an event watch reads them raw.
+static PINCH: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+unsafe extern "C" fn pinch_watch(_: *mut std::ffi::c_void, ev: *mut sdl3::sys::events::SDL_Event) -> bool {
+    unsafe {
+        if (*ev).r#type == sdl3::sys::events::SDL_EVENT_PINCH_UPDATE.0 {
+            let s = (*ev).pinch.scale;
+            if s.is_finite() && s > 0.0 {
+                let _ = PINCH.fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| Some((f32::from_bits(b) * s).to_bits()));
+            }
+        }
+    }
+    true
+}
 
 fn wake() {
     if WAKE_PENDING.swap(true, Ordering::AcqRel) {
@@ -105,7 +120,9 @@ fn main() {
     let mut pump = sdl.event_pump().expect("event pump");
     let kb = sdl.keyboard();
     let mut density = window.pixel_density();
-    app.scale = window.display_scale().max(0.5);
+    app.chrome = window.display_scale().max(0.5);
+    app.apply_scales();
+    unsafe { sdl3::sys::events::SDL_AddEventWatch(Some(pinch_watch), std::ptr::null_mut()) };
     let (pw, ph) = window.size_in_pixels();
     app.win = [pw as f32, ph as f32];
     app.redraw = true;
@@ -165,6 +182,13 @@ fn main() {
             });
             match ev {
                 Event::Quit { .. } => break 'main,
+                Event::Unknown { type_, .. } if type_ == sdl3::sys::events::SDL_EVENT_PINCH_UPDATE.0 => {
+                    let f = f32::from_bits(PINCH.swap(0x3f80_0000, Ordering::AcqRel));
+                    if (f - 1.0).abs() > 1e-4 && app.canvas.area.contains(app.ui.mouse[0], app.ui.mouse[1]) {
+                        let z = app.layout.view.zoom * f;
+                        app.zoom_at(app.ui.mouse, z);
+                    }
+                }
                 Event::User { type_, .. } if type_ == wake_type => {
                     WAKE_PENDING.store(false, Ordering::Release);
                     app.on_jack_events();
@@ -174,7 +198,8 @@ fn main() {
                         let (pw, ph) = window.size_in_pixels();
                         app.win = [pw as f32, ph as f32];
                         density = window.pixel_density();
-                        app.scale = window.display_scale().max(0.5);
+                        app.chrome = window.display_scale().max(0.5);
+                        app.apply_scales();
                         if !app.maximized {
                             let (lw, lh) = window.size();
                             app.layout.window = Some([lw, lh]);
@@ -206,7 +231,11 @@ fn main() {
                         app.redraw = true;
                         continue;
                     }
-                    let ch = app.ui.csd.button_at(px, py, app.win[0], app.ui.bar_h, app.scale);
+                    if app.ui.slider.is_some() {
+                        app.zoom_slider_drag(px);
+                        continue;
+                    }
+                    let ch = app.ui.csd.button_at(px, py, app.win[0], app.ui.bar_h, app.chrome);
                     let hh = app.ui.hits.iter().rposition(|(r, _)| r.contains(px, py));
                     if ch != app.ui.csd_hover || hh != app.ui.hover_hit {
                         app.ui.csd_hover = ch;
@@ -229,15 +258,22 @@ fn main() {
                         continue;
                     }
                     if mouse_btn == MouseButton::Left
-                        && let Some(b) = app.ui.csd.button_at(px, py, app.win[0], app.ui.bar_h, app.scale) {
-                            app.apply(Action::Window(b));
-                            continue;
-                        }
-                    if py < app.ui.bar_h || app.ui.sidebar_rect.contains(px, py) {
+                        && let Some(b) = app.ui.csd.button_at(px, py, app.win[0], app.ui.bar_h, app.chrome)
+                    {
+                        app.apply(Action::Window(b));
+                        continue;
+                    }
+                    // Controls drawn over the canvas (zoom) come before the canvas itself.
+                    let over_canvas_control = app.canvas.area.contains(px, py) && app.hit_action(px, py).is_some();
+                    if py < app.ui.bar_h || app.ui.sidebar_rect.contains(px, py) || over_canvas_control {
                         if mouse_btn == MouseButton::Left
                             && let Some(a) = app.hit_action(px, py)
                         {
+                            let slider = matches!(a, Action::ZoomSlider(_));
                             app.apply(a);
+                            if slider {
+                                app.zoom_slider_drag(px);
+                            }
                         }
                         // A client row's menu.
                         if mouse_btn == MouseButton::Right
@@ -252,11 +288,14 @@ fn main() {
                             app.window_cmd = Some(WindowCmd::ToggleMaximize);
                         }
                     } else if app.canvas.area.contains(px, py) {
-                        app.canvas_down(mouse_btn, px, py, ctrl, shift);
+                        app.canvas_down(mouse_btn, px, py, ctrl, shift, clicks);
                     }
                 }
                 Event::MouseButtonUp { x, y, .. } => {
                     let (px, py) = (x * density, y * density);
+                    if app.ui.slider.take().is_some() {
+                        app.redraw = true;
+                    }
                     if !matches!(app.canvas.drag, canvas::Drag::None) {
                         app.canvas_up(px, py, ctrl);
                     }
@@ -283,9 +322,14 @@ fn main() {
                         Keycode::_2 => Some(Action::SetKind(pbx_jack::PortKind::Midi)),
                         Keycode::_3 => Some(Action::SetKind(pbx_jack::PortKind::Cv)),
                         Keycode::_4 => Some(Action::SetKind(pbx_jack::PortKind::Osc)),
-                        Keycode::_0 if ctrl => Some(Action::ResetZoom),
+                        Keycode::_0 if ctrl => Some(Action::ZoomTo(1.0)),
+                        Keycode::Equals | Keycode::Plus | Keycode::KpPlus if ctrl && shift => Some(Action::SetUiScale(app.layout.view.ui_scale + 0.25)),
+                        Keycode::Minus | Keycode::KpMinus if ctrl && shift => Some(Action::SetUiScale(app.layout.view.ui_scale - 0.25)),
+                        Keycode::Equals | Keycode::Plus | Keycode::KpPlus if ctrl => Some(Action::ZoomBy(1.2)),
+                        Keycode::Minus | Keycode::KpMinus if ctrl => Some(Action::ZoomBy(1.0 / 1.2)),
                         Keycode::F => Some(Action::FitAll),
                         Keycode::L => Some(Action::ToggleLabels),
+                        Keycode::E => Some(Action::ExpandAll),
                         Keycode::F9 => Some(Action::ToggleSidebar),
                         Keycode::Q if ctrl => Some(Action::Quit),
                         _ => None,
@@ -340,7 +384,7 @@ fn main() {
                 g.bar_h = app.ui.bar_h;
                 g.controls = app.bar_controls();
                 g.density = density;
-                g.scale = app.scale;
+                g.scale = app.chrome;
                 g.maximized = app.maximized;
             }
             if gfx.needs_redraw() {

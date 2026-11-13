@@ -12,8 +12,9 @@
 //!   quit
 //! Points (`+` stands for a space): `x,y` (window pixels), `node:<id>`, `out:<id>`, `in:<id>` (node ids as in the layout
 //! file, e.g. `M:ardour`, `S:system`), `cell:<matrix key substring>:<col>:<row>`, `empty` (a
-//! spot on the canvas with nothing under it), `bar:<label>` (a top-bar control: AUDIO, MIDI,
-//! Buffer, Xruns), `menu:<item label>`.
+//! spot on the canvas with nothing under it), `bar:<label>` (a control: AUDIO, MIDI, Buffer,
+//! Xruns, menu, zoom-, zoom+, zoomtrack, zoompct), `port:<client:port>` (its row in an expanded
+//! node), `menu:<item label>`.
 
 use crate::app::App;
 use sdl3::event::Event;
@@ -149,6 +150,7 @@ impl Script {
                         "3" => Keycode::_3,
                         "4" => Keycode::_4,
                         "l" => Keycode::L,
+                        "e" => Keycode::E,
                         "f" => Keycode::F,
                         "f9" => Keycode::F9,
                         _ => Keycode::Escape,
@@ -221,6 +223,7 @@ pub fn resolve(app: &App, p: &str) -> Option<[f32; 2]> {
             Some([c[0] - s[0] * xf.z / 2.0 + (col as f32 + 0.5) * cell, c[1] - s[1] * xf.z / 2.0 + (row as f32 + 0.5) * cell])
         }
         "bar" => app.bar_point(rest),
+        "port" => app.port_point(rest),
         "menu" => {
             let m = app.ui.menu.as_ref()?;
             let i = m.items.iter().position(|it| it.label.contains(rest))?;

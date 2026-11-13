@@ -28,10 +28,12 @@ puts it in the graph.
 |---|---|
 | Top bar | port type (AUDIO / MIDI / CV / OSC, or keys 1–4), sample rate and latency, buffer size (menu), xruns (click: reset), DSP load |
 | Matrix cell | click: connect / disconnect; drag across cells: paint the same state; **Shift**: the stereo partner cell too |
-| Node | drag: move (its matrices follow halfway); right-click: split/join inputs and outputs, disconnect, hide |
+| Node | drag: move (its matrices follow halfway); double-click (or E for all): list **all** its ports, every type, colour-coded; right-click: show ports, split/join inputs and outputs, disconnect, hide |
+| Port row (expanded node) | hover: full name, type, aliases, connections; drag onto another port: connect / disconnect; drag onto a node: connect to its first free compatible port |
 | Output handle → node | drag from a node's right handle (or Shift+drag the node) onto another node: open a matrix between them; hold **Ctrl** at the drop to connect 1:1 |
 | Matrix | Ctrl+drag: move; right-click: connect 1:1, disconnect all, remove |
-| Canvas | drag or middle-drag: pan; wheel: scroll; Ctrl+wheel: zoom; F: fit; Ctrl+0: zoom 1:1; L: port names on every matrix (hovering shows a matrix's names anyway); F9: sidebar |
+| Canvas | drag or middle-drag: pan; wheel: scroll; zoom: the − / slider / + widget (bottom right; click the % for 100 %), Ctrl+wheel, touchpad pinch, Ctrl+= / Ctrl+− / Ctrl+0; F: fit; L: port names on every matrix (hovering shows a matrix's names anyway); F9: sidebar |
+| Interface scale | ☰ menu → Interface scale (default 125 %), or Ctrl+Shift+= / Ctrl+Shift+−: everything in the window except the window buttons, which follow the desktop's scale |
 | Sidebar | clients (click: find; right-click: menu, show hidden ones), log |
 
 Physical ports and a2j devices start split into a capture node and a playback node (PatchMatrix's

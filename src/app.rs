@@ -26,6 +26,13 @@ pub enum Action {
     ToggleSidebar,
     ToggleLabels,
     BufferMenu(Rect),
+    ScaleMenu(Rect),
+    SetUiScale(f32),
+    /// Multiply the zoom, about the canvas centre.
+    ZoomBy(f32),
+    ZoomTo(f32),
+    /// The zoom slider's track (dragged in main.rs).
+    ZoomSlider(Rect),
     SetBufferSize(u32),
     ResetXruns,
     ToggleFreewheel,
@@ -33,6 +40,10 @@ pub enum Action {
     Split(String, bool),
     Hide(String),
     Show(String),
+    /// Show (true) or fold (false) a node's port list.
+    Expand(String, bool),
+    /// Expand every node, or fold them all if any is expanded.
+    ExpandAll,
     ShowAll,
     Arrange,
     CenterNode(String),
@@ -70,8 +81,10 @@ pub struct App {
     pub layout: Layout,
     layout_dirty: Option<Instant>,
     pub stats: Stats,
-    /// Pixels per point.
+    /// Pixels per point for the window's contents: the desktop's scale × the interface scale.
     pub scale: f32,
+    /// The desktop's scale alone: window decorations.
+    pub chrome: f32,
     /// Window size, pixels.
     pub win: [f32; 2],
     pub maximized: bool,
@@ -113,6 +126,7 @@ impl App {
             layout_dirty: None,
             stats: Stats::default(),
             scale: 1.0,
+            chrome: 1.0,
             win: [1280.0, 760.0],
             maximized: false,
             canvas: Default::default(),
@@ -278,6 +292,7 @@ impl App {
         if first && !self.model.nodes.is_empty() {
             self.fit_pending = true;
         }
+        self.refresh_hover();
         self.redraw = true;
     }
 
@@ -397,25 +412,110 @@ impl App {
         let depths = self.depths();
         const COL_W: f32 = 460.0;
         const X0: f32 = 160.0;
-        let gap = theme::NODE_H + 48.0;
+        const GAP: f32 = 48.0;
+        // Lowest edge taken in each column (headers and expanded port lists).
         let mut bottom: HashMap<usize, f32> = HashMap::new();
         for (i, node) in self.model.nodes.iter().enumerate() {
-            if let Some(p) = self.layout.nodes.get(&node.key.id()) {
-                let col = depths[i];
-                let b = bottom.entry(col).or_insert(f32::MIN);
-                *b = b.max(p[1]);
+            if self.layout.nodes.contains_key(&node.key.id()) {
+                let b = bottom.entry(depths[i]).or_insert(f32::MIN);
+                *b = b.max(self.node_extent(i).bottom());
             }
         }
         let mut order = missing;
         order.sort_by_key(|&i| (depths[i], self.model.nodes[i].title.to_lowercase()));
         for i in order {
             let col = depths[i];
-            let y = bottom.get(&col).map_or(80.0, |b| b + gap);
-            bottom.insert(col, y);
+            let y = bottom.get(&col).map_or(80.0, |b| b + GAP + theme::NODE_H / 2.0);
             let x = X0 + col as f32 * COL_W;
             self.layout.nodes.insert(self.model.nodes[i].key.id(), [x, y]);
+            bottom.insert(col, self.node_extent(i).bottom());
         }
         self.layout_changed();
+    }
+
+    pub fn is_expanded(&self, i: usize) -> bool {
+        self.layout.expanded.contains(&self.model.nodes[i].key.id())
+    }
+
+    /// An expanded node's port rows: inputs, then outputs (graph port indices).
+    pub fn body_ports(&self, i: usize) -> Vec<usize> {
+        let n = &self.model.nodes[i];
+        n.ins.iter().chain(&n.outs).copied().collect()
+    }
+
+    /// Height of an expanded node's port list (0 when folded), world units.
+    pub fn body_h(&self, i: usize) -> f32 {
+        if !self.is_expanded(i) {
+            return 0.0;
+        }
+        let n = &self.model.nodes[i];
+        (n.ins.len() + n.outs.len()) as f32 * theme::PORT_ROW + 2.0 * theme::BODY_PAD
+    }
+
+    /// The whole node (header and port list), world units.
+    pub fn node_extent(&self, i: usize) -> Rect {
+        let p = self.node_pos(i);
+        Rect::new(p[0] - theme::NODE_W / 2.0, p[1] - theme::NODE_H / 2.0, theme::NODE_W, theme::NODE_H + self.body_h(i))
+    }
+
+    /// Move a node; its matrices follow halfway (PatchMatrix), or fully when both ends are it.
+    pub fn move_node(&mut self, id: &str, dx: f32, dy: f32) {
+        if let Some(p) = self.layout.nodes.get_mut(id) {
+            p[0] += dx;
+            p[1] += dy;
+        }
+        let src_pre = format!("{id}>");
+        let dst_suf = format!(">{id}");
+        for (k, p) in self.layout.matrices.iter_mut() {
+            let (a, b) = (k.starts_with(&src_pre), k.ends_with(&dst_suf));
+            let f = if a && b { 1.0 } else if a || b { 0.5 } else { 0.0 };
+            p[0] += dx * f;
+            p[1] += dy * f;
+        }
+        self.layout_changed();
+    }
+
+    /// After node `i` grew: push the nodes below it in its column down until nothing overlaps
+    /// (a vertical cascade; RaySession's full repulse is phase 2).
+    pub fn make_room(&mut self, i: usize) {
+        const GAP: f32 = 24.0;
+        let mut placed = vec![self.node_extent(i)];
+        let base = self.node_pos(i)[1];
+        let mut below: Vec<usize> = (0..self.model.nodes.len())
+            .filter(|&j| j != i && !self.layout.hidden.contains(&self.model.nodes[j].key.id()) && self.node_pos(j)[1] > base)
+            .collect();
+        below.sort_by(|&a, &b| self.node_pos(a)[1].total_cmp(&self.node_pos(b)[1]));
+        for j in below {
+            let mut r = self.node_extent(j);
+            let mut dy = 0.0;
+            for _ in 0..placed.len() + 1 {
+                let hit = placed.iter().find(|p| p.overlaps(&Rect::new(r.x, r.y - GAP, r.w, r.h + 2.0 * GAP)));
+                match hit {
+                    Some(p) => {
+                        let d = p.bottom() + GAP - r.y;
+                        r.y += d;
+                        dy += d;
+                    }
+                    None => break,
+                }
+            }
+            if dy > 0.0 {
+                let id = self.model.nodes[j].key.id();
+                self.move_node(&id, 0.0, dy);
+            }
+            placed.push(r);
+        }
+        // Matrices over the grown node move below it.
+        let grown = self.node_extent(i);
+        let keys: Vec<(String, [f32; 2])> = self.mats.iter().map(|m| (m.key.clone(), Self::matrix_size(m))).collect();
+        for (key, size) in keys {
+            if let Some(p) = self.layout.matrices.get_mut(&key) {
+                let r = Rect::centered(p[0], p[1], size[0] + 16.0, size[1] + 16.0);
+                if r.overlaps(&grown) {
+                    p[1] = grown.bottom() + size[1] / 2.0 + GAP;
+                }
+            }
+        }
     }
 
     pub fn node_pos(&self, i: usize) -> [f32; 2] {
@@ -451,8 +551,8 @@ impl App {
         (0..self.model.nodes.len())
             .filter(|&i| !self.layout.hidden.contains(&self.model.nodes[i].key.id()))
             .map(|i| {
-                let p = self.node_pos(i);
-                Rect::centered(p[0], p[1] - 5.0, theme::NODE_W + 6.0 * theme::HANDLE_R + 12.0, theme::NODE_H + 30.0)
+                let r = self.node_extent(i);
+                Rect::new(r.x - 3.0 * theme::HANDLE_R - 6.0, r.y - 15.0, r.w + 6.0 * theme::HANDLE_R + 12.0, r.h + 30.0)
             })
             .collect()
     }
@@ -511,6 +611,12 @@ impl App {
 
     pub fn apply(&mut self, a: Action) {
         self.redraw = true;
+        self.apply_inner(a);
+        // Geometry may have changed under the pointer.
+        self.refresh_hover();
+    }
+
+    fn apply_inner(&mut self, a: Action) {
         match a {
             Action::SetKind(k) => {
                 self.kind = k;
@@ -527,10 +633,28 @@ impl App {
                 self.layout_changed();
             }
             Action::BufferMenu(r) => self.ui.open_buffer_menu(r, self.stats.buffer_size),
+            Action::ScaleMenu(r) => self.ui.open_scale_menu(r, self.layout.view.ui_scale),
+            Action::SetUiScale(f) => {
+                let c = self.canvas_center_world();
+                self.layout.view.ui_scale = f.clamp(0.75, 3.0);
+                self.apply_scales();
+                self.layout_regions();
+                self.center_on(c);
+            }
+            Action::ZoomBy(f) => {
+                let a = self.canvas.area;
+                self.zoom_at([a.cx(), a.cy()], self.layout.view.zoom * f);
+            }
+            Action::ZoomTo(z) => {
+                let a = self.canvas.area;
+                self.zoom_at([a.cx(), a.cy()], z);
+            }
+            Action::ZoomSlider(r) => self.ui.slider = Some(r),
             Action::AppMenu(r) => {
                 let labels = self.layout.view.labels;
                 let sidebar = self.layout.view.sidebar;
-                self.ui.open_app_menu(r, labels, sidebar)
+                let ui_scale = self.layout.view.ui_scale;
+                self.ui.open_app_menu(r, labels, sidebar, ui_scale)
             }
             Action::SetBufferSize(n) => {
                 if let Some(c) = &self.jack
@@ -558,6 +682,33 @@ impl App {
                 self.layout.hidden.remove(&id);
                 self.layout_changed();
                 self.refresh_matrices();
+            }
+            Action::Expand(id, on) => {
+                if on {
+                    self.layout.expanded.insert(id.clone());
+                } else {
+                    self.layout.expanded.remove(&id);
+                }
+                if let Some(i) = self.model.node_by_id(&id) {
+                    self.make_room(i);
+                }
+                self.layout_changed();
+            }
+            Action::ExpandAll => {
+                let any = (0..self.model.nodes.len()).any(|i| self.is_expanded(i));
+                if any {
+                    self.layout.expanded.clear();
+                } else {
+                    for n in &self.model.nodes {
+                        self.layout.expanded.insert(n.key.id());
+                    }
+                    let mut order: Vec<usize> = (0..self.model.nodes.len()).collect();
+                    order.sort_by(|&a, &b| self.node_pos(a)[1].total_cmp(&self.node_pos(b)[1]));
+                    for i in order {
+                        self.make_room(i);
+                    }
+                }
+                self.layout_changed();
             }
             Action::ShowAll => {
                 self.layout.hidden.clear();
@@ -630,6 +781,43 @@ impl App {
 
     // ---- view ----
 
+    pub const ZOOM_MIN: f32 = 0.25;
+    pub const ZOOM_MAX: f32 = 4.0;
+
+    /// Recompute the content scale (after the desktop's or the interface scale changed).
+    pub fn apply_scales(&mut self) {
+        let ui = std::env::var("PATCHBOX_SCALE").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(self.layout.view.ui_scale);
+        self.scale = self.chrome * ui.clamp(0.75, 3.0);
+        self.redraw = true;
+    }
+
+    /// Zoom to `zoom`, keeping the world point under the screen point `at` in place.
+    pub fn zoom_at(&mut self, at: [f32; 2], zoom: f32) {
+        let before = self.xf().w(at);
+        self.layout.view.zoom = zoom.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX);
+        let z = self.z();
+        self.layout.view.cam = [before[0] - (at[0] - self.canvas.area.x) / z, before[1] - (at[1] - self.canvas.area.y) / z];
+        self.layout_changed();
+    }
+
+    /// The zoom slider: position (0..1 along the track) <-> zoom, logarithmic.
+    pub fn zoom_to_t(z: f32) -> f32 {
+        ((z / Self::ZOOM_MIN).ln() / (Self::ZOOM_MAX / Self::ZOOM_MIN).ln()).clamp(0.0, 1.0)
+    }
+    pub fn t_to_zoom(t: f32) -> f32 {
+        Self::ZOOM_MIN * (Self::ZOOM_MAX / Self::ZOOM_MIN).powf(t.clamp(0.0, 1.0))
+    }
+
+    /// Dragging the zoom slider: the pointer is at x.
+    pub fn zoom_slider_drag(&mut self, x: f32) {
+        let Some(r) = self.ui.slider else { return };
+        let z = Self::t_to_zoom((x - r.x) / r.w.max(1.0));
+        // Snap to 100 % near it.
+        let z = if (z - 1.0).abs() < 0.04 { 1.0 } else { z };
+        let a = self.canvas.area;
+        self.zoom_at([a.cx(), a.cy()], z);
+    }
+
     pub fn z(&self) -> f32 {
         self.layout.view.zoom * self.scale
     }
@@ -663,8 +851,8 @@ impl App {
             if self.layout.hidden.contains(&n.key.id()) {
                 continue;
             }
-            let p = self.node_pos(i);
-            add(Rect::centered(p[0], p[1], theme::NODE_W + 40.0, theme::NODE_H + 30.0));
+            let r = self.node_extent(i);
+            add(Rect::new(r.x - 20.0, r.y - 15.0, r.w + 40.0, r.h + 30.0));
         }
         for m in &self.mats {
             let p = self.matrix_pos(m);

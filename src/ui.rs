@@ -53,6 +53,8 @@ pub struct UiState {
     pub sidebar_scroll: f32,
     pub sidebar_rect: Rect,
     pub bar_h: f32,
+    /// The zoom slider's track while it is being dragged.
+    pub slider: Option<Rect>,
 }
 
 impl UiState {
@@ -67,6 +69,7 @@ impl UiState {
             sidebar_scroll: 0.0,
             sidebar_rect: Rect::default(),
             bar_h: 0.0,
+            slider: None,
         }
     }
 
@@ -82,8 +85,17 @@ impl UiState {
         self.open_menu([under.x, under.bottom() + 2.0], items);
     }
 
-    pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool) {
+    pub fn open_scale_menu(&mut self, at: Rect, current: f32) {
+        let items = [1.0f32, 1.1, 1.25, 1.5, 1.75, 2.0]
+            .into_iter()
+            .map(|f| MenuItem::new(format!("{:.0} %", f * 100.0), Action::SetUiScale(f)).checked((f - current).abs() < 0.01))
+            .collect();
+        self.open_menu([at.x, at.y], items);
+    }
+
+    pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool, ui_scale: f32) {
         let items = vec![
+            MenuItem::new(format!("Interface scale: {:.0} % …", ui_scale * 100.0), Action::ScaleMenu(Rect::new(under.x, under.bottom() + 2.0, 0.0, 0.0))),
             MenuItem::new("Show sidebar", Action::ToggleSidebar).checked(sidebar),
             MenuItem::new("Port names on matrices", Action::ToggleLabels).checked(labels),
             MenuItem::new("Arrange (signal chain)", Action::Arrange),
@@ -130,6 +142,57 @@ impl App {
         if self.layout.view.sidebar {
             self.draw_sidebar(g);
         }
+        if self.jack.is_some() {
+            self.draw_zoom(g);
+        }
+    }
+
+    /// Zoom controls, bottom-right of the canvas: − [slider] + and the zoom (click: 100 %).
+    fn draw_zoom(&mut self, g: &mut Gfx) {
+        let s = self.scale;
+        let a = self.canvas.area;
+        let h = 26.0 * s;
+        let bw = h;
+        let track_w = 120.0 * s;
+        let pct = format!("{:.0} %", self.layout.view.zoom * 100.0);
+        let pw = g.measure(Face::Regular, FONT * s, "400 %") + 12.0 * s;
+        let w = bw * 2.0 + track_w + pw + 4.0 * 6.0 * s;
+        let panel = Rect::new(a.right() - w - 12.0 * s, a.bottom() - h - 12.0 * s, w, h);
+        g.rrect(panel, 4.0 * s, alpha(BAR_BG, 0.9));
+        g.rrect_stroke(panel, 4.0 * s, s.max(1.0), alpha(BORDER, 0.5));
+        let mut x = panel.x + 6.0 * s;
+        let minus = Rect::new(x, panel.y, bw, h);
+        x += bw + 6.0 * s;
+        let track = Rect::new(x, panel.y, track_w, h);
+        x += track_w + 6.0 * s;
+        let plus = Rect::new(x, panel.y, bw, h);
+        x += bw + 6.0 * s;
+        let pr = Rect::new(x, panel.y, pw, h);
+        for (r, sign) in [(minus, false), (plus, true)] {
+            if self.hovered(&r) {
+                g.rrect(r.inset(3.0 * s), 3.0 * s, BUTTON_HOVER);
+            }
+            let (cx, cy, l) = (r.cx().round(), r.cy().round(), (5.0 * s).round());
+            let t = (1.6 * s).max(1.0).round();
+            g.rect(Rect::new(cx - l, cy - (t / 2.0).floor(), 2.0 * l, t), TEXT_BRIGHT);
+            if sign {
+                g.rect(Rect::new(cx - (t / 2.0).floor(), cy - l, t, 2.0 * l), TEXT_BRIGHT);
+            }
+        }
+        self.add_hit(minus, Action::ZoomBy(1.0 / 1.2));
+        self.add_hit(plus, Action::ZoomBy(1.2));
+        // Track: a line, a tick at 100 %, the knob.
+        let ty = track.cy().round();
+        let lw = (2.0 * s).max(1.0).round();
+        g.rect(Rect::new(track.x, ty - lw / 2.0, track.w, lw), PANEL_LINE);
+        let one = track.x + App::zoom_to_t(1.0) * track.w;
+        g.rect(Rect::new(one.round(), ty - 5.0 * s, s.max(1.0), 10.0 * s), TEXT_DIM);
+        let kx = track.x + App::zoom_to_t(self.layout.view.zoom) * track.w;
+        let active = self.ui.slider.is_some() || self.hovered(&track);
+        g.circle([kx, ty], 6.0 * s, if active { HILIGHT } else { BORDER });
+        self.add_hit(track, Action::ZoomSlider(track));
+        g.text_center(Face::Regular, FONT * s, pr, if self.hovered(&pr) { TEXT_BRIGHT } else { TEXT }, &pct);
+        self.add_hit(pr, Action::ZoomTo(1.0));
     }
 
     fn draw_topbar(&mut self, g: &mut Gfx) {
@@ -137,7 +200,7 @@ impl App {
         let bar = Rect::new(0.0, 0.0, self.win[0], self.ui.bar_h);
         g.rect(bar, BAR_BG);
         g.rect(Rect::new(0.0, bar.bottom() - s.max(1.0), bar.w, s.max(1.0)), PANEL_LINE);
-        let strip = self.ui.csd.strip_w(s);
+        let strip = self.ui.csd.strip_w(self.chrome);
         let (mut x, right_edge) = if self.ui.csd.left { (strip + 6.0 * s, bar.w - 8.0 * s) } else { (8.0 * s, bar.w - strip - 6.0 * s) };
         let bh = (TOPBAR_H - 10.0) * s;
         let by = (bar.h - bh) / 2.0;
@@ -216,7 +279,7 @@ impl App {
             g.text_center(Face::Bold, FONT * s, title_r, TEXT_DIM, "PatchBox");
         }
 
-        self.ui.csd.draw(g, bar.w, bar.h, s, self.ui.csd_hover);
+        self.ui.csd.draw(g, bar.w, bar.h, self.chrome, self.ui.csd_hover);
     }
 
     fn draw_sidebar(&mut self, g: &mut Gfx) {
@@ -353,6 +416,30 @@ impl App {
         }
     }
 
+    /// A box of text lines near `at` (window pixels), kept inside the window.
+    pub fn draw_tooltip(&self, g: &mut Gfx, at: [f32; 2], lines: &[(String, crate::gfx::Color)]) {
+        let s = self.scale;
+        let px = FONT * s;
+        let lh = g.line_height(Face::Regular, px) + 2.0 * s;
+        let pad = 7.0 * s;
+        let w = lines.iter().map(|(t, _)| g.measure(Face::Regular, px, t)).fold(0.0, f32::max).min(self.win[0] * 0.6) + 2.0 * pad;
+        let h = lines.len() as f32 * lh + 2.0 * pad - 2.0 * s;
+        let mut x = at[0] + 16.0 * s;
+        let mut y = at[1] + 18.0 * s;
+        if x + w > self.win[0] - 4.0 {
+            x = (at[0] - w - 12.0 * s).max(4.0);
+        }
+        if y + h > self.win[1] - 4.0 {
+            y = (at[1] - h - 12.0 * s).max(4.0);
+        }
+        let r = Rect::new(x, y, w, h);
+        g.rrect(r, 4.0 * s, alpha(TOOLTIP_BG, 0.95));
+        g.rrect_stroke(r, 4.0 * s, s.max(1.0), alpha(BORDER, 0.6));
+        for (k, (t, c)) in lines.iter().enumerate() {
+            g.text_fit(Face::Regular, px, r.x + pad, r.y + pad + k as f32 * lh, w - 2.0 * pad, *c, t);
+        }
+    }
+
     /// A click while a menu is open: run the item under the pointer, or close the menu.
     pub fn menu_click(&mut self, x: f32, y: f32) {
         let Some(menu) = self.ui.menu.take() else { return };
@@ -382,6 +469,9 @@ impl App {
                 Action::BufferMenu(_) => name == "Buffer",
                 Action::ResetXruns => name == "Xruns",
                 Action::AppMenu(_) => name == "menu",
+                Action::ZoomBy(f) => (name == "zoom+" && *f > 1.0) || (name == "zoom-" && *f < 1.0),
+                Action::ZoomSlider(_) => name == "zoomtrack",
+                Action::ZoomTo(_) => name == "zoompct",
                 _ => false,
             };
             hit.then(|| [r.cx(), r.cy()])
@@ -391,8 +481,7 @@ impl App {
     /// The top bar's controls, for the window's hit-test (clicks there are not drags).
     pub fn bar_controls(&self) -> Vec<Rect> {
         let mut v: Vec<Rect> = self.ui.hits.iter().map(|(r, _)| *r).filter(|r| r.y < self.ui.bar_h).collect();
-        let s = self.scale;
-        let strip = self.ui.csd.strip_w(s);
+        let strip = self.ui.csd.strip_w(self.chrome);
         v.push(if self.ui.csd.left { Rect::new(0.0, 0.0, strip, self.ui.bar_h) } else { Rect::new(self.win[0] - strip, 0.0, strip, self.ui.bar_h) });
         v
     }
