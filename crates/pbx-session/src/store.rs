@@ -335,6 +335,57 @@ pub fn join_args(words: &[String]) -> String {
 
 #[cfg(test)]
 mod args_tests {
+    /// A small deterministic generator for the fuzz loops (xorshift64*).
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+    }
+
+    #[test]
+    fn fuzz_args_and_names() {
+        let mut r = Rng(0x1234_5678_9abc_def1);
+        let alphabet: Vec<char> = "ab $'\"\\\t/é_.-=*".chars().collect();
+        for _ in 0..20_000 {
+            let s: String = (0..r.below(24)).map(|_| alphabet[r.below(alphabet.len())]).collect();
+            let words = split_args(&s);
+            assert_eq!(split_args(&join_args(&words)), words, "join then split: {s:?}");
+            let _ = valid_name(&s);
+        }
+    }
+
+    /// A session file changed at random parses or fails; it never panics.
+    #[test]
+    fn fuzz_session_file() {
+        let mut f = SessionFile { name: "band".into(), notes: "a \"b\"".into(), ..Default::default() };
+        f.clients.push(ClientEntry { id: "carla_1".into(), exe: "carla".into(), args: vec!["-n".into()], nsm: true, ..Default::default() });
+        f.connections.list.push(("a:out".into(), "b:in".into()));
+        let text = toml::to_string_pretty(&f).unwrap();
+        let mut r = Rng(42);
+        for _ in 0..5_000 {
+            let mut b = text.clone().into_bytes();
+            const BITS: &[u8] = b"[]=\"'{}.,\n#ab1";
+            for _ in 0..1 + r.below(6) {
+                let i = r.below(b.len());
+                match r.below(3) {
+                    0 => b[i] = BITS[r.below(BITS.len())],
+                    1 => {
+                        b.remove(i);
+                    }
+                    _ => b.insert(i, BITS[r.below(BITS.len())]),
+                }
+            }
+            let _ = toml::from_str::<SessionFile>(&String::from_utf8_lossy(&b));
+        }
+    }
+
     use super::*;
 
     #[test]

@@ -102,6 +102,35 @@ impl Rules {
 
 #[cfg(test)]
 mod tests {
+    /// A small deterministic generator for the fuzz loops (xorshift64*).
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+    }
+
+    #[test]
+    fn fuzz_glob() {
+        let mut r = Rng(7);
+        let alphabet: Vec<char> = "ab*:_é-".chars().collect();
+        for _ in 0..20_000 {
+            let p: String = (0..r.below(10)).map(|_| alphabet[r.below(alphabet.len())]).collect();
+            let n: String = (0..r.below(10)).map(|_| alphabet[r.below(alphabet.len())]).collect();
+            let _ = glob(&p, &n);
+            assert!(glob("*", &n));
+            if !n.contains('*') {
+                assert!(glob(&n, &n), "{n:?} matches itself");
+            }
+        }
+    }
+
     use super::*;
     use pbx_jack::{Port, PortKind};
 

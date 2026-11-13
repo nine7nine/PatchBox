@@ -187,6 +187,70 @@ fn decode_into(b: &[u8], out: &mut Vec<Msg>, depth: u32) {
 
 #[cfg(test)]
 mod tests {
+    /// A small deterministic generator for the fuzz loops (xorshift64*).
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+    }
+
+    fn random_msg(r: &mut Rng) -> Msg {
+        let words = ["/nsm/server/announce", "/reply", "/error", "/nsm/client/open", "/x"];
+        let mut args = Vec::new();
+        for _ in 0..r.below(6) {
+            args.push(match r.below(7) {
+                0 => Arg::I(r.next() as i32),
+                1 => Arg::F((r.next() % 10_000) as f32 / 7.0),
+                2 => Arg::S((0..r.below(12)).map(|_| char::from(b'a' + r.below(26) as u8)).collect()),
+                3 => Arg::H(r.next() as i64),
+                4 => Arg::D((r.next() % 10_000) as f64 / 3.0),
+                5 => Arg::B((0..r.below(9)).map(|_| r.next() as u8).collect()),
+                _ => Arg::T,
+            });
+        }
+        Msg::new(words[r.below(words.len())], args)
+    }
+
+    /// Anything a socket can deliver: random bytes, valid messages and bundles cut short or
+    /// with bytes changed, bundles in bundles. Decoding never panics; valid ones come back.
+    #[test]
+    fn fuzz_decode() {
+        let mut r = Rng(0x9e37_79b9_7f4a_7c15);
+        for _ in 0..20_000 {
+            let m = random_msg(&mut r);
+            let b = encode(&m);
+            assert_eq!(decode(&b), vec![m.clone()], "round trip");
+            let mut x = b.clone();
+            match r.below(4) {
+                0 => x.truncate(r.below(x.len() + 1)),
+                1 => {
+                    for _ in 0..1 + r.below(4) {
+                        let i = r.below(x.len());
+                        x[i] = r.next() as u8;
+                    }
+                }
+                2 => {
+                    // A bundle holding it (and maybe itself again), with a lying length.
+                    let mut bundle = b"#bundle\0".to_vec();
+                    bundle.extend([0u8; 8]);
+                    let n = if r.below(3) == 0 { r.next() as i32 } else { x.len() as i32 };
+                    bundle.extend(n.to_be_bytes());
+                    bundle.extend(&x);
+                    x = bundle;
+                }
+                _ => x = (0..r.below(64)).map(|_| r.next() as u8).collect(),
+            }
+            let _ = decode(&x);
+        }
+    }
+
     use super::*;
 
     #[test]

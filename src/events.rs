@@ -130,11 +130,12 @@ pub fn tail(path: &std::path::Path, bytes: u64, lines: usize) -> std::io::Result
 /// A jackdbus log line ("Fri Nov 13 00:08:19 2026: Client 'x' is out") as (when, what).
 pub fn split_jackdbus(line: &str) -> (String, String) {
     // "Www Mmm dd HH:MM:SS yyyy: " is 26 characters.
-    match line.get(..26) {
-        Some(head) if head.ends_with(": ") && head.as_bytes().get(13) == Some(&b':') => {
-            (format!("{} {}", &head[4..10], &head[11..19]), line[26..].to_string())
-        }
-        _ => (String::new(), line.to_string()),
+    // By byte offsets, but only on character boundaries (get): a line of another shape stays
+    // whole.
+    let parts = line.get(..26).filter(|h| h.ends_with(": ") && h.as_bytes().get(13) == Some(&b':')).and_then(|h| Some((h.get(4..10)?, h.get(11..19)?)));
+    match parts {
+        Some((day, time)) => (format!("{day} {time}"), line[26..].to_string()),
+        None => (String::new(), line.to_string()),
     }
 }
 
@@ -150,6 +151,31 @@ pub fn size(n: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// A small deterministic generator for the fuzz loops (xorshift64*).
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 >> 12;
+            self.0 ^= self.0 << 25;
+            self.0 ^= self.0 >> 27;
+            self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+    }
+
+    /// Lines of any shape (multi-byte characters where the date would be included).
+    #[test]
+    fn fuzz_jackdbus_lines() {
+        let mut r = Rng(99);
+        let alphabet: Vec<char> = "Fri Nov 13 00:08:19 2026: é€x".chars().collect();
+        for _ in 0..20_000 {
+            let s: String = (0..r.below(40)).map(|_| alphabet[r.below(alphabet.len())]).collect();
+            let _ = split_jackdbus(&s);
+        }
+    }
+
     use super::*;
 
     #[test]
