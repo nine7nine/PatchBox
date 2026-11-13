@@ -61,6 +61,8 @@ pub struct SessionFile {
     #[serde(rename = "trashed")]
     pub trash: Vec<ClientEntry>,
     pub connections: Connections,
+    /// JACK settings restored when the session opens (jackdbus).
+    pub jack: crate::jackcfg::JackSettings,
 }
 
 impl SessionFile {

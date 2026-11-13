@@ -59,6 +59,8 @@ enum Step {
     Script(&'static str),
     /// Before a switch to the session of that name: keep the running clients it can use.
     Reserve(String),
+    /// Put the session's remembered JACK settings back (jackdbus), before its clients start.
+    Jack,
     Launch,
     WaitReady,
     Loaded,
@@ -91,6 +93,8 @@ pub struct Daemon {
     git_status: Option<i32>,
     /// Clients kept running across a session switch: (the new session's client id, client).
     reserved: Vec<(String, Client)>,
+    /// A jackdbus job running on a thread, and its result.
+    jack_job: Option<std::sync::mpsc::Receiver<Result<bool, String>>>,
     quit: bool,
     /// No session and no front end since then: exit after a while.
     idle_since: Option<Instant>,
@@ -151,6 +155,7 @@ pub fn run() -> Result<(), String> {
         git: None,
         git_status: None,
         reserved: Vec::new(),
+        jack_job: None,
         quit: false,
         idle_since: Some(Instant::now()),
     };
@@ -312,6 +317,7 @@ impl Daemon {
             st.path = Some(s.dir.display().to_string());
             st.notes = s.file.notes.clone();
             st.auto_snapshot = s.file.auto_snapshot.unwrap_or(true);
+            st.jack_memory = s.file.jack.remember;
             st.clients = s.clients.iter().map(Client::state).collect();
             st.trash = s
                 .trash
@@ -438,7 +444,7 @@ impl Daemon {
                 Ok(()) => {
                     let n = name.trim().to_string();
                     let mut steps = vec![Step::SaveClients, Step::WriteFile, Step::CopyTo(n.clone()), Step::Script("close"), Step::StopClients, Step::Unload];
-                    steps.extend([Step::Load(n, false), Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
+                    steps.extend([Step::Load(n, false), Step::Jack, Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
                     self.start_op(format!("Duplicating to {name}…"), steps);
                     ok("duplicating")
                 }
@@ -449,7 +455,7 @@ impl Daemon {
                 Ok(()) => {
                     let n = name.trim().to_string();
                     let mut steps = vec![Step::SaveClients, Step::WriteFile, Step::Script("close"), Step::StopClients, Step::MoveTo(n.clone()), Step::Unload];
-                    steps.extend([Step::Load(n, false), Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
+                    steps.extend([Step::Load(n, false), Step::Jack, Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
                     self.start_op(format!("Renaming to {name}…"), steps);
                     ok("renaming")
                 }
@@ -524,7 +530,9 @@ impl Daemon {
                 }
                 None => Reply::Error { msg: "not connected to JACK".into() },
             },
-            Request::Snapshot { .. } | Request::Rewind { .. } | Request::SetAutoSnapshot { .. } | Request::ListSnapshots if self.session.is_none() => {
+            Request::Snapshot { .. } | Request::Rewind { .. } | Request::SetAutoSnapshot { .. } | Request::SetJackMemory { .. } | Request::ListSnapshots
+                if self.session.is_none() =>
+            {
                 Reply::Error { msg: "no session is open".into() }
             }
             Request::Snapshot { .. } | Request::Rewind { .. } if self.op.is_some() => busy(),
@@ -549,6 +557,7 @@ impl Daemon {
                     Step::Checkout(id.clone()),
                     Step::Unload,
                     Step::Load(name, false),
+                    Step::Jack,
                     Step::Launch,
                     Step::WaitReady,
                     Step::Loaded,
@@ -556,6 +565,14 @@ impl Daemon {
                 ];
                 self.start_op(format!("Going back to {id}…"), steps);
                 ok("rewinding")
+            }
+            Request::SetJackMemory { on } => {
+                let s = self.session.as_mut().unwrap();
+                s.file.jack.remember = on;
+                if !on {
+                    s.file.jack = Default::default();
+                }
+                ok(if on { "JACK settings kept with the session from its next save" } else { "JACK settings no longer kept" })
             }
             Request::SetAutoSnapshot { on } => {
                 self.session.as_mut().unwrap().file.auto_snapshot = Some(on);
@@ -602,7 +619,7 @@ impl Daemon {
             }
             steps.extend([Step::StopClients, Step::Unload]);
         }
-        steps.extend([load, Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
+        steps.extend([load, Step::Jack, Step::Launch, Step::WaitReady, Step::Loaded, Step::Script("load")]);
         steps
     }
 
@@ -787,7 +804,7 @@ impl Daemon {
             Step::Snapshot(label, auto) => {
                 if first {
                     let (label, auto) = (label.clone(), *auto);
-                    let Some(dir) = self.session.as_ref().map(|s| s.dir.clone()) else { return true };
+                    let Some(dir) = self.session.as_ref().map(|s| s.dir.clone()) else { return self.finish_step() };
                     match snapshots::spawn_snapshot(&dir, &label, auto) {
                         Ok(pid) => {
                             self.git = Some(pid);
@@ -796,7 +813,7 @@ impl Daemon {
                         }
                         Err(e) => {
                             self.log(e, true);
-                            return true;
+                            return self.finish_step();
                         }
                     }
                 }
@@ -805,7 +822,7 @@ impl Daemon {
             Step::Checkout(id) => {
                 if first {
                     let id = id.clone();
-                    let Some(dir) = self.session.as_ref().map(|s| s.dir.clone()) else { return true };
+                    let Some(dir) = self.session.as_ref().map(|s| s.dir.clone()) else { return self.finish_step() };
                     match snapshots::spawn_checkout(&dir, &id) {
                         Ok(pid) => {
                             self.git = Some(pid);
@@ -846,10 +863,43 @@ impl Daemon {
                 }
                 true
             }
+            Step::Jack => {
+                if first {
+                    let want = self.session.as_ref().map(|s| s.file.jack.clone()).filter(|j| j.remember && !j.driver.is_empty());
+                    let Some(want) = want else { return self.finish_step() };
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let fd = self.wake_fd;
+                    std::thread::spawn(move || {
+                        let r = match crate::jackcfg::connect() {
+                            Some(c) => crate::jackcfg::apply(&c, &want),
+                            None => Err("jackdbus is not running: the session's JACK settings were not applied".into()),
+                        };
+                        let _ = tx.send(r);
+                        let one: u64 = 1;
+                        unsafe { libc::write(fd, (&one as *const u64).cast(), 8) };
+                    });
+                    self.jack_job = Some(rx);
+                    self.set_deadline(Some(now + Duration::from_secs(30)));
+                }
+                // No job: nothing to put back (it never started).
+                if self.jack_job.is_none() {
+                    return self.finish_step();
+                }
+                let res = self.jack_job.as_ref().and_then(|r| r.try_recv().ok());
+                match res {
+                    Some(Ok(true)) => self.log("JACK restarted with the session's settings", false),
+                    Some(Ok(false)) => {}
+                    Some(Err(e)) => self.log(e, true),
+                    None if late => self.log("JACK settings: jackdbus did not answer in time", true),
+                    None => return false,
+                }
+                self.jack_job = None;
+                true
+            }
             Step::Script(which) => {
                 if first {
                     let which = *which;
-                    let Some((dir, name)) = self.session.as_ref().map(|s| (s.dir.clone(), s.name.clone())) else { return true };
+                    let Some((dir, name)) = self.session.as_ref().map(|s| (s.dir.clone(), s.name.clone())) else { return self.finish_step() };
                     match self.spawn_script(&dir, &name, which) {
                         Some(Ok(pid)) => {
                             self.git = Some(pid);
@@ -859,9 +909,9 @@ impl Daemon {
                         }
                         Some(Err(e)) => {
                             self.log(e, true);
-                            return true;
+                            return self.finish_step();
                         }
-                        None => return true,
+                        None => return self.finish_step(),
                     }
                 }
                 self.git_done("script", late)
@@ -1001,6 +1051,16 @@ impl Daemon {
         true
     }
 
+    /// End the current step from inside it (early returns must still move the queue on).
+    fn finish_step(&mut self) -> bool {
+        if let Some(op) = &mut self.op {
+            op.steps.pop_front();
+            op.started = false;
+            op.deadline = None;
+        }
+        true
+    }
+
     fn set_deadline(&mut self, d: Option<Instant>) {
         if let Some(op) = &mut self.op {
             op.deadline = d;
@@ -1038,7 +1098,15 @@ impl Daemon {
             self.patch.update_on_save(g);
         }
         let conns = self.patch.to_file();
+        let remember = self.session.as_ref().is_some_and(|s| s.file.jack.remember);
+        let jack = if remember { crate::jackcfg::connect().map(|c| crate::jackcfg::read(&c)) } else { None };
+        if let Some(Err(e)) = &jack {
+            self.log(format!("JACK settings not saved: {e}"), true);
+        }
         let Some(s) = &mut self.session else { return };
+        if let Some(Ok(j)) = jack {
+            s.file.jack = j;
+        }
         s.file.clients = s.clients.iter().map(Client::to_entry).collect();
         s.file.trash = s.trash.clone();
         s.file.connections = conns;

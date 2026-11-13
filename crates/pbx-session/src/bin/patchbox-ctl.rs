@@ -5,7 +5,7 @@
 //!                duplicate NAME | rename NAME | add [--plain] EXE [ARGS…]
 //!                start ID | stop ID | kill ID | save-client ID | show-gui ID | hide-gui ID
 //!                trash ID | restore ID | notes TEXT | connect SRC DST | disconnect SRC DST
-//!                graph | snapshot [LABEL] | snapshots | rewind ID | auto-snapshot on|off
+//!                graph | snapshot [LABEL] | snapshots | rewind ID | auto-snapshot on|off | jack-memory on|off
 //!                quit | watch
 
 use pbx_session::proto::{Conn, FromDaemon, Push, Reply, Request};
@@ -51,6 +51,7 @@ fn main() {
         Some("snapshots") => Request::ListSnapshots,
         Some("rewind") => Request::Rewind { id: arg(1) },
         Some("auto-snapshot") => Request::SetAutoSnapshot { on: arg(1) == "on" },
+        Some("jack-memory") => Request::SetJackMemory { on: arg(1) == "on" },
         Some("quit") => Request::Quit,
         Some("watch") => Request::Subscribe,
         _ => usage(),

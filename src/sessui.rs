@@ -25,6 +25,7 @@ pub enum SessAction {
     Snapshot,
     Snapshots,
     SaveTemplate,
+    JackMemory(bool),
     AddApp,
     Start(String),
     Stop(String),
@@ -232,6 +233,7 @@ impl App {
                 self.dialog = Some(d);
             }
             SessAction::Save => self.send(Request::Save),
+            SessAction::JackMemory(on) => self.send(Request::SetJackMemory { on }),
             SessAction::Close => self.send(Request::Close),
             SessAction::Abort => self.send(Request::Abort),
             SessAction::Menu(r) => {
@@ -241,6 +243,7 @@ impl App {
                     MenuItem::new("Rename…", Action::Sess(SessAction::Rename)).enabled(open),
                     MenuItem::new("Notes…", Action::Sess(SessAction::Notes)).enabled(open),
                     MenuItem::new("Save as template…", Action::Sess(SessAction::SaveTemplate)).enabled(open),
+                    MenuItem::new("Remember JACK settings with it", Action::Sess(SessAction::JackMemory(!st.jack_memory))).enabled(open).checked(st.jack_memory),
                     MenuItem::new("Take a snapshot…", Action::Sess(SessAction::Snapshot)).enabled(open),
                     MenuItem::new("Go back to a snapshot…", Action::Sess(SessAction::Snapshots)).enabled(open),
                     MenuItem::new("Open the session folder", Action::Sess(SessAction::OpenFolder)).enabled(open),

@@ -51,6 +51,8 @@ pub enum Request {
     Rewind { id: String },
     /// Automatic snapshots at save and close, for this session.
     SetAutoSnapshot { on: bool },
+    /// Remember JACK's settings with this session (jackdbus): kept at save, restored at open.
+    SetJackMemory { on: bool },
     Quit,
 }
 
@@ -160,6 +162,8 @@ pub struct State {
     pub connections_saved: usize,
     pub connections_present: usize,
     pub auto_snapshot: bool,
+    /// The session restores JACK's settings when it opens.
+    pub jack_memory: bool,
 }
 
 /// $XDG_RUNTIME_DIR/patchbox/daemon.sock (PATCHBOX_SOCKET overrides).
