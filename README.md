@@ -148,6 +148,11 @@ jackdbus (scratch HOME) instead of jackd; `PB_PIPEWIRE=1` adds a private PipeWir
 `PB_PIPEWIRE=bridge` one on top of it (module-jack-tunnel, with stand-in session manager
 metadata). PatchBox gets a scratch XDG config home there.
 
+Sanitizers (nightly Rust): `scripts/sanitize.sh address` (or `thread`) builds into
+`target/<sanitizer>/`; `PB_BIN=$(scripts/sanitize.sh address --bin-dir)` runs the session tests and
+the GUI harness against it (`ASAN_OPTIONS=detect_odr_violation=0` for the GUI: SDL's stb_image and
+miniz hold the same 19-byte table, which the linker merges).
+
 `PATCHBOX_STATS=1` prints main-loop wake-ups and frames at exit (idle: the 1 Hz DSP poll, no
 frames).
 

@@ -16,7 +16,8 @@ fi
 [ "$(findmnt -no SOURCE /dev/shm | tail -1)" = "pb-test-shm" ] && [ -z "$(ls -A /dev/shm)" ] || { echo "not isolated; refusing"; exit 1; }
 W=$HOME/.cache/patchbox-work/jack-settings-test; rm -rf "$W"; mkdir -p "$W/home/.config"
 export HOME="$W/home" XDG_CONFIG_HOME="$W/home/.config"
-export PATH="$ROOT/target/debug:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOX_TEMPLATES="$W/templates" PATCHBOXD_STAY=1 PATCHBOX_CONFIG_DIR="$W/config"
+BIN=${PB_BIN:-$ROOT/target/debug}
+export PATH="$BIN:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOX_TEMPLATES="$W/templates" PATCHBOXD_STAY=1 PATCHBOX_CONFIG_DIR="$W/config"
 fail=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
 wait_for() { for i in $(seq 100); do eval "$1" && return 0; sleep 0.1; done; return 1; }

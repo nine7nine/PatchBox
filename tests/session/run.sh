@@ -12,7 +12,8 @@ if [ -z "${PB_INNER:-}" ]; then
 fi
 [ "$(findmnt -no SOURCE /dev/shm | tail -1)" = "pb-test-shm" ] && [ -z "$(ls -A /dev/shm)" ] || { echo "not isolated; refusing"; exit 1; }
 W=$HOME/.cache/patchbox-work/session-test; rm -rf "$W"; mkdir -p "$W"
-export PATH="$ROOT/target/debug:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOXD_STAY=1 PATCHBOX_TEMPLATES="$W/templates" PATCHBOX_CONFIG_DIR="$W/config"
+BIN=${PB_BIN:-$ROOT/target/debug}
+export PATH="$BIN:$PATH" PATCHBOX_SOCKET="$W/daemon.sock" PATCHBOX_SESSIONS="$W/sessions" PATCHBOXD_STAY=1 PATCHBOX_TEMPLATES="$W/templates" PATCHBOX_CONFIG_DIR="$W/config"
 jackd --no-realtime -d dummy --rate 48000 --period 256 --capture 2 --playback 2 > "$W/jackd.log" 2>&1 &
 for i in $(seq 50); do ls /dev/shm/jack_default_* >/dev/null 2>&1 && break; sleep 0.1; done; sleep 0.3
 # PB_VALGRIND=1: the daemon under memcheck (invalid reads/writes, uninitialised values in the FFI
@@ -20,7 +21,7 @@ for i in $(seq 50); do ls /dev/shm/jack_default_* >/dev/null 2>&1 && break; slee
 if [ -n "${PB_VALGRIND:-}" ]; then
   # Needs a dynamic linker valgrind can read (glibc debug info); say so instead of failing later.
   valgrind -q --error-exitcode=99 true 2>"$W/valgrind-check.log" || { echo "valgrind cannot run here:"; grep -m3 -E 'Fatal|install' "$W/valgrind-check.log"; exit 2; }
-  valgrind --error-exitcode=99 --track-origins=yes --leak-check=no --log-file="$W/valgrind.log" "$ROOT/target/debug/patchboxd" > "$W/patchboxd.log" 2>&1 &
+  valgrind --error-exitcode=99 --track-origins=yes --leak-check=no --log-file="$W/valgrind.log" "$BIN/patchboxd" > "$W/patchboxd.log" 2>&1 &
 else
   patchboxd > "$W/patchboxd.log" 2>&1 &
 fi
