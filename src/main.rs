@@ -40,7 +40,10 @@ unsafe extern "C" fn pinch_watch(_: *mut std::ffi::c_void, ev: *mut sdl3::sys::e
         if (*ev).r#type == sdl3::sys::events::SDL_EVENT_PINCH_UPDATE.0 {
             let s = (*ev).pinch.scale;
             if s.is_finite() && s > 0.0 {
-                let _ = PINCH.fetch_update(Ordering::AcqRel, Ordering::Acquire, |b| Some((f32::from_bits(b) * s).to_bits()));
+                let mut cur = PINCH.load(Ordering::Acquire);
+                while let Err(now) = PINCH.compare_exchange_weak(cur, (f32::from_bits(cur) * s).to_bits(), Ordering::AcqRel, Ordering::Acquire) {
+                    cur = now;
+                }
             }
         }
     }
@@ -346,7 +349,7 @@ fn main() {
                         Keycode::Escape => app.dialog = None,
                         Keycode::Return | Keycode::KpEnter => {
                             // Enter commits a field; in a one-field dialog it also confirms.
-                            let one_field = matches!(d.kind, dialog::Kind::NewSession | dialog::Kind::Rename | dialog::Kind::Duplicate | dialog::Kind::Notes);
+                            let one_field = matches!(d.kind, dialog::Kind::NewSession | dialog::Kind::Rename | dialog::Kind::Duplicate | dialog::Kind::Notes | dialog::Kind::Snapshot);
                             let last = d.buttons.len().saturating_sub(1);
                             if let Some(ev) = d.commit() {
                                 app.dialog_event(ev);

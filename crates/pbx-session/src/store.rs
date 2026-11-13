@@ -54,6 +54,8 @@ pub struct SessionFile {
     pub version: u32,
     pub name: String,
     pub notes: String,
+    /// Snapshot (git) at every save and close; default on.
+    pub auto_snapshot: Option<bool>,
     #[serde(rename = "client")]
     pub clients: Vec<ClientEntry>,
     #[serde(rename = "trashed")]

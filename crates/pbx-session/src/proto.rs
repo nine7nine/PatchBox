@@ -41,6 +41,13 @@ pub enum Request {
     Disconnect { src: String, dst: String },
     /// The current connections, one "src -> dst" per line.
     Graph,
+    /// Take a named snapshot of the session folder (git).
+    Snapshot { label: String },
+    ListSnapshots,
+    /// Go back to a snapshot (after taking one of the present state).
+    Rewind { id: String },
+    /// Automatic snapshots at save and close, for this session.
+    SetAutoSnapshot { on: bool },
     Quit,
 }
 
@@ -50,6 +57,7 @@ pub enum Reply {
     Ok { msg: String },
     Error { msg: String },
     Sessions { root: String, sessions: Vec<SessionEntry> },
+    Snapshots { snapshots: Vec<SnapshotEntry> },
     State(State),
 }
 
@@ -66,6 +74,15 @@ pub enum Push {
 pub enum FromDaemon {
     Push(Push),
     Reply(Reply),
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct SnapshotEntry {
+    /// The git tag.
+    pub id: String,
+    /// Seconds since the epoch.
+    pub time: u64,
+    pub label: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -138,6 +155,7 @@ pub struct State {
     /// Saved connections and how many are present.
     pub connections_saved: usize,
     pub connections_present: usize,
+    pub auto_snapshot: bool,
 }
 
 /// $XDG_RUNTIME_DIR/patchbox/daemon.sock (PATCHBOX_SOCKET overrides).

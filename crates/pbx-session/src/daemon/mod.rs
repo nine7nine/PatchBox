@@ -8,6 +8,7 @@
 mod clients;
 mod nsm;
 mod patch;
+mod snapshots;
 
 use crate::proto::{self, ClientState, FromDaemon, Push, Reply, Request, State, Status};
 use crate::store::{self, ClientEntry, SessionFile};
@@ -46,6 +47,10 @@ enum Step {
     Load(String, bool),
     CopyTo(String),
     MoveTo(String),
+    /// Snapshot the session folder: (label, auto: skip when nothing changed).
+    Snapshot(String, bool),
+    /// Put the folder back as it was in a snapshot (clients stopped).
+    Checkout(String),
     Launch,
     WaitReady,
     Loaded,
@@ -73,6 +78,9 @@ pub struct Daemon {
     op: Option<Op>,
     pub(crate) patch: patch::PatchMem,
     last_state: Option<State>,
+    /// A git child running for a snapshot or a checkout, and how it ended.
+    git: Option<u32>,
+    git_status: Option<i32>,
     quit: bool,
     /// No session and no front end since then: exit after a while.
     idle_since: Option<Instant>,
@@ -130,6 +138,8 @@ pub fn run() -> Result<(), String> {
         op: None,
         patch: patch::PatchMem::default(),
         last_state: None,
+        git: None,
+        git_status: None,
         quit: false,
         idle_since: Some(Instant::now()),
     };
@@ -290,6 +300,7 @@ impl Daemon {
             st.session = Some(s.name.clone());
             st.path = Some(s.dir.display().to_string());
             st.notes = s.file.notes.clone();
+            st.auto_snapshot = s.file.auto_snapshot.unwrap_or(true);
             st.clients = s.clients.iter().map(Client::state).collect();
             st.trash = s
                 .trash
@@ -363,12 +374,14 @@ impl Daemon {
             }
             Request::Save if self.op.is_some() => busy(),
             Request::Save => {
-                self.start_op("Saving…".into(), vec![Step::SaveClients, Step::WriteFile]);
+                let snap = self.auto_snapshot();
+                self.start_op("Saving…".into(), vec![Step::SaveClients, Step::WriteFile, snap]);
                 ok("saving")
             }
             Request::Close if self.op.is_some() => busy(),
             Request::Close => {
-                self.start_op("Closing…".into(), vec![Step::SaveClients, Step::WriteFile, Step::StopClients, Step::Unload]);
+                let snap = self.auto_snapshot();
+                self.start_op("Closing…".into(), vec![Step::SaveClients, Step::WriteFile, snap, Step::StopClients, Step::Unload]);
                 ok("closing")
             }
             Request::Abort => {
@@ -471,6 +484,41 @@ impl Daemon {
                 }
                 None => Reply::Error { msg: "not connected to JACK".into() },
             },
+            Request::Snapshot { .. } | Request::Rewind { .. } | Request::SetAutoSnapshot { .. } | Request::ListSnapshots if self.session.is_none() => {
+                Reply::Error { msg: "no session is open".into() }
+            }
+            Request::Snapshot { .. } | Request::Rewind { .. } if self.op.is_some() => busy(),
+            Request::Snapshot { label } => {
+                let label = if label.trim().is_empty() { "snapshot".to_string() } else { label.trim().to_string() };
+                self.start_op("Taking a snapshot…".into(), vec![Step::SaveClients, Step::WriteFile, Step::Snapshot(label, false)]);
+                ok("snapshot")
+            }
+            Request::ListSnapshots => Reply::Snapshots { snapshots: snapshots::list(&self.session.as_ref().unwrap().dir) },
+            Request::Rewind { id } => {
+                let s = self.session.as_ref().unwrap();
+                if !snapshots::list(&s.dir).iter().any(|e| e.id == id) {
+                    return Reply::Error { msg: format!("no snapshot {id}") };
+                }
+                let name = s.name.clone();
+                let steps = vec![
+                    Step::SaveClients,
+                    Step::WriteFile,
+                    Step::Snapshot(format!("before going back to {id}"), false),
+                    Step::StopClients,
+                    Step::Checkout(id.clone()),
+                    Step::Unload,
+                    Step::Load(name, false),
+                    Step::Launch,
+                    Step::WaitReady,
+                    Step::Loaded,
+                ];
+                self.start_op(format!("Going back to {id}…"), steps);
+                ok("rewinding")
+            }
+            Request::SetAutoSnapshot { on } => {
+                self.session.as_mut().unwrap().file.auto_snapshot = Some(on);
+                ok(if on { "automatic snapshots on" } else { "automatic snapshots off" })
+            }
             Request::Quit => {
                 self.quit = true;
                 ok("bye")
@@ -624,7 +672,8 @@ impl Daemon {
                 let name = name.clone();
                 if let Some(s) = &self.session {
                     let to = self.root.join(&name);
-                    if let Err(e) = copy_dir(&s.dir, &to) {
+                    // Not its snapshot history or logs: the copy starts its own.
+                    if let Err(e) = copy_dir(&s.dir, &to, &[snapshots::DIR, ".patchbox", store::LOCK]) {
                         self.log(format!("copy to {}: {e}", to.display()), true);
                         self.op = None;
                         return false;
@@ -649,6 +698,44 @@ impl Daemon {
                     s.name = name;
                 }
                 true
+            }
+            Step::Snapshot(label, _) if label.is_empty() => true,
+            Step::Snapshot(label, auto) => {
+                if first {
+                    let (label, auto) = (label.clone(), *auto);
+                    let Some(dir) = self.session.as_ref().map(|s| s.dir.clone()) else { return true };
+                    match snapshots::spawn_snapshot(&dir, &label, auto) {
+                        Ok(pid) => {
+                            self.git = Some(pid);
+                            self.git_status = None;
+                            self.set_deadline(Some(now + Duration::from_secs(120)));
+                        }
+                        Err(e) => {
+                            self.log(e, true);
+                            return true;
+                        }
+                    }
+                }
+                self.git_done("snapshot", late)
+            }
+            Step::Checkout(id) => {
+                if first {
+                    let id = id.clone();
+                    let Some(dir) = self.session.as_ref().map(|s| s.dir.clone()) else { return true };
+                    match snapshots::spawn_checkout(&dir, &id) {
+                        Ok(pid) => {
+                            self.git = Some(pid);
+                            self.git_status = None;
+                            self.set_deadline(Some(now + Duration::from_secs(120)));
+                        }
+                        Err(e) => {
+                            self.log(e, true);
+                            self.op = None;
+                            return false;
+                        }
+                    }
+                }
+                self.git_done("checkout", late)
             }
             Step::Launch => {
                 let n = self.session.as_ref().map_or(0, |s| s.clients.len());
@@ -689,6 +776,28 @@ impl Daemon {
             }
         }
         done
+    }
+
+    fn auto_snapshot(&self) -> Step {
+        let on = self.session.as_ref().is_some_and(|s| s.file.auto_snapshot.unwrap_or(true));
+        // An empty label: automatic snapshots are off for this session (the step does nothing).
+        Step::Snapshot(if on { "saved".into() } else { String::new() }, true)
+    }
+
+    /// The git child of the current step finished (or ran out of time).
+    fn git_done(&mut self, what: &str, late: bool) -> bool {
+        if self.git.is_some() && !late {
+            return false;
+        }
+        if let Some(pid) = self.git.take() {
+            unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+            self.log(format!("git {what} took too long: stopped"), true);
+        }
+        match self.git_status.take() {
+            Some(0) | None => {}
+            Some(c) => self.log(format!("git {what} failed (status {c}); see .patchbox/git.log"), true),
+        }
+        true
     }
 
     fn set_deadline(&mut self, d: Option<Instant>) {
@@ -800,6 +909,11 @@ impl Daemon {
                 break;
             }
             let code = if libc::WIFEXITED(status) { format!("exit {}", libc::WEXITSTATUS(status)) } else { format!("signal {}", libc::WTERMSIG(status)) };
+            if self.git == Some(pid as u32) {
+                self.git = None;
+                self.git_status = Some(if libc::WIFEXITED(status) { libc::WEXITSTATUS(status) } else { 128 });
+                continue;
+            }
             let mut msg = None;
             if let Some(s) = &mut self.session {
                 for c in &mut s.clients {
@@ -875,14 +989,17 @@ impl Daemon {
     }
 }
 
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for e in std::fs::read_dir(from)? {
         let e = e?;
+        if skip.iter().any(|s| e.file_name() == *s) {
+            continue;
+        }
         let (src, dst) = (e.path(), to.join(e.file_name()));
         let t = e.file_type()?;
         if t.is_dir() {
-            copy_dir(&src, &dst)?;
+            copy_dir(&src, &dst, &[])?;
         } else if t.is_symlink() {
             std::os::unix::fs::symlink(std::fs::read_link(&src)?, &dst)?;
         } else {

@@ -42,6 +42,21 @@ check "session file written" '[ -f "$W/sessions/t1/session.toml" ]'
 check "client saved its state" 'ls "$W"/sessions/t1/*/state.txt >/dev/null 2>&1'
 saved_conns() { python3 -I -c 'import sys,tomllib; d=tomllib.load(open(sys.argv[1],"rb")); print("\n".join(a+" -> "+b for a,b in d["connections"]["list"]))' "$W/sessions/t1/session.toml"; }
 check "connections saved (out_R, in_L; not the removed out_L)" 'saved_conns | grep -q "$JN:out_R -> system:playback_2" && saved_conns | grep -q "system:capture_1 -> $JN:in_L" && ! saved_conns | grep -q "$JN:out_L -> system:playback_1"'
+check "auto snapshot taken at save" 'ctl snapshots | grep -q "saved"'
+check "snapshot commits unsigned (the user's commit.gpgsign does not apply)" '[ "$(git --git-dir="$W/sessions/t1/.patchbox-snapshots" log -1 --format=%G?)" = N ]'
+check "audio and logs left out of snapshots" '! git --git-dir="$W/sessions/t1/.patchbox-snapshots" ls-files | grep -q "^.patchbox/"'
+ctl notes "first notes" >/dev/null
+ctl snapshot with first notes >/dev/null
+wait_for 'st | grep -q "\"busy\": null"'
+ctl notes "second notes" >/dev/null
+ctl save >/dev/null
+wait_for 'st | grep -q "\"busy\": null"'
+SNAP=$(ctl snapshots | grep "with first notes" | cut -f1)
+check "named snapshot listed ($SNAP)" '[ -n "$SNAP" ]'
+ctl rewind "$SNAP" >/dev/null
+wait_for 'st | grep -q "\"busy\": null" && st | grep -q "\"status\": \"ready\""'
+check "going back restored the notes" 'st | grep -q "\"notes\": \"first notes\""'
+check "going back can be undone (snapshot of the state before)" 'ctl snapshots | grep -q "before going back"'
 ctl close >/dev/null
 wait_for 'st | grep -q "\"session\": null"'
 check "closed; client stopped" '! pgrep -f pbx-fake-nsm >/dev/null'
@@ -56,6 +71,7 @@ ctl duplicate t2 >/dev/null
 wait_for 'st | grep -q "\"session\": \"t2\"" && st | grep -q "\"busy\": null"'
 check "duplicated to t2 and opened it" 'st | grep -q "\"session\": \"t2\""'
 check "t1 still on disk" '[ -f "$W/sessions/t1/session.toml" ]'
+check "the copy has no snapshot history of t1" '! git --git-dir="$W/sessions/t2/.patchbox-snapshots" log --format=%s 2>/dev/null | grep -q "first notes"'
 check "sessions listed" 'ctl sessions | grep -q "^t2"'
 ctl abort >/dev/null
 wait_for 'st | grep -q "\"session\": null"'

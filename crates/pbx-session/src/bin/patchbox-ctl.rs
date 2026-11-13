@@ -4,12 +4,13 @@
 //!                duplicate NAME | rename NAME | add [--plain] EXE [ARGS…]
 //!                start ID | stop ID | kill ID | save-client ID | show-gui ID | hide-gui ID
 //!                trash ID | restore ID | notes TEXT | connect SRC DST | disconnect SRC DST
-//!                graph | quit | watch
+//!                graph | snapshot [LABEL] | snapshots | rewind ID | auto-snapshot on|off
+//!                quit | watch
 
 use pbx_session::proto::{Conn, FromDaemon, Push, Reply, Request};
 
 fn usage() -> ! {
-    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(5).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
+    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(6).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
     std::process::exit(2)
 }
 
@@ -43,6 +44,10 @@ fn main() {
         Some("connect") => Request::Connect { src: arg(1), dst: arg(2) },
         Some("disconnect") => Request::Disconnect { src: arg(1), dst: arg(2) },
         Some("graph") => Request::Graph,
+        Some("snapshot") => Request::Snapshot { label: a[1..].join(" ") },
+        Some("snapshots") => Request::ListSnapshots,
+        Some("rewind") => Request::Rewind { id: arg(1) },
+        Some("auto-snapshot") => Request::SetAutoSnapshot { on: arg(1) == "on" },
         Some("quit") => Request::Quit,
         Some("watch") => Request::Subscribe,
         _ => usage(),
@@ -65,6 +70,11 @@ fn main() {
             println!("# {root}");
             for s in sessions {
                 println!("{}\t{} clients\t{}", s.name, s.clients, s.notes);
+            }
+        }
+        Ok(Reply::Snapshots { snapshots }) => {
+            for s in snapshots {
+                println!("{}\t{}\t{}", s.id, s.time, s.label);
             }
         }
         Ok(Reply::State(st)) => println!("{}", serde_json::to_string_pretty(&st).unwrap_or_default()),

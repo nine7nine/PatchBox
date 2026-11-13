@@ -59,6 +59,8 @@ pub enum Kind {
     Rename,
     Duplicate,
     Notes,
+    Snapshot,
+    Snapshots,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

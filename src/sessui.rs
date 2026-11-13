@@ -22,6 +22,8 @@ pub enum SessAction {
     Duplicate,
     Notes,
     OpenFolder,
+    Snapshot,
+    Snapshots,
     AddApp,
     Start(String),
     Stop(String),
@@ -79,6 +81,15 @@ impl App {
                         }
                     }
                 }
+                FromDaemon::Reply(Reply::Snapshots { snapshots }) => {
+                    self.sess.snapshots = snapshots;
+                    if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::Snapshots) {
+                        let rows = self.snapshot_rows();
+                        if let Some(d) = &mut self.dialog {
+                            d.set_rows(rows);
+                        }
+                    }
+                }
                 FromDaemon::Reply(Reply::State(st)) => self.sess.state = st,
                 FromDaemon::Reply(Reply::Error { msg }) => self.say(msg, true),
                 FromDaemon::Reply(Reply::Ok { .. }) => {}
@@ -120,6 +131,24 @@ impl App {
                 text.push_str(&format!(" · {}", s.notes));
             }
             rows.push(Row { id: format!("session:{}", s.name), label: s.name.clone(), help: String::new(), control: Control::Link(text), modified: false });
+        }
+        rows
+    }
+
+    fn snapshot_rows(&self) -> Vec<Row> {
+        let mut rows = vec![Row {
+            id: "auto".into(),
+            label: "Automatic snapshots".into(),
+            help: "A snapshot at every save and close, when something changed".into(),
+            control: Control::Toggle(self.sess.state.auto_snapshot),
+            modified: false,
+        }];
+        rows.push(Row::header("Go back to"));
+        if self.sess.snapshots.is_empty() {
+            rows.push(Row::info("No snapshots yet", "save the session, or take one"));
+        }
+        for s in &self.sess.snapshots {
+            rows.push(Row { id: format!("snap:{}", s.id), label: format!("{} — {}", ago(s.time), s.label), help: String::new(), control: Control::Link(s.id.clone()), modified: false });
         }
         rows
     }
@@ -177,6 +206,8 @@ impl App {
                     MenuItem::new("Duplicate…", Action::Sess(SessAction::Duplicate)).enabled(open),
                     MenuItem::new("Rename…", Action::Sess(SessAction::Rename)).enabled(open),
                     MenuItem::new("Notes…", Action::Sess(SessAction::Notes)).enabled(open),
+                    MenuItem::new("Take a snapshot…", Action::Sess(SessAction::Snapshot)).enabled(open),
+                    MenuItem::new("Go back to a snapshot…", Action::Sess(SessAction::Snapshots)).enabled(open),
                     MenuItem::new("Open the session folder", Action::Sess(SessAction::OpenFolder)).enabled(open),
                     MenuItem::new("Close without saving", Action::Sess(SessAction::Abort)).enabled(open),
                 ];
@@ -195,6 +226,15 @@ impl App {
                 d.rows = vec![Row { id: "notes".into(), label: "Notes".into(), help: String::new(), control: Control::Text(st.notes.clone()), modified: false }];
                 d.buttons = vec!["Cancel".into(), "Save".into()];
                 d.edit("notes");
+                self.dialog = Some(d);
+            }
+            SessAction::Snapshot => self.name_dialog(Kind::Snapshot, "Take a snapshot", "Label", "", "Take"),
+            SessAction::Snapshots => {
+                self.sess.send(&Request::ListSnapshots);
+                let mut d = Dialog::new(Kind::Snapshots, "Snapshots");
+                d.rows = self.snapshot_rows();
+                d.buttons = vec!["Close".into()];
+                d.note = "Going back saves and snapshots the present first, so it can be undone too.".into();
                 self.dialog = Some(d);
             }
             SessAction::OpenFolder => {
@@ -259,6 +299,15 @@ impl App {
                 self.dialog = None;
                 self.send(Request::Open { name });
             }
+            Event::Set(id, v) if id.starts_with("snap:") && v == "activate" => {
+                let id = id.trim_start_matches("snap:").to_string();
+                self.dialog = None;
+                self.send(Request::Rewind { id });
+            }
+            Event::Set(id, v) if kind == Kind::Snapshots && id == "auto" => {
+                d.set_local(&id, &v);
+                self.send(Request::SetAutoSnapshot { on: v == "on" });
+            }
             Event::Set(id, v) if id.starts_with("app:") && v == "activate" => {
                 let i: usize = id.trim_start_matches("app:").parse().unwrap_or(usize::MAX);
                 let Some(a) = self.apps.as_ref().and_then(|a| a.get(i)).cloned() else { return };
@@ -275,6 +324,7 @@ impl App {
                     (Kind::Rename, _) => Some(Request::Rename { name }),
                     (Kind::Duplicate, _) => Some(Request::Duplicate { name }),
                     (Kind::Notes, _) => Some(Request::SetNotes { notes: d.value("notes").unwrap_or_default() }),
+                    (Kind::Snapshot, _) => Some(Request::Snapshot { label: name }),
                     (Kind::AddApp, _) => {
                         let cmd = d.value("cmd").unwrap_or_default();
                         let nsm = d.value("nsm").as_deref() == Some("on");
