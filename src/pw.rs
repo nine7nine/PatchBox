@@ -95,11 +95,20 @@ impl Objects {
             let k = used.entry(base.clone()).or_insert(0);
             *k += 1;
             let name = if *k == 1 { base } else { format!("{base}#{k}") };
-            let title = s(p, "node.description").or(s(p, "node.nick")).or(s(p, "application.name")).unwrap_or(&name).to_string();
+            // qpwgraph's naming: description, else nick, else node.name; the application in
+            // front when it says something else ("Firefox/…").
+            let nonempty = |k: &str| s(p, k).filter(|v| !v.is_empty());
+            let base_title = nonempty("node.description").or(nonempty("node.nick")).unwrap_or(&name).to_string();
+            let title = match nonempty("application.name") {
+                Some(app) if app != base_title => format!("{app}/{base_title}"),
+                _ => base_title,
+            };
             let class = s(p, "media.class").unwrap_or("");
             node_video.insert(*id, class.contains("Video"));
-            let label = if class.is_empty() { title } else { format!("{title} [{class}]") };
-            g.client_pretty.insert(name.clone(), label);
+            g.client_pretty.insert(name.clone(), title);
+            if !class.is_empty() {
+                g.client_class.insert(name.clone(), class.to_lowercase().replace('/', " "));
+            }
             node_name.insert(*id, name);
         }
         let mut by_id: HashMap<u32, usize> = HashMap::new();
@@ -110,9 +119,10 @@ impl Objects {
             let short = s(p, "port.name").unwrap_or("port").to_string();
             let dir_out = s(&port, "direction") == Some("output") || s(p, "port.direction") == Some("out");
             let dsp = s(p, "format.dsp").unwrap_or("");
+            // "32 bit raw UMP" (MIDI 2.0) counts as MIDI, as in qpwgraph.
             let kind = if dsp.contains("audio") {
                 PortKind::Audio
-            } else if dsp.contains("midi") {
+            } else if dsp.contains("midi") || dsp.contains("UMP") {
                 PortKind::Midi
             } else if dsp.contains("video") || node_video.get(&nid).copied().unwrap_or(false) {
                 PortKind::Video
@@ -264,7 +274,8 @@ mod tests {
         assert_eq!(g.conns.len(), 1);
         assert_eq!(ids["skype:output_FL"], 85);
         assert!(g.port("jack_sink:playback_FL").unwrap().is_input());
-        assert_eq!(g.client_pretty["jack_sink"], "JACK Sink [Audio/Sink]");
+        assert_eq!(g.client_pretty["jack_sink"], "JACK Sink");
+        assert_eq!(g.client_class["jack_sink"], "audio sink");
         // The link goes away, then the stream.
         o.apply(&serde_json::json!([{"id": 99, "info": null}, {"id": 82, "info": null}, {"id": 85, "info": null}]));
         let (g, _) = o.graph();

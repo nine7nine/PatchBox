@@ -221,7 +221,7 @@ impl Model {
             let ni = match m.index.get(&key) {
                 Some(&n) => n,
                 None => {
-                    let sub = sub.or_else(|| {
+                    let sub = sub.or_else(|| g.client_class.get(&p.client).cloned()).or_else(|| {
                         (hw && role != Role::Main).then(|| if role == Role::Source { "capture" } else { "playback" }.to_string())
                     });
                     let title = layout.names.get(&key.id()).cloned().unwrap_or(title);

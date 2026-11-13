@@ -81,6 +81,8 @@ pub struct Graph {
     pub client_pretty: HashMap<String, String>,
     /// Client name -> icon name (metadata).
     pub client_icon: HashMap<String, String>,
+    /// Client name -> a short kind shown above its node (PipeWire's media class).
+    pub client_class: HashMap<String, String>,
 }
 
 impl Graph {
