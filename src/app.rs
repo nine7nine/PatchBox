@@ -67,6 +67,11 @@ pub enum Action {
     SavePresetPrompt,
     /// The connection rules page (toggles).
     RulesPage,
+    /// Line up the selected blocks.
+    Align(crate::canvas::Align),
+    HideSelected,
+    SelectAll,
+    ClearSelection,
     /// Add (true) or remove a rule for this connection: output, input.
     Rule(String, String, bool),
     /// Make every present connection of this node's ports a rule.
@@ -1438,6 +1443,21 @@ impl App {
                 items.push(MenuItem::new("Save the current settings as a preset…", Action::SavePresetPrompt).enabled(self.jack_now.is_some()));
                 items.push(MenuItem::new("Presets on the settings page", Action::ServerSettings));
                 self.ui.open_menu([r.x, r.bottom() + 2.0], items);
+            }
+            Action::Align(how) => self.align(how),
+            Action::HideSelected => {
+                let ids: Vec<String> = std::mem::take(&mut self.canvas.selected).into_iter().collect();
+                for id in ids {
+                    self.apply(Action::Hide(id));
+                }
+            }
+            Action::SelectAll => {
+                self.canvas.selected = (0..self.model.nodes.len()).filter(|&i| !self.layout.hidden.contains(&self.model.nodes[i].key.id())).map(|i| self.model.nodes[i].key.id()).collect();
+                self.redraw = true;
+            }
+            Action::ClearSelection => {
+                self.canvas.selected.clear();
+                self.redraw = true;
             }
             Action::RulesPage if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Rules) => self.dialog = None,
             Action::RulesPage => {

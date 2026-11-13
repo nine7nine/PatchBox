@@ -41,6 +41,11 @@ pub enum Drag {
     Link {
         src: String,
     },
+    /// Ctrl+drag on empty canvas: blocks touching the rectangle join `base` in the selection.
+    Band {
+        from: [f32; 2],
+        base: std::collections::BTreeSet<String>,
+    },
     /// A wire of the ports view picked up by one end (`moving_in`: the input end), from `from`
     /// (window pixels): dropped on another port or block it moves there, on empty canvas it
     /// is disconnected.
@@ -95,6 +100,10 @@ pub struct CanvasState {
     pub mouse: [f32; 2],
     /// A node to flash after "find in canvas".
     pub flash: Option<(String, Instant)>,
+    /// Selected blocks (node ids): they move together and can be aligned.
+    pub selected: std::collections::BTreeSet<String>,
+    /// Where the left button went down (a click on empty canvas clears the selection).
+    pub pressed_at: [f32; 2],
 }
 
 /// World -> screen transform.
@@ -123,6 +132,13 @@ impl App {
         let c = xf.s(self.node_pos(i));
         let [w, h] = self.node_size(i);
         Rect::centered(c[0], c[1], w * xf.z, h * xf.z)
+    }
+
+    /// A node with its port list, window pixels.
+    fn node_extent_px(&self, xf: &Xf, i: usize) -> Rect {
+        let e = self.node_extent(i);
+        let p = xf.s([e.x, e.y]);
+        Rect::new(p[0], p[1], e.w * xf.z, e.h * xf.z)
     }
 
     fn matrix_rect(&self, xf: &Xf, m: &Matrix) -> Rect {
@@ -425,6 +441,26 @@ impl App {
         self.canvas.mouse = [x, y];
         let h = self.hit(x, y);
         self.redraw = true;
+        if button == sdl3::mouse::MouseButton::Left {
+            self.canvas.pressed_at = [x, y];
+        }
+        // Selection: Ctrl+click toggles a block, Ctrl+drag on empty canvas draws a band.
+        if button == sdl3::mouse::MouseButton::Left && ctrl && clicks < 2 {
+            match h {
+                Hover::Node(i) | Hover::In(i) | Hover::Out(i) => {
+                    let id = self.model.nodes[i].key.id();
+                    if !self.canvas.selected.remove(&id) {
+                        self.canvas.selected.insert(id);
+                    }
+                    return;
+                }
+                Hover::None | Hover::Wire(..) | Hover::MatWire(..) => {
+                    self.canvas.drag = Drag::Band { from: [x, y], base: self.canvas.selected.clone() };
+                    return;
+                }
+                _ => {}
+            }
+        }
         match button {
             B::Middle => self.canvas.drag = Drag::Pan { last: [x, y] },
             B::Right => self.canvas_menu(h, x, y),
@@ -457,7 +493,12 @@ impl App {
                     self.canvas.drag = Drag::Link { src: self.model.nodes[i].key.id() }
                 }
                 Hover::Node(i) | Hover::In(i) => {
-                    self.canvas.drag = Drag::Node { id: self.model.nodes[i].key.id(), last: [x, y], raw: self.node_pos(i) }
+                    let id = self.model.nodes[i].key.id();
+                    // A block outside the selection moves alone (and the selection goes).
+                    if !self.canvas.selected.contains(&id) {
+                        self.canvas.selected.clear();
+                    }
+                    self.canvas.drag = Drag::Node { id, last: [x, y], raw: self.node_pos(i) }
                 }
                 Hover::Wire(..) => {
                     // Picked up by its nearer end.
@@ -528,8 +569,28 @@ impl App {
                 let half = [NODE_W / 2.0, NODE_H / 2.0];
                 let target = self.snapped(*raw, half);
                 let cur = self.layout.nodes.get(id.as_str()).copied().unwrap_or(target);
-                // Matrices follow halfway (PatchMatrix): they stay between their two nodes.
-                self.move_node(id, target[0] - cur[0], target[1] - cur[1]);
+                let (dx, dy) = (target[0] - cur[0], target[1] - cur[1]);
+                // Matrices follow halfway (PatchMatrix): they stay between their two nodes. The
+                // rest of the selection moves with it.
+                self.move_node(id, dx, dy);
+                if self.canvas.selected.contains(id.as_str()) && (dx != 0.0 || dy != 0.0) {
+                    let others: Vec<String> = self.canvas.selected.iter().filter(|s| *s != id).cloned().collect();
+                    for o in others {
+                        self.move_node(&o, dx, dy);
+                    }
+                }
+            }
+            Drag::Band { from, base } => {
+                let band = Rect::new(from[0].min(x), from[1].min(y), (x - from[0]).abs(), (y - from[1]).abs());
+                let xf = self.xf();
+                let mut sel = base.clone();
+                for i in 0..self.model.nodes.len() {
+                    if self.visible(i) && self.node_extent_px(&xf, i).overlaps(&band) {
+                        sel.insert(self.model.nodes[i].key.id());
+                    }
+                }
+                self.canvas.selected = sel;
+                self.redraw = true;
             }
             Drag::Matrix { key, last, raw } => {
                 raw[0] += (x - last[0]) / z;
@@ -578,6 +639,9 @@ impl App {
     }
 
     fn canvas_release(&mut self, drag: Drag, x: f32, y: f32, ctrl: bool) {
+        if matches!(drag, Drag::Pan { .. }) && crate::gfx::dist(self.canvas.pressed_at, [x, y]) < 4.0 * self.scale {
+            self.canvas.selected.clear();
+        }
         if let Drag::Node { id, .. } = &drag
             && let Some(i) = self.model.node_by_id(id)
         {
@@ -809,7 +873,26 @@ impl App {
         let id = n.key.id();
         let hidden = self.layout.hidden.contains(&id);
         let split = n.key.role != crate::model::Role::Main;
-        let mut items = vec![I::header(n.title.clone())];
+        let mut items = Vec::new();
+        // Several blocks selected, this one among them: line them up.
+        let sel = self.canvas.selected.len();
+        if sel >= 2 && self.canvas.selected.contains(&id) {
+            items.push(I::header(format!("{sel} blocks selected")));
+            for (label, how) in [
+                ("Align left edges", Align::Left),
+                ("Align centres (column)", Align::CentreX),
+                ("Align right edges", Align::Right),
+                ("Align tops", Align::Top),
+                ("Align middles (row)", Align::CentreY),
+                ("Align bottoms", Align::Bottom),
+                ("Space evenly across", Align::SpreadX),
+                ("Space evenly down", Align::SpreadY),
+            ] {
+                items.push(I::new(label, Action::Align(how)));
+            }
+            items.push(I::new("Hide the selected", Action::HideSelected));
+        }
+        items.push(I::header(n.title.clone()));
         if find {
             items.push(I::new("Find in canvas", Action::CenterNode(id.clone())));
         }
@@ -982,6 +1065,18 @@ impl App {
             }
             let lit = lit_nodes.contains(&i) || flash.as_deref() == Some(&self.model.nodes[i].key.id());
             self.draw_node(g, &xf, i, lit);
+            if self.canvas.selected.contains(&self.model.nodes[i].key.id()) {
+                let r = self.node_extent_px(&xf, i);
+                let s = self.scale;
+                g.rrect_stroke(r.inset(-4.0 * s), 5.0 * s, (1.6 * s).max(1.0), alpha(LCD_TEXT, 0.9));
+            }
+        }
+        // The selection band.
+        if let Drag::Band { from, .. } = &self.canvas.drag {
+            let [x, y] = self.canvas.mouse;
+            let band = Rect::new(from[0].min(x), from[1].min(y), (x - from[0]).abs(), (y - from[1]).abs());
+            g.rect(band, alpha(LCD_TEXT, 0.08));
+            g.rect_stroke(band, self.scale.max(1.0), alpha(LCD_TEXT, 0.7));
         }
 
         // Matrices.
@@ -1533,4 +1628,88 @@ fn cut_to(g: &Gfx, px: f32, s: &str, max_w: f32) -> String {
     }
     out.push('…');
     out
+}
+
+/// Lining up selected blocks.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Align {
+    Left,
+    CentreX,
+    Right,
+    Top,
+    CentreY,
+    Bottom,
+    /// Equal gaps between them, left to right / top to bottom.
+    SpreadX,
+    SpreadY,
+}
+
+impl App {
+    /// Line up the selected blocks (their extents: header and ports). One undo step.
+    pub fn align(&mut self, how: Align) {
+        let mut items: Vec<(String, Rect)> = self
+            .canvas
+            .selected
+            .iter()
+            .filter_map(|id| self.model.node_by_id(id).map(|i| (id.clone(), self.node_extent(i))))
+            .collect();
+        if items.len() < 2 {
+            return;
+        }
+        self.history.begin(&self.layout);
+        // Spreading keeps their order along the axis.
+        match how {
+            Align::SpreadX => items.sort_by(|a, b| a.1.x.total_cmp(&b.1.x)),
+            Align::SpreadY => items.sort_by(|a, b| a.1.y.total_cmp(&b.1.y)),
+            _ => {}
+        }
+        let min = |f: fn(&Rect) -> f32| items.iter().map(|(_, r)| f(r)).fold(f32::MAX, f32::min);
+        let max = |f: fn(&Rect) -> f32| items.iter().map(|(_, r)| f(r)).fold(f32::MIN, f32::max);
+        let mut moves: Vec<(String, f32, f32)> = Vec::new();
+        match how {
+            Align::Left => {
+                let x = min(|r| r.x);
+                moves = items.iter().map(|(id, r)| (id.clone(), x - r.x, 0.0)).collect();
+            }
+            Align::Right => {
+                let x = max(|r| r.right());
+                moves = items.iter().map(|(id, r)| (id.clone(), x - r.right(), 0.0)).collect();
+            }
+            Align::CentreX => {
+                let x = items.iter().map(|(_, r)| r.cx()).sum::<f32>() / items.len() as f32;
+                moves = items.iter().map(|(id, r)| (id.clone(), x - r.cx(), 0.0)).collect();
+            }
+            Align::Top => {
+                let y = min(|r| r.y);
+                moves = items.iter().map(|(id, r)| (id.clone(), 0.0, y - r.y)).collect();
+            }
+            Align::Bottom => {
+                let y = max(|r| r.bottom());
+                moves = items.iter().map(|(id, r)| (id.clone(), 0.0, y - r.bottom())).collect();
+            }
+            Align::CentreY => {
+                let y = items.iter().map(|(_, r)| r.cy()).sum::<f32>() / items.len() as f32;
+                moves = items.iter().map(|(id, r)| (id.clone(), 0.0, y - r.cy())).collect();
+            }
+            Align::SpreadX | Align::SpreadY => {
+                let across = how == Align::SpreadX;
+                let (start, end) = if across { (min(|r| r.x), max(|r| r.right())) } else { (min(|r| r.y), max(|r| r.bottom())) };
+                let sizes: f32 = items.iter().map(|(_, r)| if across { r.w } else { r.h }).sum();
+                let gap = ((end - start - sizes) / (items.len() - 1) as f32).max(8.0);
+                let mut at = start;
+                for (id, r) in &items {
+                    let (from, size) = if across { (r.x, r.w) } else { (r.y, r.h) };
+                    moves.push(if across { (id.clone(), at - from, 0.0) } else { (id.clone(), 0.0, at - from) });
+                    at += size + gap;
+                }
+            }
+        }
+        for (id, dx, dy) in moves {
+            if dx != 0.0 || dy != 0.0 {
+                self.move_node(&id, dx, dy);
+            }
+        }
+        self.history.end(&self.layout);
+        self.redraw = true;
+    }
 }

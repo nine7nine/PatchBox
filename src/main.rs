@@ -379,8 +379,9 @@ fn main() {
                             app.ui.menu = None;
                             app.cancel_drag();
                             app.redraw = true;
-                            None
+                            Some(Action::ClearSelection)
                         }
+                        Keycode::A if ctrl => Some(Action::SelectAll),
                         Keycode::Z if ctrl && shift => Some(Action::Redo),
                         Keycode::Z if ctrl => Some(Action::Undo),
                         Keycode::Y if ctrl => Some(Action::Redo),
