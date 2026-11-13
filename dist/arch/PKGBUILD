@@ -22,7 +22,8 @@ depends=(
   libwayland-client.so libwayland-cursor.so libwayland-egl.so
   libxkbcommon.so
 )
-makedepends=(cargo cmake dbus git mesa pkgconf wayland wayland-protocols libxkbcommon)
+# SDL3 carries the Wayland protocol files it uses (wayland-scanner, from wayland, builds them).
+makedepends=(cargo cmake dbus git mesa pkgconf wayland libxkbcommon)
 optdepends=(
   'jack2dbus-nspa: the JACK server PatchBox is built for (jackdbus control, settings, presets)'
   'pipewire: the PipeWire graph and settings tab (pw-dump, pw-link, pw-metadata, pw-cli)'
