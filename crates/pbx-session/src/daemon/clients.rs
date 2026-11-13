@@ -44,6 +44,38 @@ pub struct Client {
     log: Option<std::path::PathBuf>,
 }
 
+/// `$NAME` and `${NAME}` in `s` replaced by their values.
+pub fn expand(s: &str, vars: &[(&str, &str)]) -> String {
+    let mut out = s.to_string();
+    for (k, v) in vars {
+        out = out.replace(&format!("${{{k}}}"), v).replace(&format!("${k}"), v);
+    }
+    out
+}
+
+/// `exe args` in a terminal emulator: $TERMINAL, else the first of foot, alacritty, kitty,
+/// konsole, gnome-terminal, xterm on PATH. The terminal is the process we watch: closing it ends
+/// the program.
+pub fn in_terminal(exe: &str, args: &[String]) -> Command {
+    let on_path = |n: &str| std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(n).is_file()));
+    let term = std::env::var("TERMINAL")
+        .ok()
+        .filter(|t| !t.trim().is_empty())
+        .or_else(|| ["foot", "alacritty", "kitty", "konsole", "gnome-terminal", "xterm"].into_iter().find(|t| on_path(t)).map(str::to_string))
+        .unwrap_or_else(|| "xterm".into());
+    let base = Path::new(&term).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut c = Command::new(&term);
+    match base.as_str() {
+        // A separate process each (an existing konsole would take the program and its env).
+        "konsole" => c.args(["--separate", "--nofork", "-e", exe]),
+        "gnome-terminal" => c.args(["--wait", "--", exe]),
+        "foot" | "kitty" => c.arg(exe),
+        _ => c.args(["-e", exe]),
+    };
+    c.args(args);
+    c
+}
+
 /// A client's log is cut back past this (the previous run's is kept as <id>.log.1).
 pub const LOG_MAX: u64 = 4 << 20;
 
@@ -127,6 +159,10 @@ impl Client {
             jack_name: self.jack_name.clone(),
             autostart: self.entry.autostart,
             last_save: self.entry.last_save,
+            env: self.entry.env.clone(),
+            save_signal: self.entry.save_signal,
+            stop_signal: self.entry.stop_signal,
+            terminal: self.entry.terminal,
         }
     }
 
@@ -155,8 +191,21 @@ impl Client {
         rotate(&path, 0);
         let log = std::fs::OpenOptions::new().create(true).append(true).open(&path).ok();
         self.log = log.is_some().then_some(path);
-        let mut cmd = Command::new(&self.entry.exe);
-        cmd.args(&self.entry.args).current_dir(dir).stdin(Stdio::null());
+        // $SESSION_NAME, $SESSION_PATH, $CLIENT_ID, $JACK_CLIENT_NAME in its arguments (and its
+        // environment's values) become what they name.
+        let jack_name = if self.entry.label.is_empty() { self.entry.id.clone() } else { self.entry.label.clone() };
+        let dir_s = dir.display().to_string();
+        let vars = [("SESSION_NAME", session), ("SESSION_PATH", dir_s.as_str()), ("CLIENT_ID", self.entry.id.as_str()), ("JACK_CLIENT_NAME", jack_name.as_str())];
+        let args: Vec<String> = self.entry.args.iter().map(|a| expand(a, &vars)).collect();
+        let mut cmd = if self.entry.terminal { in_terminal(&self.entry.exe, &args) } else {
+            let mut c = Command::new(&self.entry.exe);
+            c.args(&args);
+            c
+        };
+        cmd.current_dir(dir).stdin(Stdio::null());
+        for (k, v) in &self.entry.env {
+            cmd.env(k, expand(v, &vars));
+        }
         match log.as_ref().and_then(|f| Some((f.try_clone().ok()?, f.try_clone().ok()?))) {
             Some((a, b)) => {
                 cmd.stdout(a).stderr(b);
@@ -297,6 +346,15 @@ impl Client {
 
     /// Ask it to save. False if it can't now (not an NSM client, or not ready).
     pub fn save(&mut self) -> bool {
+        // A plain program with a save signal: sent, and taken as done after 300 ms (RaySession's).
+        if !self.entry.nsm && self.entry.save_signal > 0 && self.status == Status::Running
+            && let Some(pid) = self.pid
+        {
+            unsafe { libc::kill(pid as i32, self.entry.save_signal) };
+            self.status = Status::Saving;
+            self.reply_by = Some((Pending::Save, Instant::now() + Duration::from_millis(300)));
+            return true;
+        }
         if !(self.entry.nsm && self.out.is_some() && self.status == Status::Ready) {
             return false;
         }
@@ -323,7 +381,8 @@ impl Client {
 
     pub fn stop(&mut self) {
         let Some(pid) = self.pid else { return };
-        unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        let sig = if !self.entry.nsm && self.entry.stop_signal > 0 { self.entry.stop_signal } else { libc::SIGTERM };
+        unsafe { libc::kill(pid as i32, sig) };
         self.status = Status::Stopping;
         self.kill_at = Some(Instant::now() + STOP_WAIT);
     }
@@ -381,6 +440,11 @@ impl Client {
                     self.message = "no answer to open".into();
                     (format!("{id} did not answer /nsm/client/open"), true)
                 }
+                Pending::Save if !self.entry.nsm => {
+                    // A plain program told by signal: no confirmation comes.
+                    self.status = Status::Running;
+                    return None;
+                }
                 Pending::Save => {
                     self.status = Status::Ready;
                     self.message = "save not confirmed".into();
@@ -412,6 +476,22 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn variables_and_terminals() {
+        let vars = [("CLIENT_ID", "carla_1"), ("SESSION_NAME", "band")];
+        assert_eq!(expand("-n $CLIENT_ID ${SESSION_NAME}.x", &vars), "-n carla_1 band.x");
+        // SAFETY: only this test reads TERMINAL.
+        unsafe { std::env::set_var("TERMINAL", "/usr/bin/konsole") };
+        let c = in_terminal("htop", &["-d".into(), "5".into()]);
+        let args: Vec<String> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(c.get_program(), "/usr/bin/konsole");
+        assert_eq!(args, ["--separate", "--nofork", "-e", "htop", "-d", "5"]);
+        unsafe { std::env::set_var("TERMINAL", "foot") };
+        let c = in_terminal("htop", &[]);
+        assert_eq!(c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["htop"]);
+        unsafe { std::env::remove_var("TERMINAL") };
+    }
 
     #[test]
     fn logs_rotate_past_their_size() {

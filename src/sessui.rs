@@ -37,6 +37,8 @@ pub enum SessAction {
     Forget(String),
     ClientMenu(String, Rect),
     TrashMenu(Rect),
+    /// A client's properties dialog.
+    Props(String),
 }
 
 fn status_color(s: Status) -> crate::gfx::Color {
@@ -323,12 +325,40 @@ impl App {
                 if let Some(shown) = c.gui {
                     items.push(MenuItem::new(if shown { "Hide its window" } else { "Show its window" }, Action::Sess(SessAction::Gui(id.clone(), !shown))));
                 }
+                items.push(MenuItem::new("Properties…", Action::Sess(SessAction::Props(id.clone()))));
                 items.push(MenuItem::new("Move to the trash", Action::Sess(SessAction::Trash(id.clone()))).enabled(!running));
                 if !c.jack_name.is_empty() {
                     let node = format!("M:{}", c.jack_name);
                     items.push(MenuItem::new("Find in the graph", Action::CenterNode(node)));
                 }
                 self.ui.open_menu([r.x, r.bottom() + 2.0], items);
+            }
+            SessAction::Props(id) => {
+                let Some(c) = st.clients.iter().find(|c| c.id == id) else { return };
+                let sig = |none: &str| -> Vec<(String, String)> {
+                    let mut v = vec![("0".to_string(), none.to_string())];
+                    v.extend([(libc::SIGUSR1, "SIGUSR1"), (libc::SIGUSR2, "SIGUSR2"), (libc::SIGHUP, "SIGHUP"), (libc::SIGINT, "SIGINT"), (libc::SIGTERM, "SIGTERM"), (libc::SIGQUIT, "SIGQUIT")].iter().map(|(s, l)| (s.to_string(), l.to_string())));
+                    v
+                };
+                let mut cmd = vec![c.exe.clone()];
+                cmd.extend(c.args.iter().cloned());
+                let env = pbx_session::store::join_args(&c.env.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>());
+                let mut d = Dialog::new(Kind::ClientProps, format!("{} ({})", if c.label.is_empty() { &c.name } else { &c.label }, c.id));
+                d.tag = id.clone();
+                d.rows = vec![
+                    Row { id: "label".into(), label: "Label".into(), help: "Its name in the session (plain programs: also $JACK_CLIENT_NAME)".into(), control: Control::Text(c.label.clone()), modified: false },
+                    Row { id: "cmd".into(), label: "Command".into(), help: "The program and its arguments; '…' and \"…\" keep spaces. $SESSION_NAME, $SESSION_PATH, $CLIENT_ID and $JACK_CLIENT_NAME become theirs when it starts".into(), control: Control::Text(pbx_session::store::join_args(&cmd)), modified: false },
+                    Row { id: "env".into(), label: "Environment".into(), help: "NAME=value pairs, space separated (quote values with spaces); the same $… names work".into(), control: Control::Text(env), modified: false },
+                    Row::info("Protocol", if c.nsm { "NSM: saves and quits when the session tells it" } else { "plain program: the signals below" }),
+                ];
+                if !c.nsm {
+                    d.rows.push(Row { id: "save".into(), label: "Save signal".into(), help: "Sent at the session's save (it counts as saved after 300 ms); none: it saves on its own".into(), control: Control::Choice { value: c.save_signal.to_string(), options: sig("none"), editable: false }, modified: false });
+                    d.rows.push(Row { id: "stop".into(), label: "Stop signal".into(), help: "Sent to stop it (killed if it is still there after a while)".into(), control: Control::Choice { value: c.stop_signal.to_string(), options: sig("SIGTERM (default)"), editable: false }, modified: false });
+                }
+                d.rows.push(Row { id: "terminal".into(), label: "Run in a terminal".into(), help: "In a terminal emulator ($TERMINAL, else foot, alacritty, kitty, konsole, gnome-terminal or xterm), for programs that want one".into(), control: Control::Toggle(c.terminal), modified: false });
+                d.buttons = vec!["Cancel".into(), "Apply".into()];
+                d.note = "These apply when it starts next.".into();
+                self.dialog = Some(d);
             }
             SessAction::TrashMenu(r) => {
                 let mut items = Vec::new();
@@ -367,6 +397,33 @@ impl App {
                 self.send(Request::Add { exe: a.exe, args: a.args, nsm: a.nsm, label: if a.nsm { String::new() } else { a.name } });
             }
             Event::Set(id, v) => d.set_local(&id, &v),
+            Event::Button(b) if kind == Kind::ClientProps => {
+                let ok = d.buttons.get(b).map(String::as_str) == Some("Apply");
+                let d = self.dialog.take().unwrap();
+                if !ok {
+                    return;
+                }
+                let mut words = pbx_session::store::split_args(&d.value("cmd").unwrap_or_default());
+                if words.is_empty() {
+                    return self.say("A client needs a program", true);
+                }
+                let exe = words.remove(0);
+                let env = pbx_session::store::split_args(&d.value("env").unwrap_or_default())
+                    .into_iter()
+                    .filter_map(|w| w.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+                    .collect();
+                let num = |id: &str| d.value(id).and_then(|v| v.parse().ok()).unwrap_or(0);
+                let props = pbx_session::proto::ClientProps {
+                    label: d.value("label").unwrap_or_default().trim().to_string(),
+                    exe,
+                    args: words,
+                    env,
+                    save_signal: num("save"),
+                    stop_signal: num("stop"),
+                    terminal: d.value("terminal").as_deref() == Some("on"),
+                };
+                self.send(Request::SetClientProps { id: d.tag.clone(), props });
+            }
             Event::Button(b) => {
                 let label = d.buttons.get(b).cloned().unwrap_or_default();
                 let name = d.value("name").unwrap_or_default();

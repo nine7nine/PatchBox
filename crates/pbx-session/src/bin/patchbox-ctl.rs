@@ -7,12 +7,13 @@
 //!                trash ID | restore ID | notes TEXT | connect SRC DST | disconnect SRC DST
 //!                graph | snapshot [LABEL] | snapshots | rewind ID | auto-snapshot on|off | jack-memory on|off
 //!                rules | rule-add OUT IN | rule-del OUT IN   (names may hold *)
+//!                props ID [label=L] [save=SIG] [stop=SIG] [terminal=on|off] [env=K=V…] [-- CMD ARGS…]
 //!                quit | watch
 
 use pbx_session::proto::{Conn, FromDaemon, Push, Reply, Request};
 
 fn usage() -> ! {
-    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(8).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
+    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(9).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
     std::process::exit(2)
 }
 
@@ -54,6 +55,7 @@ fn main() {
         Some("auto-snapshot") => Request::SetAutoSnapshot { on: arg(1) == "on" },
         Some("jack-memory") => Request::SetJackMemory { on: arg(1) == "on" },
         Some("rules" | "rule-add" | "rule-del") => Request::Rules,
+        Some("props") => Request::State,
         Some("quit") => Request::Quit,
         Some("watch") => Request::Subscribe,
         _ => usage(),
@@ -66,6 +68,70 @@ fn main() {
         }
     };
     let watch = matches!(req, Request::Subscribe);
+    // props: the client's properties now, changed by the words given, sent back.
+    let req = if a[0] == "props" {
+        let id = arg(1);
+        let Ok(Reply::State(st)) = c.call(&Request::State) else {
+            eprintln!("patchbox-ctl: no state from patchboxd");
+            std::process::exit(1);
+        };
+        let Some(cl) = st.clients.iter().find(|x| x.id == id) else {
+            eprintln!("error: no client {id}");
+            std::process::exit(1);
+        };
+        let mut p = pbx_session::proto::ClientProps {
+            label: cl.label.clone(),
+            exe: cl.exe.clone(),
+            args: cl.args.clone(),
+            env: cl.env.clone(),
+            save_signal: cl.save_signal,
+            stop_signal: cl.stop_signal,
+            terminal: cl.terminal,
+        };
+        let sig = |v: &str| -> i32 {
+            let n = v.trim_start_matches("SIG");
+            n.parse().unwrap_or(match n {
+                "USR1" => libc::SIGUSR1,
+                "USR2" => libc::SIGUSR2,
+                "HUP" => libc::SIGHUP,
+                "INT" => libc::SIGINT,
+                "TERM" => libc::SIGTERM,
+                "QUIT" => libc::SIGQUIT,
+                _ => 0,
+            })
+        };
+        let mut words = a[2..].iter();
+        let mut env_given = false;
+        while let Some(w) = words.next() {
+            if w == "--" {
+                let rest: Vec<String> = words.by_ref().cloned().collect();
+                if let Some((exe, args)) = rest.split_first() {
+                    p.exe = exe.clone();
+                    p.args = args.to_vec();
+                }
+                break;
+            }
+            match w.split_once('=') {
+                Some(("label", v)) => p.label = v.into(),
+                Some(("save", v)) => p.save_signal = sig(v),
+                Some(("stop", v)) => p.stop_signal = sig(v),
+                Some(("terminal", v)) => p.terminal = v == "on",
+                Some(("env", kv)) => {
+                    if !env_given {
+                        p.env.clear();
+                        env_given = true;
+                    }
+                    if let Some((k, v)) = kv.split_once('=') {
+                        p.env.push((k.into(), v.into()));
+                    }
+                }
+                _ => usage(),
+            }
+        }
+        Request::SetClientProps { id, props: p }
+    } else {
+        req
+    };
     // rule-add / rule-del: the rules, changed, sent back.
     let req = if matches!(a[0].as_str(), "rule-add" | "rule-del") {
         let mut rules = match c.call(&Request::Rules) {

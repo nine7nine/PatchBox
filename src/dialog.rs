@@ -75,6 +75,8 @@ pub enum Kind {
     Rules,
     /// Group ports: a name and how many.
     PortGroup,
+    /// A session client's properties.
+    ClientProps,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

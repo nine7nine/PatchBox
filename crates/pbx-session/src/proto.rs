@@ -53,6 +53,8 @@ pub enum Request {
     SetAutoSnapshot { on: bool },
     /// Remember JACK's settings with this session (jackdbus): kept at save, restored at open.
     SetJackMemory { on: bool },
+    /// Change a client's properties (from its next start).
+    SetClientProps { id: String, props: ClientProps },
     /// The connection rules (crate::rules).
     Rules,
     /// Replace the connection rules (saved; applied at once).
@@ -154,6 +156,26 @@ pub struct ClientState {
     /// Started when the session opens.
     pub autostart: bool,
     pub last_save: Option<u64>,
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+    #[serde(default)]
+    pub save_signal: i32,
+    #[serde(default)]
+    pub stop_signal: i32,
+    #[serde(default)]
+    pub terminal: bool,
+}
+
+/// What a client's properties dialog changes (applies from its next start).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct ClientProps {
+    pub label: String,
+    pub exe: String,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub save_signal: i32,
+    pub stop_signal: i32,
+    pub terminal: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]

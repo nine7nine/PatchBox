@@ -492,6 +492,22 @@ impl Daemon {
                 Ok("killed".into())
             }),
             Request::SaveClient { id } => self.with_client(&id, |d, i| d.save_client(i)),
+            Request::SetClientProps { id, props } => self.with_client(&id.clone(), move |d, i| {
+                let s = d.session.as_mut().ok_or("no session")?;
+                let e = &mut s.clients[i].entry;
+                if props.exe.trim().is_empty() {
+                    return Err("a client needs a program".into());
+                }
+                e.label = props.label;
+                e.exe = props.exe;
+                e.args = props.args;
+                e.env = props.env;
+                e.save_signal = props.save_signal;
+                e.stop_signal = props.stop_signal;
+                e.terminal = props.terminal;
+                d.write_file();
+                Ok(format!("{id}: properties set (from its next start)"))
+            }),
             Request::ShowGui { id } => self.with_client(&id, |d, i| d.gui(i, true)),
             Request::HideGui { id } => self.with_client(&id, |d, i| d.gui(i, false)),
             Request::SetLabel { id, label } => self.with_client(&id, |d, i| {

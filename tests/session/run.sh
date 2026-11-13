@@ -104,6 +104,26 @@ ctl new from-band --template band >/dev/null
 wait_for 'st | grep -q "\"session\": \"from-band\"" && st | grep -q "\"status\": \"ready\""'
 check "new session from the template runs its client" 'st | grep -q "\"session\": \"from-band\"" && st | grep -q "\"status\": \"ready\""'
 check "the template's connections came along" 'grep -q "out_R" "$W/sessions/from-band/session.toml"'
+# A plain program: $CLIENT_ID in its arguments, an environment variable, a save signal.
+cat > "$W/plain.sh" <<'SH'
+#!/bin/sh
+echo "$1 $FOO" > "$PATCHBOX_SESSION_PATH/plain-args"
+trap 'echo saved > "$PATCHBOX_SESSION_PATH/plain-saved"' USR1
+while :; do sleep 0.1; done
+SH
+chmod +x "$W/plain.sh"
+ctl add --plain "$W/plain.sh" '$CLIENT_ID' >/dev/null
+PL=$(st | python3 -I -c 'import sys,json; print(next(c["id"] for c in json.load(sys.stdin)["clients"] if c["exe"].endswith("plain.sh")))')
+ctl props "$PL" save=USR1 env=FOO=bar >/dev/null
+ctl stop "$PL" >/dev/null
+wait_for 'st | python3 -I -c "import sys,json; sys.exit(0 if any(c[\"id\"]==\"$PL\" and c[\"status\"]==\"stopped\" for c in json.load(sys.stdin)[\"clients\"]) else 1)"'
+rm -f "$W/sessions/from-band/plain-args"
+ctl start "$PL" >/dev/null
+wait_for '[ -s "$W/sessions/from-band/plain-args" ]'
+check "a plain program gets \$CLIENT_ID in its arguments and its environment" 'grep -qx "$PL bar" "$W/sessions/from-band/plain-args"'
+ctl save >/dev/null
+wait_for '[ -f "$W/sessions/from-band/plain-saved" ]'
+check "a plain program saves on its signal" '[ -f "$W/sessions/from-band/plain-saved" ]'
 ctl abort >/dev/null
 wait_for 'st | grep -q "\"session\": null"'
 check "aborted" 'st | grep -q "\"session\": null"'

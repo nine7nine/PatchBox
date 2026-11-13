@@ -38,6 +38,14 @@ pub struct ClientEntry {
     pub gui_visible: Option<bool>,
     /// Never announced last time: don't wait for it.
     pub no_announce: bool,
+    /// Extra environment, (name, value).
+    pub env: Vec<(String, String)>,
+    /// A plain program's signals: the one that makes it save (0: it can't), the one that
+    /// stops it (0: SIGTERM).
+    pub save_signal: i32,
+    pub stop_signal: i32,
+    /// Started in a terminal emulator.
+    pub terminal: bool,
     pub last_save: Option<u64>,
 }
 
@@ -278,5 +286,63 @@ mod recent_tests {
         super::recent::rename("h", "h2");
         assert_eq!(super::recent::load()[1], "h2");
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+/// A command line into words: spaces separate, '…' and "…" keep spaces, \ escapes the next
+/// character (a shell's rules, without expansion).
+pub fn split_args(s: &str) -> Vec<String> {
+    let (mut out, mut cur, mut have) = (Vec::new(), String::new(), false);
+    let mut quote: Option<char> = None;
+    let mut it = s.chars();
+    while let Some(ch) = it.next() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (Some('"'), '\\') | (None, '\\') => {
+                if let Some(n) = it.next() {
+                    cur.push(n);
+                }
+                have = true;
+            }
+            (Some(_), c) => cur.push(c),
+            (None, '\'' | '"') => {
+                quote = Some(ch);
+                have = true;
+            }
+            (None, c) if c.is_whitespace() => {
+                if have || !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                have = false;
+            }
+            (None, c) => cur.push(c),
+        }
+    }
+    if have || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Words back into a command line that split_args reads the same.
+pub fn join_args(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|w| if w.is_empty() || w.chars().any(|c| c.is_whitespace() || "'\"\\".contains(c)) { format!("'{}'", w.replace('\'', "'\\''")) } else { w.clone() })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod args_tests {
+    use super::*;
+
+    #[test]
+    fn words() {
+        assert_eq!(split_args(r#"carla -n "$JACK_CLIENT_NAME" 'my preset.carxp' a\ b"#), vec!["carla", "-n", "$JACK_CLIENT_NAME", "my preset.carxp", "a b"]);
+        assert_eq!(split_args("  x   y "), vec!["x", "y"]);
+        assert_eq!(split_args("''"), vec![""]);
+        let w = vec!["a b".to_string(), "it's".to_string(), "c".to_string()];
+        assert_eq!(split_args(&join_args(&w)), w);
     }
 }

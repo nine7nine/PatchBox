@@ -47,6 +47,7 @@ puts it in the graph.
 | Event log | right-click XRUNS (a click resets the count), or click the sidebar's log, or ☰ → Event log: xruns with the time, how late and the DSP load, the server's changes, clients, connections, PatchBox's messages (filter: Show); reset the xrun count here and the server's; a second tab shows the end of jackdbus's own log |
 | Interface scale | ☰ menu → Interface scale (default 125 %), or Ctrl+Shift+= / Ctrl+Shift+−: everything in the window except the window buttons, which follow the desktop's scale |
 | Sidebar | clients (click: find; right-click: menu, show hidden ones), log |
+| Session client | right-click it in the session panel → Properties…: label, command (quoted words; `$SESSION_NAME`, `$SESSION_PATH`, `$CLIENT_ID`, `$JACK_CLIENT_NAME` become theirs at start), environment (`NAME=value …`), run in a terminal; a plain (non-NSM) program's save signal (counts as saved after 300 ms) and stop signal. From its next start. Also `patchbox-ctl props ID save=USR1 env=K=V … -- CMD ARGS` |
 
 Physical ports and a2j devices start split into a capture node and a playback node (PatchMatrix's
 and RaySession's default); any client can be split or joined. Stereo pairs are detected with
