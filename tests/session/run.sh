@@ -124,6 +124,21 @@ check "a plain program gets \$CLIENT_ID in its arguments and its environment" 'g
 ctl save >/dev/null
 wait_for '[ -f "$W/sessions/from-band/plain-saved" ]'
 check "a plain program saves on its signal" '[ -f "$W/sessions/from-band/plain-saved" ]'
+# A client template: the fake NSM client with its files, added back as a new client; a per-client
+# start hook (sessions root) runs for it.
+mkdir -p "$W/sessions/patchbox-scripts/clients"
+echo 'echo "$PATCHBOX_CLIENT_PID" > "$PATCHBOX_SESSION_PATH/hook-start-$PATCHBOX_CLIENT_ID"' > "$W/sessions/patchbox-scripts/clients/start.sh"
+ids() { st | python3 -I -c 'import sys,json; print(" ".join(c["id"] for c in json.load(sys.stdin)["clients"] if c["nsm"]))'; }
+FK=$(ids | cut -d' ' -f1)
+ctl save-client-template "$FK" fake-tpl >/dev/null
+check "client template kept with its files" '[ -f "$W/config/client-templates/fake-tpl/client.toml" ] && ls "$W"/config/client-templates/fake-tpl/files/__CLIENT__*/state.txt >/dev/null 2>&1'
+check "client templates listed" 'ctl client-templates | grep -qx fake-tpl'
+ctl add-template fake-tpl >/dev/null
+wait_for '[ "$(ids | wc -w)" -ge 2 ] && [ "$(st | grep -c "\"status\": \"ready\"")" -ge 2 ]'
+NEW=$(ids | tr ' ' '\n' | grep -vx "$FK" | head -1)
+check "a client added from the template gets its own copy of the files ($NEW)" 'ls "$W"/sessions/from-band/*."$NEW"/state.txt >/dev/null 2>&1'
+wait_for '[ -s "$W/sessions/from-band/hook-start-$NEW" ]'
+check "the per-client start hook ran for it" '[ -s "$W/sessions/from-band/hook-start-$NEW" ]'
 ctl abort >/dev/null
 wait_for 'st | grep -q "\"session\": null"'
 check "aborted" 'st | grep -q "\"session\": null"'

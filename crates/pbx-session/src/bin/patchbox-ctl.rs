@@ -8,12 +8,13 @@
 //!                graph | snapshot [LABEL] | snapshots | rewind ID | auto-snapshot on|off | jack-memory on|off
 //!                rules | rule-add OUT IN | rule-del OUT IN   (names may hold *)
 //!                props ID [label=L] [save=SIG] [stop=SIG] [terminal=on|off] [env=K=V…] [-- CMD ARGS…]
+//!                client-templates | save-client-template ID NAME | add-template NAME
 //!                quit | watch
 
 use pbx_session::proto::{Conn, FromDaemon, Push, Reply, Request};
 
 fn usage() -> ! {
-    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(9).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
+    eprintln!("{}", include_str!("patchbox-ctl.rs").lines().skip(2).take(10).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n"));
     std::process::exit(2)
 }
 
@@ -56,6 +57,9 @@ fn main() {
         Some("jack-memory") => Request::SetJackMemory { on: arg(1) == "on" },
         Some("rules" | "rule-add" | "rule-del") => Request::Rules,
         Some("props") => Request::State,
+        Some("client-templates") => Request::ListClientTemplates,
+        Some("save-client-template") => Request::SaveClientTemplate { id: arg(1), name: arg(2) },
+        Some("add-template") => Request::AddClientTemplate { name: arg(1) },
         Some("quit") => Request::Quit,
         Some("watch") => Request::Subscribe,
         _ => usage(),
@@ -181,6 +185,11 @@ fn main() {
             }
         }
         Ok(Reply::State(st)) => println!("{}", serde_json::to_string_pretty(&st).unwrap_or_default()),
+        Ok(Reply::ClientTemplates { templates }) => {
+            for t in templates {
+                println!("{t}");
+            }
+        }
         Ok(Reply::Rules { rules }) => {
             for r in rules {
                 println!("{}\t{}", r.out, r.inp);

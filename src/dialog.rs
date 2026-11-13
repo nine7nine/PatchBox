@@ -77,6 +77,8 @@ pub enum Kind {
     PortGroup,
     /// A session client's properties.
     ClientProps,
+    /// The name for a client template.
+    ClientTemplate,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

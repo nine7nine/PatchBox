@@ -39,6 +39,8 @@ pub enum SessAction {
     TrashMenu(Rect),
     /// A client's properties dialog.
     Props(String),
+    /// Keep a client as a client template (asks the name).
+    ClientTemplate(String),
 }
 
 fn status_color(s: Status) -> crate::gfx::Color {
@@ -90,6 +92,15 @@ impl App {
                     self.sess.snapshots = snapshots;
                     if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::Snapshots) {
                         let rows = self.snapshot_rows();
+                        if let Some(d) = &mut self.dialog {
+                            d.set_rows(rows);
+                        }
+                    }
+                }
+                FromDaemon::Reply(Reply::ClientTemplates { templates }) => {
+                    self.sess.client_templates = templates;
+                    if self.dialog.as_ref().is_some_and(|d| d.kind == Kind::AddApp) {
+                        let rows = self.add_app_rows();
                         if let Some(d) = &mut self.dialog {
                             d.set_rows(rows);
                         }
@@ -186,8 +197,26 @@ impl App {
     }
 
     fn add_app_dialog(&mut self) {
-        let apps = self.apps.get_or_insert_with(crate::session::scan_apps).clone();
+        self.apps.get_or_insert_with(crate::session::scan_apps);
+        self.sess.send(&Request::ListClientTemplates);
+        let rows = self.add_app_rows();
+        let mut d = Dialog::new(Kind::AddApp, "Add an application");
+        d.rows = rows;
+        d.buttons = vec!["Cancel".into(), "Add command".into()];
+        d.note = "Click an application to add it to the session and start it.".into();
+        self.dialog = Some(d);
+    }
+
+    fn add_app_rows(&self) -> Vec<Row> {
+        let apps = self.apps.clone().unwrap_or_default();
         let mut rows = Vec::new();
+        // The user's client templates first: a client with its settings and files.
+        if !self.sess.client_templates.is_empty() {
+            rows.push(Row::header("Your client templates (with their files)"));
+            for t in &self.sess.client_templates {
+                rows.push(Row { id: format!("ctemplate:{t}"), label: t.clone(), help: "Add it with its own copy of the template's files".into(), control: Control::Link("add".into()), modified: false });
+            }
+        }
         let (nsm, other): (Vec<_>, Vec<_>) = apps.iter().enumerate().partition(|(_, a)| a.nsm);
         rows.push(Row::header("NSM applications (saved with the session)"));
         if nsm.is_empty() {
@@ -209,11 +238,7 @@ impl App {
             control: Control::Toggle(true),
             modified: false,
         });
-        let mut d = Dialog::new(Kind::AddApp, "Add an application");
-        d.rows = rows;
-        d.buttons = vec!["Cancel".into(), "Add command".into()];
-        d.note = "Click an application to add it to the session and start it.".into();
-        self.dialog = Some(d);
+        rows
     }
 
     pub fn session_action(&mut self, a: SessAction) {
@@ -326,12 +351,20 @@ impl App {
                     items.push(MenuItem::new(if shown { "Hide its window" } else { "Show its window" }, Action::Sess(SessAction::Gui(id.clone(), !shown))));
                 }
                 items.push(MenuItem::new("Properties…", Action::Sess(SessAction::Props(id.clone()))));
+                items.push(MenuItem::new("Save as a client template…", Action::Sess(SessAction::ClientTemplate(id.clone()))));
                 items.push(MenuItem::new("Move to the trash", Action::Sess(SessAction::Trash(id.clone()))).enabled(!running));
                 if !c.jack_name.is_empty() {
                     let node = format!("M:{}", c.jack_name);
                     items.push(MenuItem::new("Find in the graph", Action::CenterNode(node)));
                 }
                 self.ui.open_menu([r.x, r.bottom() + 2.0], items);
+            }
+            SessAction::ClientTemplate(id) => {
+                self.name_dialog(Kind::ClientTemplate, "Save as a client template", "Template name", &id, "Save");
+                if let Some(d) = &mut self.dialog {
+                    d.tag = id.clone();
+                    d.note = "Its command, properties and files: Add an application lists it in any session.".into();
+                }
             }
             SessAction::Props(id) => {
                 let Some(c) = st.clients.iter().find(|c| c.id == id) else { return };
@@ -380,6 +413,11 @@ impl App {
                 let name = id.trim_start_matches("session:").to_string();
                 self.dialog = None;
                 self.send(Request::Open { name });
+            }
+            Event::Set(id, v) if id.starts_with("ctemplate:") && v == "activate" => {
+                let name = id.trim_start_matches("ctemplate:").to_string();
+                self.dialog = None;
+                self.send(Request::AddClientTemplate { name });
             }
             Event::Set(id, v) if id.starts_with("snap:") && v == "activate" => {
                 let id = id.trim_start_matches("snap:").to_string();
@@ -431,6 +469,7 @@ impl App {
                     (_, "Cancel") => None,
                     (Kind::NewSession, _) => Some(Request::New { name, template: d.value("template").filter(|t| !t.is_empty()) }),
                     (Kind::SaveTemplate, _) => Some(Request::SaveTemplate { name }),
+                    (Kind::ClientTemplate, _) => Some(Request::SaveClientTemplate { id: d.tag.clone(), name }),
                     (Kind::Rename, _) => Some(Request::Rename { name }),
                     (Kind::Duplicate, _) => Some(Request::Duplicate { name }),
                     (Kind::Notes, _) => Some(Request::SetNotes { notes: d.value("notes").unwrap_or_default() }),

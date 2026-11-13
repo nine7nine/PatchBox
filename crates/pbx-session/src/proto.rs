@@ -55,6 +55,11 @@ pub enum Request {
     SetJackMemory { on: bool },
     /// Change a client's properties (from its next start).
     SetClientProps { id: String, props: ClientProps },
+    /// Keep a client (its command, properties and files) as a client template.
+    SaveClientTemplate { id: String, name: String },
+    ListClientTemplates,
+    /// Add a client from a template to the open session, with its own copy of the files.
+    AddClientTemplate { name: String },
     /// The connection rules (crate::rules).
     Rules,
     /// Replace the connection rules (saved; applied at once).
@@ -77,6 +82,7 @@ pub enum Reply {
     Snapshots { snapshots: Vec<SnapshotEntry> },
     Templates { templates: Vec<String> },
     Rules { rules: Vec<crate::rules::Rule> },
+    ClientTemplates { templates: Vec<String> },
     State(State),
 }
 
@@ -233,6 +239,12 @@ pub fn config_dir() -> Option<PathBuf> {
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
             .map(|c| c.join("patchbox"))
     })
+}
+
+/// Client templates: the configuration directory's client-templates/<name>/ (client.toml and
+/// files/, the client's files with its prefix replaced by __CLIENT__).
+pub fn client_templates_root() -> Option<PathBuf> {
+    Some(config_dir()?.join("client-templates"))
 }
 
 /// Where sessions live: PATCHBOX_SESSIONS, else ~/PatchBox Sessions.

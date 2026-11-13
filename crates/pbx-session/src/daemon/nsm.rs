@@ -65,6 +65,10 @@ impl Daemon {
                 if let Some((l, bad)) = line {
                     self.log(l, bad);
                 }
+                if to == "/nsm/client/save" && ok {
+                    let c = &self.session.as_ref().unwrap().clients[i];
+                    self.client_hook("save", c);
+                }
             }
             "/nsm/client/is_dirty" | "/nsm/client/is_clean" => {
                 if let Some(i) = self.client_at(addr) {

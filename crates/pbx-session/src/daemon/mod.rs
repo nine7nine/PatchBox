@@ -6,6 +6,7 @@
 //! (docs/ref-raysession-sessions.md).
 
 mod clients;
+mod ctemplates;
 mod nsm;
 mod patch;
 mod snapshots;
@@ -492,6 +493,9 @@ impl Daemon {
                 Ok("killed".into())
             }),
             Request::SaveClient { id } => self.with_client(&id, |d, i| d.save_client(i)),
+            Request::SaveClientTemplate { id, name } => self.save_client_template(&id, &name),
+            Request::ListClientTemplates => self.list_client_templates(),
+            Request::AddClientTemplate { name } => self.add_client_template(&name),
             Request::SetClientProps { id, props } => self.with_client(&id.clone(), move |d, i| {
                 let s = d.session.as_mut().ok_or("no session")?;
                 let e = &mut s.clients[i].entry;
@@ -732,7 +736,14 @@ impl Daemon {
         let done = match step {
             Step::SaveClients => {
                 if first {
-                    let n = self.session.as_mut().map_or(0, |s| s.clients.iter_mut().filter_map(|c| c.save().then_some(())).count());
+                    let saved: Vec<usize> = self.session.as_mut().map_or(Vec::new(), |s| s.clients.iter_mut().enumerate().filter_map(|(k, c)| c.save().then_some(k)).collect());
+                    let n = saved.len();
+                    // Plain programs told by signal: their save hook now (NSM ones' at their reply).
+                    for k in saved {
+                        if let Some(c) = self.session.as_ref().map(|s| &s.clients[k]).filter(|c| !c.entry.nsm) {
+                            self.client_hook("save", c);
+                        }
+                    }
                     self.set_deadline(if n > 0 { Some(now + Duration::from_secs(10)) } else { None });
                 }
                 let waiting = self.session.as_ref().is_some_and(|s| s.clients.iter().any(|c| c.status == Status::Saving));
@@ -1059,6 +1070,7 @@ impl Daemon {
             p.push(&path);
             path = p;
         }
+        clients::rotate(&dir.join(".patchbox").join("scripts.log"), 256 << 10);
         let log = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(".patchbox").join("scripts.log")).ok();
         let mut cmd = std::process::Command::new("sh");
         cmd.arg(&script)
@@ -1206,12 +1218,23 @@ impl Daemon {
         c.late = loaded;
         let (id, pid) = (c.entry.id.clone(), c.pid.unwrap_or(0));
         self.log(format!("Started {id} (pid {pid})"), false);
+        if let Some(c) = self.session.as_ref().map(|s| &s.clients[i]) {
+            self.client_hook("start", c);
+        }
         Ok(format!("started {id}"))
     }
 
     fn save_client(&mut self, i: usize) -> Result<String, String> {
         let c = &mut self.session.as_mut().ok_or("no session")?.clients[i];
-        if c.save() { Ok("saving".into()) } else { Err(format!("{} can't save now", c.entry.id)) }
+        if c.save() {
+            if !c.entry.nsm {
+                let c = &self.session.as_ref().unwrap().clients[i];
+                self.client_hook("save", c);
+            }
+            Ok("saving".into())
+        } else {
+            Err(format!("{} can't save now", c.entry.id))
+        }
     }
 
     fn gui(&mut self, i: usize, show: bool) -> Result<String, String> {
@@ -1234,15 +1257,20 @@ impl Daemon {
                 continue;
             }
             let mut msg = None;
+            let mut gone = None;
             if let Some(s) = &mut self.session {
-                for c in &mut s.clients {
+                for (k, c) in s.clients.iter_mut().enumerate() {
                     if c.pid == Some(pid as u32) {
                         msg = Some((c.exited(&code), c.status == Status::Error));
+                        gone = Some(k);
                     }
                 }
             }
             if let Some((m, bad)) = msg {
                 self.log(m, bad);
+            }
+            if let Some(c) = gone.and_then(|k| self.session.as_ref().map(|s| &s.clients[k])) {
+                self.client_hook("stop", c);
             }
         }
     }
@@ -1315,7 +1343,7 @@ impl Daemon {
     }
 }
 
-fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> std::io::Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for e in std::fs::read_dir(from)? {
         let e = e?;
