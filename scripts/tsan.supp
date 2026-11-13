@@ -1,0 +1,9 @@
+# ThreadSanitizer suppressions (TSAN_OPTIONS=suppressions=scripts/tsan.supp).
+#
+# Lock-order inversions inside third-party C libraries, between their own locks, all taken on
+# PatchBox's main thread (nothing else in the process calls them), so they can't deadlock here:
+# - Berkeley DB, which libjack's metadata uses: one order reading a property, another closing
+#   the client;
+# - libdbus, which SDL loads: its init and its shutdown.
+deadlock:libdb-5.3.so
+deadlock:libdbus-1.so
