@@ -389,6 +389,24 @@ impl Gfx {
         }
     }
 
+    /// A rounded rectangle filled from `top` at its top edge to `bottom` at its bottom (each
+    /// vertex its colour by height).
+    pub fn rrect_vgrad(&mut self, r: Rect, rad: f32, top: Color, bottom: Color) {
+        if r.w <= 0.0 || r.h <= 0.0 || (top[3] <= 0.0 && bottom[3] <= 0.0) {
+            return;
+        }
+        let pts = if rad < 0.5 { vec![[r.x, r.y], [r.right(), r.y], [r.right(), r.bottom()], [r.x, r.bottom()]] } else { Self::rrect_points(r, rad) };
+        let at = |p: [f32; 2]| mix(top, bottom, ((p[1] - r.y) / r.h).clamp(0.0, 1.0));
+        let c = [r.cx(), r.cy()];
+        let cc = at(c);
+        for i in 0..pts.len() {
+            let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+            self.verts.push(Vertex { pos: c, uv: WHITE_UV, color: cc });
+            self.verts.push(Vertex { pos: a, uv: WHITE_UV, color: at(a) });
+            self.verts.push(Vertex { pos: b, uv: WHITE_UV, color: at(b) });
+        }
+    }
+
     pub fn rrect_stroke(&mut self, r: Rect, rad: f32, w: f32, color: Color) {
         if rad < 0.5 {
             return self.rect_stroke(r, w, color);

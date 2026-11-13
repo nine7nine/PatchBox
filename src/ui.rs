@@ -244,10 +244,16 @@ pub fn lbutton(g: &mut Gfx, r: Rect, s: f32, tint: crate::gfx::Color, hover: boo
     } else {
         BTN_FACE
     };
-    g.rrect(r, rad, if enabled { face } else { alpha(face, 0.55) });
+    // Luluda's body: a hair lighter at the top, darker at the bottom, so it reads as slightly
+    // rounded (gentler than Luluda's +12 % / -18 %).
+    let face = if enabled { face } else { alpha(face, 0.55) };
+    let top = mix(face, [1.0, 1.0, 1.0, face[3]], 0.07);
+    let bottom = mix(face, [0.0, 0.0, 0.0, face[3]], 0.20);
+    g.rrect_vgrad(r, rad, top, bottom);
     let lw = s.max(1.0);
     g.rect(Rect::new(r.x + rad, r.y + lw, r.w - 2.0 * rad, lw), [1.0, 1.0, 1.0, if enabled { 0.06 } else { 0.02 }]);
-    g.rect(Rect::new(r.x + rad, r.bottom() - 2.0 * lw, r.w - 2.0 * rad, lw), [0.0, 0.0, 0.0, 0.35]);
+    // And its thin dark ring inside the border (fainter than Luluda's).
+    g.rrect_stroke(r.inset((1.2 * s).max(1.0)), (rad - 1.2 * s).max(0.5), 1.0, [0.0, 0.0, 0.0, 0.28]);
     // Luluda dims the border of an idle button to about three quarters of its tint; softer
     // still here, full only on the active one.
     let border = mix(BTN_FACE, tint, if !enabled { 0.14 } else if active { 0.72 } else if hover { 0.55 } else { 0.38 });
