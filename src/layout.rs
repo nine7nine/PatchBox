@@ -17,6 +17,10 @@ pub struct View {
     pub sidebar: bool,
     /// Port names drawn around every matrix (not only the hovered one).
     pub labels: bool,
+    /// The canvas grid is drawn.
+    pub grid: bool,
+    /// Moving a block or a matrix lands its top-left corner on the grid.
+    pub snap: bool,
     /// Interface scale for the window's contents (top bar, sidebar, canvas at zoom 1), on top of
     /// the desktop's scale. The window buttons follow the desktop's scale only.
     pub ui_scale: f32,
@@ -24,7 +28,7 @@ pub struct View {
 
 impl Default for View {
     fn default() -> View {
-        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, ui_scale: 1.25 }
+        View { cam: [0.0, 0.0], zoom: 1.0, kind: "AUDIO".into(), sidebar: true, labels: false, grid: true, snap: false, ui_scale: 1.25 }
     }
 }
 

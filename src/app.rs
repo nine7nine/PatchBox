@@ -26,6 +26,8 @@ pub enum Action {
     SetKind(PortKind),
     ToggleSidebar,
     ToggleLabels,
+    ToggleGrid,
+    ToggleSnap,
     BufferMenu(Rect),
     ScaleMenu(Rect),
     SetUiScale(f32),
@@ -914,6 +916,14 @@ impl App {
                 self.layout.view.sidebar = !self.layout.view.sidebar;
                 self.layout_changed();
             }
+            Action::ToggleGrid => {
+                self.layout.view.grid = !self.layout.view.grid;
+                self.layout_changed();
+            }
+            Action::ToggleSnap => {
+                self.layout.view.snap = !self.layout.view.snap;
+                self.layout_changed();
+            }
             Action::ToggleLabels => {
                 self.layout.view.labels = !self.layout.view.labels;
                 self.layout_changed();
@@ -940,7 +950,8 @@ impl App {
                 let labels = self.layout.view.labels;
                 let sidebar = self.layout.view.sidebar;
                 let ui_scale = self.layout.view.ui_scale;
-                self.ui.open_app_menu(r, labels, sidebar, ui_scale)
+                let (grid, snap) = (self.layout.view.grid, self.layout.view.snap);
+                self.ui.open_app_menu(r, labels, sidebar, ui_scale, grid, snap)
             }
             Action::SetBufferSize(n) => {
                 if let Some(c) = &self.jack

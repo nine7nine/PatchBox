@@ -240,7 +240,7 @@ fn main() {
                 Event::MouseMotion { x, y, .. } => {
                     let (px, py) = (x * density, y * density);
                     app.ui.mouse = [px, py];
-                    if app.ui.menu.is_some() || app.dialog.is_some() {
+                    if app.ui.menu.is_some() || (app.dialog.is_some() && app.canvas.area.contains(px, py)) {
                         app.redraw = true;
                         continue;
                     }
@@ -270,8 +270,8 @@ fn main() {
                         app.menu_click(px, py);
                         continue;
                     }
-                    // A dialog is modal.
-                    if let Some(d) = app.dialog.as_mut() {
+                    // A dialog covers the canvas (the chrome around it stays usable).
+                    if let Some(d) = app.dialog.as_mut().filter(|_| app.canvas.area.contains(px, py)) {
                         if mouse_btn == MouseButton::Left {
                             for ev in d.click(px, py) {
                                 app.dialog_event(ev);
@@ -325,7 +325,7 @@ fn main() {
                 }
                 Event::MouseWheel { x, y, mouse_x, mouse_y, .. } => {
                     let (px, py) = (mouse_x * density, mouse_y * density);
-                    if let Some(d) = app.dialog.as_mut() {
+                    if let Some(d) = app.dialog.as_mut().filter(|_| app.canvas.area.contains(px, py)) {
                         d.scroll_by(-y * 40.0 * app.scale);
                         app.redraw = true;
                     } else if app.ui.sidebar_rect.contains(px, py) {
@@ -387,6 +387,8 @@ fn main() {
                         Keycode::F => Some(Action::FitAll),
                         Keycode::L => Some(Action::ToggleLabels),
                         Keycode::E => Some(Action::ExpandAll),
+                        Keycode::G if shift => Some(Action::ToggleSnap),
+                        Keycode::G => Some(Action::ToggleGrid),
                         Keycode::Space => Some(Action::TransportToggle),
                         Keycode::F9 => Some(Action::ToggleSidebar),
                         Keycode::Q if ctrl => Some(Action::Quit),
@@ -443,7 +445,7 @@ fn main() {
             app.draw_canvas(&mut gfx);
             app.draw_ui(&mut gfx);
             if let Some(mut d) = app.dialog.take() {
-                d.draw(&mut gfx, app.win, app.scale, app.ui.mouse);
+                d.draw(&mut gfx, app.canvas.area, app.scale, app.ui.mouse);
                 let help = d.hover_help.clone();
                 app.dialog = Some(d);
                 if let Some((text, at)) = help

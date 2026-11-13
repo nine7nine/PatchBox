@@ -93,13 +93,15 @@ impl UiState {
         self.open_menu([at.x, at.y], items);
     }
 
-    pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool, ui_scale: f32) {
+    pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool, ui_scale: f32, grid: bool, snap: bool) {
         let items = vec![
             MenuItem::new(format!("Interface scale: {:.0} % …", ui_scale * 100.0), Action::ScaleMenu(Rect::new(under.x, under.bottom() + 2.0, 0.0, 0.0))),
             MenuItem::new("Undo (Ctrl+Z)", Action::Undo),
             MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo),
             MenuItem::new("Show sidebar", Action::ToggleSidebar).checked(sidebar),
             MenuItem::new("Port names on matrices", Action::ToggleLabels).checked(labels),
+            MenuItem::new("Show grid (G)", Action::ToggleGrid).checked(grid),
+            MenuItem::new("Snap to grid (Shift+G)", Action::ToggleSnap).checked(snap),
             MenuItem::new("Arrange (signal chain)", Action::Arrange),
             MenuItem::new("Fit to window", Action::FitAll),
             MenuItem::new("Show hidden clients", Action::ShowAll),

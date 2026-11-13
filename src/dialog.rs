@@ -278,27 +278,47 @@ impl Dialog {
         self.hits.iter().find(|(_, h)| matches!(h, Hit::Row(j, p) if *j == i && *p != Part::Reset)).map(|(r, _)| center(r))
     }
 
-    pub fn draw(&mut self, g: &mut Gfx, win: [f32; 2], s: f32, mouse: [f32; 2]) {
+    /// Pages (settings, lists) fill the canvas; prompts are a card over it.
+    pub fn is_page(&self) -> bool {
+        matches!(self.kind, Kind::Server | Kind::AddApp | Kind::OpenSession | Kind::Snapshots)
+    }
+
+    /// Draw over `area` (the canvas): a page fills it, a prompt is a card in its middle. The
+    /// window's chrome around stays usable.
+    pub fn draw(&mut self, g: &mut Gfx, area: Rect, s: f32, mouse: [f32; 2]) {
         self.hits.clear();
         self.hover_help = None;
-        g.rect(Rect::new(0.0, 0.0, win[0], win[1]), [0.0, 0.0, 0.0, 0.45]);
+        let page = self.is_page();
         let px = FONT * s;
         let lh = g.line_height(Face::Regular, px);
         let row_h = (30.0 * s).round();
-        let title_h = (40.0 * s).round();
+        let title_h = (if page { 48.0 } else { 40.0 } * s).round();
         let foot_h = (52.0 * s).round();
         let pad = 14.0 * s;
-        let w = (640.0 * s).min(win[0] - 40.0 * s);
         self.content_h = self.rows.iter().map(|r| if matches!(r.control, Control::Header) { row_h * 1.2 } else { row_h }).sum::<f32>() + pad;
-        let h = (title_h + self.content_h + foot_h).min(win[1] - 60.0 * s);
-        let panel = Rect::new(((win[0] - w) / 2.0).round(), ((win[1] - h) / 2.0).round(), w.round(), h.round());
+        let panel = if page {
+            // The whole canvas; the graph is behind it, not shown.
+            g.rect(area, PANEL_BG);
+            area
+        } else {
+            g.rect(area, [0.0, 0.0, 0.0, 0.45]);
+            let w = (560.0 * s).min(area.w - 40.0 * s);
+            let h = (title_h + self.content_h + foot_h).min(area.h - 40.0 * s);
+            let p = Rect::new((area.cx() - w / 2.0).round(), (area.cy() - h / 2.0).round(), w.round(), h.round());
+            g.rrect(Rect::new(p.x + 4.0 * s, p.y + 6.0 * s, p.w, p.h), 6.0 * s, [0.0, 0.0, 0.0, 0.4]);
+            g.rrect(p, 6.0 * s, PANEL_BG);
+            g.rrect_stroke(p, 6.0 * s, s.max(1.0), alpha(BORDER, 0.8));
+            p
+        };
         self.panel = panel;
-        g.rrect(Rect::new(panel.x + 4.0 * s, panel.y + 6.0 * s, panel.w, panel.h), 6.0 * s, [0.0, 0.0, 0.0, 0.4]);
-        g.rrect(panel, 6.0 * s, PANEL_BG);
-        g.rrect_stroke(panel, 6.0 * s, s.max(1.0), alpha(BORDER, 0.8));
+        // A page's rows sit in a readable column, not stretched across a wide canvas.
+        let col_w = if page { (820.0 * s).min(panel.w - 2.0 * pad) } else { panel.w };
+        let col_x = if page { (panel.cx() - col_w / 2.0).round() } else { panel.x };
+        let w = col_w;
         // Title.
-        g.text(Face::Bold, px * 1.1, panel.x + pad, panel.y + (title_h - lh * 1.1) / 2.0, TEXT_BRIGHT, &self.title);
-        let close = Rect::new(panel.right() - title_h, panel.y, title_h, title_h);
+        let tpx = if page { px * 1.3 } else { px * 1.1 };
+        g.text(Face::Bold, tpx, col_x + pad, panel.y + (title_h - lh * tpx / px) / 2.0, TEXT_BRIGHT, &self.title);
+        let close = Rect::new(if page { col_x + col_w - title_h } else { panel.right() - title_h }, panel.y, title_h, title_h);
         let c = [close.cx(), close.cy()];
         let k = 5.0 * s;
         let ccol = if close.contains(mouse[0], mouse[1]) { HILIGHT } else { TEXT };
@@ -314,22 +334,22 @@ impl Dialog {
         g.push_clip(content);
         let mut y = content.y + pad * 0.5 - self.scroll;
         let label_w = w * 0.42;
-        let ctl_x = panel.x + pad + label_w;
-        let ctl_w = panel.right() - pad - ctl_x;
+        let ctl_x = col_x + pad + label_w;
+        let ctl_w = col_x + col_w - pad - ctl_x;
         for i in 0..self.rows.len() {
             let row = self.rows[i].clone();
             let rh = if matches!(row.control, Control::Header) { row_h * 1.2 } else { row_h };
-            let rr = Rect::new(panel.x, y, panel.w, rh);
+            let rr = Rect::new(col_x, y, col_w, rh);
             y += rh;
             if rr.bottom() < content.y || rr.y > content.bottom() {
                 continue;
             }
             if let Control::Header = row.control {
-                g.text(Face::Bold, px, panel.x + pad, rr.bottom() - lh - 6.0 * s, HILIGHT, &row.label);
-                g.rect(Rect::new(panel.x + pad, rr.bottom() - 2.0 * s, panel.w - 2.0 * pad, s.max(1.0)), alpha(HILIGHT, 0.4));
+                g.text(Face::Bold, px, col_x + pad, rr.bottom() - lh - 6.0 * s, HILIGHT, &row.label);
+                g.rect(Rect::new(col_x + pad, rr.bottom() - 2.0 * s, col_w - 2.0 * pad, s.max(1.0)), alpha(HILIGHT, 0.4));
                 continue;
             }
-            let label_r = Rect::new(panel.x + pad, rr.y, label_w - 8.0 * s, rr.h);
+            let label_r = Rect::new(col_x + pad, rr.y, label_w - 8.0 * s, rr.h);
             g.text_fit(Face::Regular, px, label_r.x, rr.cy() - lh / 2.0, label_r.w, TEXT, &row.label);
             if !row.help.is_empty() && label_r.contains(mouse[0], mouse[1]) && content.contains(mouse[0], mouse[1]) {
                 self.hover_help = Some((row.help.clone(), mouse));
@@ -341,7 +361,16 @@ impl Dialog {
             let field = |g: &mut Gfx, r: Rect, text: &str, active: bool| {
                 g.rrect(r, 3.0 * s, if active { BUTTON_HOVER } else { BUTTON });
                 g.rrect_stroke(r, 3.0 * s, s.max(1.0), if active { HILIGHT } else { alpha(BORDER, 0.6) });
-                g.text_fit(Face::Regular, px, r.x + 8.0 * s, r.cy() - lh / 2.0, r.w - 16.0 * s, TEXT_BRIGHT, text);
+                // An edit shows its caret (a bar: the font has no ▏) after the text.
+                let (shown, caret) = match text.strip_suffix('▏') {
+                    Some(t) => (t, true),
+                    None => (text, false),
+                };
+                let w = g.text_fit(Face::Regular, px, r.x + 8.0 * s, r.cy() - lh / 2.0, r.w - 16.0 * s, TEXT_BRIGHT, shown);
+                if caret {
+                    let cx = (r.x + 8.0 * s + w.min(r.w - 16.0 * s) + 1.0).round();
+                    g.rect(Rect::new(cx, r.cy() - lh / 2.0, (1.5 * s).max(1.0), lh), HILIGHT);
+                }
             };
             match &row.control {
                 Control::Header => {}
@@ -349,7 +378,7 @@ impl Dialog {
                     g.text_fit(Face::Regular, px, cr.x, rr.cy() - lh / 2.0, cr.w, TEXT_BRIGHT, t);
                 }
                 Control::Link(t) => {
-                    let whole = Rect::new(panel.x + pad / 2.0, rr.y + 1.0, panel.w - pad, rr.h - 2.0);
+                    let whole = Rect::new(col_x + pad / 2.0, rr.y + 1.0, col_w - pad, rr.h - 2.0);
                     if hov(&whole) {
                         g.rrect(whole, 3.0 * s, BUTTON_HOVER);
                         g.text_fit(Face::Regular, px, label_r.x, rr.cy() - lh / 2.0, label_r.w, HILIGHT, &row.label);
@@ -435,7 +464,7 @@ impl Dialog {
         let fy = panel.bottom() - foot_h;
         g.rect(Rect::new(panel.x, fy, panel.w, s.max(1.0)), PANEL_LINE);
         let bh = 30.0 * s;
-        let mut bx = panel.right() - pad;
+        let mut bx = col_x + col_w - pad;
         for (bi, label) in self.buttons.iter().enumerate().rev() {
             let bw = g.measure(Face::Regular, px, label) + 28.0 * s;
             bx -= bw;
@@ -450,7 +479,7 @@ impl Dialog {
         if !self.note.is_empty() {
             let spx = FONT_SMALL * s;
             let slh = g.line_height(Face::Regular, spx);
-            g.text_fit(Face::Regular, spx, panel.x + pad, fy + (foot_h - slh) / 2.0, bx - panel.x - 2.0 * pad, TEXT_DIM, &self.note);
+            g.text_fit(Face::Regular, spx, col_x + pad, fy + (foot_h - slh) / 2.0, bx - col_x - 2.0 * pad, TEXT_DIM, &self.note);
         }
     }
 }

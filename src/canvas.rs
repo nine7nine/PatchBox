@@ -30,10 +30,13 @@ pub enum Drag {
     Node {
         id: String,
         last: [f32; 2],
+        /// Where the drag puts the node's centre before snapping (world).
+        raw: [f32; 2],
     },
     Matrix {
         key: String,
         last: [f32; 2],
+        raw: [f32; 2],
     },
     Link {
         src: String,
@@ -123,6 +126,15 @@ impl App {
         let rh = PORT_ROW * xf.z;
         let top = b.y + BODY_PAD * xf.z;
         self.body_ports(i).into_iter().enumerate().map(|(k, p)| (p, Rect::new(b.x, top + k as f32 * rh, b.w, rh))).collect()
+    }
+
+    /// A centre, snapped so the top-left corner (`centre - half`) sits on the grid, when snapping.
+    fn snapped(&self, c: [f32; 2], half: [f32; 2]) -> [f32; 2] {
+        if !self.layout.view.snap {
+            return c;
+        }
+        let g = GRID;
+        [((c[0] - half[0]) / g).round() * g + half[0], ((c[1] - half[1]) / g).round() * g + half[1]]
     }
 
     /// Recompute what is under the pointer (after the layout or the graph changed).
@@ -226,7 +238,8 @@ impl App {
                 Hover::Cell(mi, c, r) => {
                     let key = self.mats[mi].key.clone();
                     if ctrl {
-                        self.canvas.drag = Drag::Matrix { key, last: [x, y] };
+                        let raw = self.matrix_pos(&self.mats[mi]);
+                        self.canvas.drag = Drag::Matrix { key, last: [x, y], raw };
                     } else {
                         let (o, i) = (self.mats[mi].cols[c], self.mats[mi].rows[r]);
                         let connect = !self.mats[mi].conns.contains(&(o, i));
@@ -249,7 +262,9 @@ impl App {
                 Hover::Node(i) if shift && !self.model.nodes[i].outs_of(&self.graph, self.kind).is_empty() => {
                     self.canvas.drag = Drag::Link { src: self.model.nodes[i].key.id() }
                 }
-                Hover::Node(i) | Hover::In(i) => self.canvas.drag = Drag::Node { id: self.model.nodes[i].key.id(), last: [x, y] },
+                Hover::Node(i) | Hover::In(i) => {
+                    self.canvas.drag = Drag::Node { id: self.model.nodes[i].key.id(), last: [x, y], raw: self.node_pos(i) }
+                }
                 Hover::None => self.canvas.drag = Drag::Pan { last: [x, y] },
             },
             _ => {}
@@ -298,18 +313,25 @@ impl App {
                 *last = [x, y];
                 self.layout_changed();
             }
-            Drag::Node { id, last } => {
-                let (dx, dy) = ((x - last[0]) / z, (y - last[1]) / z);
+            Drag::Node { id, last, raw } => {
+                raw[0] += (x - last[0]) / z;
+                raw[1] += (y - last[1]) / z;
                 *last = [x, y];
+                let half = [NODE_W / 2.0, NODE_H / 2.0];
+                let target = self.snapped(*raw, half);
+                let cur = self.layout.nodes.get(id.as_str()).copied().unwrap_or(target);
                 // Matrices follow halfway (PatchMatrix): they stay between their two nodes.
-                self.move_node(id, dx, dy);
+                self.move_node(id, target[0] - cur[0], target[1] - cur[1]);
             }
-            Drag::Matrix { key, last } => {
-                if let Some(p) = self.layout.matrices.get_mut(key.as_str()) {
-                    p[0] += (x - last[0]) / z;
-                    p[1] += (y - last[1]) / z;
-                }
+            Drag::Matrix { key, last, raw } => {
+                raw[0] += (x - last[0]) / z;
+                raw[1] += (y - last[1]) / z;
                 *last = [x, y];
+                let size = self.mats.iter().find(|m| &m.key == key).map(App::matrix_size).unwrap_or([0.0, 0.0]);
+                let target = self.snapped(*raw, [size[0] / 2.0, size[1] / 2.0]);
+                if let Some(p) = self.layout.matrices.get_mut(key.as_str()) {
+                    *p = target;
+                }
                 self.layout_changed();
             }
             Drag::Link { .. } | Drag::Port { .. } => {
@@ -441,6 +463,8 @@ impl App {
                 items.push(I::new("Reset zoom", Action::ResetZoom));
                 items.push(I::new("Show hidden clients", Action::ShowAll).enabled(!self.layout.hidden.is_empty()));
                 items.push(I::new("Port names on matrices", Action::ToggleLabels).checked(self.layout.view.labels));
+                items.push(I::new("Show grid", Action::ToggleGrid).checked(self.layout.view.grid));
+                items.push(I::new("Snap to grid", Action::ToggleSnap).checked(self.layout.view.snap));
             }
         }
         self.ui.open_menu([x, y], items);
@@ -481,7 +505,7 @@ impl App {
         g.push_clip(a);
         g.rect(a, GRID_BG);
         let gs = GRID * z;
-        if gs >= 6.0 {
+        if gs >= 6.0 && self.layout.view.grid {
             let ox = (a.x - xf.cam[0] * z).rem_euclid(gs);
             let oy = (a.y - xf.cam[1] * z).rem_euclid(gs);
             let lw = self.scale.max(1.0).floor();
