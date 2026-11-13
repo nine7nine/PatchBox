@@ -1855,26 +1855,36 @@ impl App {
                 }
             })
         };
+        // What is drawn: the blocks (with the ports on their edges and the label above), and
+        // the matrices only in the matrix view (the others keep their positions but don't show).
         for (i, n) in self.model.nodes.iter().enumerate() {
             if self.layout.hidden.contains(&n.key.id()) {
                 continue;
             }
             let r = self.node_extent(i);
-            add(Rect::new(r.x - 20.0, r.y - 15.0, r.w + 40.0, r.h + 30.0));
+            add(Rect::new(r.x - 8.0, r.y - 20.0, r.w + 16.0, r.h + 28.0));
         }
-        for m in &self.mats {
-            let p = self.matrix_pos(m);
-            let s = Self::matrix_size(m);
-            add(Rect::centered(p[0], p[1], s[0] + 20.0, s[1] + 20.0));
+        if self.layout.view.matrices {
+            for m in &self.mats {
+                let p = self.matrix_pos(m);
+                let s = Self::matrix_size(m);
+                add(Rect::centered(p[0], p[1], s[0] + 16.0, s[1] + 16.0));
+            }
         }
         let Some(b) = bb else { return };
         let a = self.canvas.area;
         if a.w < 10.0 || a.h < 10.0 {
             return;
         }
-        let zoom = ((a.w / self.scale) / (b.w + 80.0)).min((a.h / self.scale) / (b.h + 80.0)).clamp(0.3, 1.5);
+        // Fill the canvas, a small margin round it and the zoom widget's strip kept clear.
+        let margin = 20.0 * self.scale;
+        let strip = 44.0 * self.scale;
+        let (uw, uh) = ((a.w - 2.0 * margin).max(10.0), (a.h - 2.0 * margin - strip).max(10.0));
+        let zoom = (uw / (self.scale * b.w)).min(uh / (self.scale * b.h)).clamp(0.3, 1.5);
         self.layout.view.zoom = zoom;
-        self.center_on([b.cx(), b.cy()]);
+        let z = zoom * self.scale;
+        self.layout.view.cam = [b.cx() - (a.w / 2.0) / z, b.cy() - (margin + uh / 2.0) / z];
+        self.layout_changed();
     }
 }
 
