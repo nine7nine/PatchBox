@@ -567,6 +567,9 @@ impl App {
                 let name = self.graph.ports[p].name.clone();
                 items.push(I::header(self.model.labels[p].clone()));
                 items.push(I::new("Rename this port…", Action::Rename(format!("port:{name}"))));
+                items.push(I::new("Copy its connections", Action::CopyConns(format!("port:{name}"), false)));
+                items.push(I::new("Cut its connections", Action::CopyConns(format!("port:{name}"), true)));
+                items.push(I::new("Paste connections", Action::PasteConns(format!("port:{name}"))).enabled(self.clip.is_some()));
                 if self.layout.names.contains_key(&format!("port:{name}")) {
                     items.push(I::new("Its JACK name again", Action::SetName(format!("port:{name}"), String::new())));
                 }
@@ -602,6 +605,8 @@ impl App {
         }
         items.push(I::new(if split { "Join inputs and outputs" } else { "Split inputs and outputs" }, Action::Split(n.key.group.clone(), !split)));
         items.push(I::new(format!("Disconnect all {}", self.kind.label()), Action::DisconnectNode(id.clone())));
+        items.push(I::new(format!("Copy its {} connections", self.kind.label()), Action::CopyConns(id.clone(), false)));
+        items.push(I::new("Paste connections", Action::PasteConns(id.clone())).enabled(self.clip.as_ref().is_some_and(|c| c.kind == self.kind)));
         if self.source == crate::app::Source::Jack && is_pipewire(&n.key.group) {
             items.push(I::new("Open PipeWire's graph", Action::OpenPipeWire));
         }

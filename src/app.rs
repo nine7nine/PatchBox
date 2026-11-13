@@ -33,6 +33,10 @@ pub enum Action {
     ToggleVertical,
     /// Remove one connection (by port names).
     Disconnect(String, String),
+    /// Copy (or cut) the connections of a port ("port:<name>") or a node (its id), current type.
+    CopyConns(String, bool),
+    /// Paste the copied connections onto a port or a node.
+    PasteConns(String),
     ToggleSnap,
     BufferMenu(Rect),
     ScaleMenu(Rect),
@@ -125,6 +129,8 @@ pub struct App {
     pub dialog: Option<crate::dialog::Dialog>,
     pub sess: crate::session::SessionLink,
     pub history: crate::undo::History,
+    /// Copied connections: per input and output port (by position), the ports they reach.
+    pub clip: Option<Clip>,
     /// Which graph the canvas shows.
     pub source: Source,
     pub pw: Option<crate::pw::PwLink>,
@@ -170,6 +176,7 @@ impl App {
             dialog: None,
             sess,
             history: Default::default(),
+            clip: None,
             source: Source::Jack,
             pw: None,
             pw_graph: Graph::default(),
@@ -466,6 +473,16 @@ impl App {
                 self.apply(Action::BackToJack);
             }
         }
+    }
+
+    /// The ports a clipboard action is about: one port, or a node's ports of the current type.
+    fn clip_ports(&self, target: &str) -> Vec<usize> {
+        if let Some(p) = target.strip_prefix("port:") {
+            return self.graph.by_name.get(p).copied().into_iter().collect();
+        }
+        let Some(n) = self.model.node_by_id(target) else { return Vec::new() };
+        let node = &self.model.nodes[n];
+        node.ins_of(&self.graph, self.kind).into_iter().chain(node.outs_of(&self.graph, self.kind)).collect()
     }
 
     /// The port types the current graph has tabs for.
@@ -1061,6 +1078,56 @@ impl App {
                 self.layout_changed();
             }
             Action::Disconnect(o, i) => self.disconnect_names(&o, &i),
+            Action::CopyConns(target, cut) => {
+                let ports = self.clip_ports(&target);
+                let peers = |p: usize, g: &Graph| -> Vec<String> {
+                    g.conns.iter().filter_map(|&(o, i)| if o == p { Some(i) } else if i == p { Some(o) } else { None }).map(|q| g.ports[q].name.clone()).collect()
+                };
+                let clip = Clip {
+                    kind: self.kind,
+                    ins: ports.iter().filter(|&&p| self.graph.ports[p].is_input()).map(|&p| peers(p, &self.graph)).collect(),
+                    outs: ports.iter().filter(|&&p| self.graph.ports[p].is_output()).map(|&p| peers(p, &self.graph)).collect(),
+                };
+                let n: usize = clip.ins.iter().chain(&clip.outs).map(Vec::len).sum();
+                if cut {
+                    for &p in &ports {
+                        let name = self.graph.ports[p].name.clone();
+                        for q in peers(p, &self.graph) {
+                            if self.graph.ports[p].is_output() { self.disconnect_names(&name, &q) } else { self.disconnect_names(&q, &name) }
+                        }
+                    }
+                }
+                self.say(format!("{} {n} connection{}", if cut { "Cut" } else { "Copied" }, if n == 1 { "" } else { "s" }), false);
+                self.clip = Some(clip);
+            }
+            Action::PasteConns(target) => {
+                let Some(clip) = self.clip.clone() else { return };
+                let ports = self.clip_ports(&target);
+                let ins: Vec<usize> = ports.iter().copied().filter(|&p| self.graph.ports[p].is_input()).collect();
+                let outs: Vec<usize> = ports.iter().copied().filter(|&p| self.graph.ports[p].is_output()).collect();
+                let mut made = 0;
+                for (k, &p) in ins.iter().enumerate() {
+                    let Some(peers) = (!clip.ins.is_empty()).then(|| &clip.ins[k % clip.ins.len()]) else { break };
+                    let name = self.graph.ports[p].name.clone();
+                    for q in peers {
+                        if self.graph.port(q).is_some_and(|qp| qp.kind == self.graph.ports[p].kind) && !self.graph.port(q).is_some_and(|qp| self.graph.connected(self.graph.by_name[&qp.name], p)) {
+                            self.connect_names(q, &name);
+                            made += 1;
+                        }
+                    }
+                }
+                for (k, &p) in outs.iter().enumerate() {
+                    let Some(peers) = (!clip.outs.is_empty()).then(|| &clip.outs[k % clip.outs.len()]) else { break };
+                    let name = self.graph.ports[p].name.clone();
+                    for q in peers {
+                        if self.graph.port(q).is_some_and(|qp| qp.kind == self.graph.ports[p].kind) && !self.graph.port(q).is_some_and(|qp| self.graph.connected(p, self.graph.by_name[&qp.name])) {
+                            self.connect_names(&name, q);
+                            made += 1;
+                        }
+                    }
+                }
+                self.say(format!("Pasted {made} connection{}", if made == 1 { "" } else { "s" }), false);
+            }
             Action::ToggleNoOverlap => {
                 self.layout.view.no_overlap = !self.layout.view.no_overlap;
                 self.layout_changed();
@@ -1574,6 +1641,16 @@ impl App {
         self.layout.view.zoom = zoom;
         self.center_on([b.cx(), b.cy()]);
     }
+}
+
+/// Copied connections (the connection clipboard).
+#[derive(Clone, Debug)]
+pub struct Clip {
+    pub kind: PortKind,
+    /// For each copied input port, by position: the output ports it was connected from.
+    pub ins: Vec<Vec<String>>,
+    /// For each copied output port: the input ports it reached.
+    pub outs: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
