@@ -3,7 +3,7 @@
 outside it). Writes an SVG:
 
     scripts/icon.py dist/share/patchbox.svg
-    scripts/icon.py dist/share/patchbox-small.svg simple    (three plugs, for 16 and 24 px)
+    scripts/icon.py dist/share/patchbox-small.svg simple    (five plugs, for 16 and 24 px)
 """
 import sys
 COL = {
@@ -75,9 +75,10 @@ body = []
 body.append('<rect x="0" y="0" width="512" height="512" fill="url(#bg)"/>')
 simple = len(sys.argv) > 2 and sys.argv[2] == 'simple'
 if simple:
-    back = []
-    front = [(118, 452, 'green', 40), (256, 446, 'orange', 250), (394, 440, 'blue', 480)]
-    FS, BS = 1.45, 0
+    # Five plugs, big enough to read at 16 and 24 px: three in front, two behind between them.
+    back = [(187, 330, 'red', 120), (325, 326, 'white', 390)]
+    front = [(110, 452, 'green', 20), (256, 446, 'orange', 250), (402, 440, 'blue', 500)]
+    FS, BS = 1.32, 1.02
 else:
     back = [(84, 322, 'red', 20), (198, 318, 'white', 160), (314, 314, 'black', 340), (428, 310, 'lime', 540)]
     front = [(140, 446, 'green', 30), (256, 442, 'orange', 270), (372, 438, 'blue', 490)]
