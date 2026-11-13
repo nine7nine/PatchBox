@@ -1766,8 +1766,11 @@ impl App {
                 }
                 self.save_layout();
                 let pw_canvas = Layout::load_pw();
+                // PipeWire's graph has its own camera (its file's; fitted when it has none yet).
+                let pw_cam = pw_canvas.camera();
                 self.jack_canvas = Some(self.layout.clone());
                 self.layout.take_canvas(pw_canvas);
+                self.layout.set_camera(pw_cam);
                 self.source = Source::PipeWire;
                 self.history = Default::default();
                 if !self.kinds().contains(&self.kind) {
@@ -1782,7 +1785,10 @@ impl App {
                 }
                 self.layout.save_pw();
                 if let Some(j) = self.jack_canvas.take() {
+                    // JACK's camera back as it was left.
+                    let jack_cam = j.camera();
                     self.layout.take_canvas(j);
+                    self.layout.set_camera(jack_cam);
                 }
                 self.source = Source::Jack;
                 self.history = Default::default();

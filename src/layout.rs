@@ -174,6 +174,18 @@ impl Layout {
         }
     }
 
+    /// The camera (where it looks, the zoom, each view style's): one per graph, JACK's and
+    /// PipeWire's, while the rest of the view (style, grid, scale…) is shared.
+    pub fn camera(&self) -> ([f32; 2], f32, BTreeMap<String, ([f32; 2], f32)>) {
+        (self.view.cam, self.view.zoom, self.view.style_cams.clone())
+    }
+
+    pub fn set_camera(&mut self, (cam, zoom, styles): ([f32; 2], f32, BTreeMap<String, ([f32; 2], f32)>)) {
+        self.view.cam = cam;
+        self.view.zoom = zoom;
+        self.view.style_cams = styles;
+    }
+
     /// Take the canvas of `other`, keeping our view and window (those stay global).
     pub fn take_canvas(&mut self, other: Layout) {
         let (view, window) = (self.view.clone(), self.window);
