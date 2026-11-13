@@ -8,6 +8,7 @@ mod app;
 mod canvas;
 mod csd;
 mod dialog;
+mod events;
 mod gfx;
 mod layout;
 mod model;

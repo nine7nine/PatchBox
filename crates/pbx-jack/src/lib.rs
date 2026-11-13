@@ -224,6 +224,21 @@ impl Client {
     pub fn cpu_load(&self) -> f32 {
         unsafe { ffi::jack_cpu_load(self.raw) }
     }
+    /// How late the last xrun was, milliseconds.
+    pub fn xrun_delay_ms(&self) -> f32 {
+        unsafe { ffi::jack_get_xrun_delayed_usecs(self.raw) / 1000.0 }
+    }
+    /// A port's full name from its id (notifications carry ids).
+    pub fn port_name(&self, id: u32) -> Option<String> {
+        unsafe {
+            let p = ffi::jack_port_by_id(self.raw, id);
+            if p.is_null() {
+                return None;
+            }
+            let n = ffi::jack_port_name(p);
+            (!n.is_null()).then(|| std::ffi::CStr::from_ptr(n).to_string_lossy().into_owned())
+        }
+    }
     pub fn is_realtime(&self) -> bool {
         unsafe { ffi::jack_is_realtime(self.raw) != 0 }
     }

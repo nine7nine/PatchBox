@@ -123,6 +123,8 @@ unsafe extern "C" {
     pub fn jack_get_buffer_size(client: *mut jack_client_t) -> jack_nframes_t;
     pub fn jack_set_buffer_size(client: *mut jack_client_t, nframes: jack_nframes_t) -> c_int;
     pub fn jack_cpu_load(client: *mut jack_client_t) -> c_float;
+    /// How late the last xrun was, microseconds.
+    pub fn jack_get_xrun_delayed_usecs(client: *mut jack_client_t) -> c_float;
     pub fn jack_is_realtime(client: *mut jack_client_t) -> c_int;
     pub fn jack_set_freewheel(client: *mut jack_client_t, onoff: c_int) -> c_int;
 

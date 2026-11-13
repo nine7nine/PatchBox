@@ -57,6 +57,8 @@ pub enum Action {
     ZoomSlider(Rect),
     SetBufferSize(u32),
     ResetXruns,
+    /// The event log page (toggles).
+    EventLog,
     ToggleFreewheel,
     /// Split (true) or join (false) a client's nodes.
     Split(String, bool),
@@ -156,6 +158,8 @@ pub struct App {
     /// Installed applications (.desktop), scanned when first needed.
     pub apps: Option<Vec<crate::session::App>>,
     pub log: Vec<LogLine>,
+    /// The event log (xruns, the server, clients, connections, messages), with times.
+    pub events: crate::events::Events,
     pub redraw: bool,
     graph_due: Option<Instant>,
     graph_first: Option<Instant>,
@@ -215,6 +219,7 @@ impl App {
             canvas: Default::default(),
             ui: crate::ui::UiState::new(),
             log: Vec::new(),
+            events: Default::default(),
             redraw: true,
             graph_due: None,
             graph_first: None,
@@ -232,6 +237,7 @@ impl App {
     pub fn say(&mut self, text: impl Into<String>, bad: bool) {
         let text = text.into();
         eprintln!("[patchbox] {text}");
+        self.events.push(crate::events::Kind::Message, text.clone(), bad);
         self.log.push(LogLine { text, bad });
         if self.log.len() > 50 {
             self.log.remove(0);
@@ -285,6 +291,12 @@ impl App {
             use crate::server::Reply;
             match r {
                 Reply::Status(st) => {
+                    let was = &self.server.status;
+                    if st.available != was.available {
+                        self.events.push(crate::events::Kind::Server, if st.available { "jackdbus is there" } else { "jackdbus went away" }, !st.available);
+                    } else if st.started != was.started {
+                        self.events.push(crate::events::Kind::Server, if st.started { "Server started (jackdbus)" } else { "Server stopped (jackdbus)" }, false);
+                    }
                     if st.started != self.server.status.started || st.available != self.server.status.available {
                         self.redraw = true;
                         if st.started && self.jack.is_none() {
@@ -299,6 +311,9 @@ impl App {
                 Reply::Error(e) => self.say(e, true),
             }
             self.redraw = true;
+        }
+        if self.events.dirty && self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Log && d.tab == 0) {
+            self.refresh_log_page();
         }
         if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Server) {
             let rows = self.server_rows();
@@ -316,14 +331,45 @@ impl App {
         let events = c.take_events();
         let now = Instant::now();
         let mut lost = None;
+        use crate::events::Kind as K;
         for e in events {
             match &e {
-                Event::Xrun => self.stats.xruns += 1,
-                Event::BufferSize(n) => self.stats.buffer_size = *n,
-                Event::SampleRate(n) => self.stats.sample_rate = *n,
-                Event::Freewheel(on) => self.stats.freewheel = *on,
-                Event::ClientRegistered { name, registered: false } => c.forget_client(name),
-                Event::Shutdown { reason } => lost = Some(reason.clone()),
+                Event::Xrun => {
+                    self.stats.xruns += 1;
+                    let (late, dsp) = (c.xrun_delay_ms(), c.cpu_load());
+                    self.events.push(K::Xrun, format!("{late:.2} ms late · DSP {dsp:.1} % · {} frames at {} Hz", self.stats.buffer_size, self.stats.sample_rate), true);
+                }
+                Event::BufferSize(n) => {
+                    if *n != self.stats.buffer_size {
+                        let ms = *n as f32 * 1000.0 / self.stats.sample_rate.max(1) as f32;
+                        self.events.push(K::Server, format!("Buffer size {n} frames ({ms:.2} ms)"), false);
+                    }
+                    self.stats.buffer_size = *n;
+                }
+                Event::SampleRate(n) => {
+                    if *n != self.stats.sample_rate {
+                        self.events.push(K::Server, format!("Sample rate {n} Hz"), false);
+                    }
+                    self.stats.sample_rate = *n;
+                }
+                Event::Freewheel(on) => {
+                    self.events.push(K::Server, if *on { "Freewheeling" } else { "Freewheel off" }, false);
+                    self.stats.freewheel = *on;
+                }
+                Event::ClientRegistered { name, registered } => {
+                    self.events.push(K::Client, format!("{name} {}", if *registered { "joined" } else { "left" }), false);
+                    if !registered {
+                        c.forget_client(name);
+                    }
+                }
+                Event::PortConnect { a, b, connected } => {
+                    let n = |id: u32| c.port_name(id).unwrap_or_else(|| format!("port {id}"));
+                    self.events.push(K::Connection, format!("{} {} {}", n(*a), if *connected { "→" } else { "✕" }, n(*b)), false);
+                }
+                Event::Shutdown { reason } => {
+                    self.events.push(K::Server, format!("The server shut us down: {reason}"), true);
+                    lost = Some(reason.clone());
+                }
                 _ => {}
             }
             if e.changes_graph() {
@@ -1326,7 +1372,13 @@ impl App {
                         self.say(format!("JACK refused a buffer size of {n}"), true);
                     }
             }
-            Action::ResetXruns => self.stats.xruns = 0,
+            Action::ResetXruns => {
+                self.stats.xruns = 0;
+                self.events.reset_xruns();
+                self.refresh_log_page();
+            }
+            Action::EventLog if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Log) => self.dialog = None,
+            Action::EventLog => self.open_log(0),
             Action::ToggleFreewheel => {
                 if let Some(c) = &self.jack {
                     c.set_freewheel(!self.stats.freewheel);
@@ -1550,6 +1602,83 @@ impl App {
     }
 
     // ---- JACK server settings (jackdbus) ----
+
+    /// The event log page: tab 0 our events, 1 jackdbus's log.
+    pub fn open_log(&mut self, tab: usize) {
+        let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::Log, "Log");
+        d.tabs = vec!["Events".into(), "jackdbus log".into()];
+        d.tab = tab;
+        d.buttons = vec!["Close".into()];
+        self.dialog = Some(d);
+        self.refresh_log_page();
+    }
+
+    /// Rebuild the log page's rows, when it shows and something changed.
+    pub fn refresh_log_page(&mut self) {
+        let Some(tab) = self.dialog.as_ref().filter(|d| d.kind == crate::dialog::Kind::Log).map(|d| d.tab) else { return };
+        let (rows, note) = if tab == 0 { (self.event_rows(), "Newest first; the last 5000 are kept while PatchBox runs.".to_string()) } else { self.jackdbus_rows() };
+        self.events.dirty = false;
+        if let Some(d) = &mut self.dialog {
+            d.set_rows(rows);
+            d.note = note;
+        }
+    }
+
+    fn event_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::{Control, Row};
+        use crate::events::{FILTERS, clock, shows};
+        let ev = &self.events;
+        let mut rows = vec![Row::header("Xruns")];
+        let server = self.server.stats.as_ref().map(|s| format!(" · the server counts {}", s.xruns)).unwrap_or_default();
+        rows.push(Row::info("Since", format!("{}: {} xrun{}{server}", clock(ev.since).split('.').next().unwrap_or(""), ev.xruns, if ev.xruns == 1 { "" } else { "s" })));
+        if let Some(last) = ev.list.iter().rev().find(|e| e.kind == crate::events::Kind::Xrun) {
+            rows.push(Row::info("Last", format!("{}  {}", clock(last.at), last.text)));
+        }
+        rows.push(Row { id: "act:reset".into(), label: "Reset the count".into(), help: "Here, in the toolbar, and the server's own count (jackdbus)".into(), control: Control::Link("reset".into()), modified: false });
+        rows.push(Row::header("Events"));
+        rows.push(Row {
+            id: "filter".into(),
+            label: "Show".into(),
+            help: "Which events the list shows".into(),
+            control: Control::Choice { value: ev.filter.clone(), options: FILTERS.iter().map(|(v, l)| (v.to_string(), l.to_string())).collect(), editable: false },
+            modified: false,
+        });
+        let mut n = 0;
+        for e in ev.list.iter().rev().filter(|e| shows(&ev.filter, e.kind)) {
+            if n == 400 {
+                rows.push(Row::info("…", "older ones are kept but not listed"));
+                break;
+            }
+            n += 1;
+            let mark = if e.bad { "! " } else { "" };
+            rows.push(Row { id: String::new(), label: format!("{}  {}", clock(e.at), e.kind.label()), help: e.text.clone(), control: Control::Info(format!("{mark}{}", e.text)), modified: false });
+        }
+        if n == 0 {
+            rows.push(Row::info("Nothing yet", ""));
+        }
+        rows
+    }
+
+    fn jackdbus_rows(&self) -> (Vec<crate::dialog::Row>, String) {
+        use crate::dialog::Row;
+        let mut rows = vec![Row::header("jackdbus's log")];
+        let Some(path) = crate::events::jackdbus_log() else { return (rows, String::new()) };
+        match crate::events::tail(&path, 96 * 1024, 300) {
+            Ok((lines, size)) => {
+                rows.push(Row::info("File", format!("{} · {}", path.display(), crate::events::size(size))));
+                rows.push(Row::header("Newest first"));
+                for l in lines.iter().rev() {
+                    let (when, what) = crate::events::split_jackdbus(l);
+                    rows.push(Row { id: String::new(), label: when, help: what.clone(), control: crate::dialog::Control::Info(what), modified: false });
+                }
+                (rows, "The end of jackdbus's own log; it grows without end (nothing rotates it).".into())
+            }
+            Err(e) => {
+                rows.push(Row::info("File", format!("{}: {e}", path.display())));
+                (rows, String::new())
+            }
+        }
+    }
 
     /// The settings page, on tab 0 (JACK, jackdbus) or 1 (PipeWire).
     pub fn open_settings(&mut self, tab: usize) {
@@ -2046,6 +2175,19 @@ impl App {
                 }
             }
             (Kind::Server | Kind::PipeWire, Event::Tab(t)) => self.open_settings(t),
+            (Kind::Log, Event::Tab(t)) => self.open_log(t),
+            (Kind::Log, Event::Set(id, v)) => match id.as_str() {
+                "filter" => {
+                    self.events.filter = v;
+                    self.refresh_log_page();
+                }
+                "act:reset" => {
+                    self.apply(Action::ResetXruns);
+                    self.server.run(crate::server::Cmd::ResetXruns);
+                }
+                _ => {}
+            },
+            (Kind::Log, Event::Button(_)) => self.dialog = None,
             (Kind::PipeWire, Event::Set(id, v)) => self.pw_set(&id, &v),
             (Kind::PipeWire, Event::Reset(id)) => self.pw_reset(&id),
             (Kind::PipeWire, Event::Button(_)) => self.dialog = None,

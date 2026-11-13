@@ -100,6 +100,7 @@ impl UiState {
     pub fn open_app_menu(&mut self, under: Rect, labels: bool, sidebar: bool, ui_scale: f32, grid: bool, snap: bool, undo: (bool, bool)) {
         let items = vec![
             MenuItem::new(format!("Interface scale: {:.0} % …", ui_scale * 100.0), Action::ScaleMenu(Rect::new(under.x, under.bottom() + 2.0, 0.0, 0.0))),
+            MenuItem::new("Event log (xruns, server, clients)", Action::EventLog),
             MenuItem::new("Undo (Ctrl+Z)", Action::Undo).enabled(undo.0),
             MenuItem::new("Redo (Ctrl+Shift+Z)", Action::Redo).enabled(undo.1),
             MenuItem::new("Show sidebar", Action::ToggleSidebar).checked(sidebar),
@@ -651,7 +652,7 @@ impl App {
             let hov = self.hovered(&xr);
             lbutton(g, xr, s, xt, hov, st.xruns > 0, true);
             readout(g, xr, s, &xs, "XRUNS", if st.xruns > 0 { crate::gfx::mix(BAD, TEXT_BRIGHT, 0.2) } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
-            self.add_hit(xr, Action::ResetXruns);
+            self.add_hit(xr, Action::EventLog);
             rx -= xr_w + bgap;
             let br = Rect::new(rx - buf_w, by, buf_w, bh);
             let hov = connected && self.hovered(&br);
@@ -794,8 +795,9 @@ impl App {
         }
         g.pop_clip();
 
-        // Log.
+        // Log: the latest messages; a click opens the event log.
         let lr = Rect::new(r.x, r.bottom() - log_h, r.w, log_h);
+        self.add_hit(lr, Action::EventLog);
         g.rect(Rect::new(lr.x + pad, lr.y, lr.w - 2.0 * pad, s.max(1.0)), PANEL_LINE);
         let spx = FONT_SMALL * s;
         let slh = g.line_height(Face::Regular, spx) + 2.0 * s;
@@ -921,6 +923,7 @@ impl App {
                 Action::SetKind(k) => k.label() == name,
                 Action::BufferMenu(_) => name == "Buffer",
                 Action::ResetXruns => name == "Xruns",
+                Action::EventLog => name == "log",
                 Action::AppMenu(_) => name == "menu",
                 Action::ZoomBy(f) => (name == "zoom+" && *f > 1.0) || (name == "zoom-" && *f < 1.0),
                 Action::ZoomSlider(_) => name == "zoomtrack",

@@ -67,6 +67,8 @@ pub enum Kind {
     Views,
     /// PipeWire's settings (the settings page's second tab).
     PipeWire,
+    /// The event log and jackdbus's log.
+    Log,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -292,7 +294,7 @@ impl Dialog {
 
     /// Pages (settings, lists) fill the canvas; prompts are a card over it.
     pub fn is_page(&self) -> bool {
-        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views)
+        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Log | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views)
     }
 
     /// Draw over `area` (the canvas): a page fills it, a prompt is a card in its middle. The

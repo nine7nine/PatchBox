@@ -38,6 +38,7 @@ puts it in the graph.
 | Output handle → node | drag from a node's right handle (or Shift+drag the node) onto another node: open a matrix between them; hold **Ctrl** at the drop to connect 1:1 |
 | Matrix | Ctrl+drag: move; right-click: connect 1:1, disconnect all, remove. Its wires meet at its centre; pull one off its block: onto another block, the connections move there port for port; onto empty canvas, they are disconnected |
 | Canvas | G: grid on/off; Shift+G: snap blocks to the grid; drag or middle-drag: pan; wheel: scroll; zoom: the widget at the bottom right (centre button: fit the graph, −, slider, +, click the % for 100 %), Ctrl+wheel, touchpad pinch, Ctrl+= / Ctrl+− / Ctrl+0; F: fit; L: port names on every matrix (hovering shows a matrix's names anyway); F9: sidebar |
+| Event log | click XRUNS (or the sidebar's log, or ☰ → Event log): xruns with the time, how late and the DSP load, the server's changes, clients, connections, PatchBox's messages (filter: Show); reset the xrun count here and the server's; a second tab shows the end of jackdbus's own log |
 | Interface scale | ☰ menu → Interface scale (default 125 %), or Ctrl+Shift+= / Ctrl+Shift+−: everything in the window except the window buttons, which follow the desktop's scale |
 | Sidebar | clients (click: find; right-click: menu, show hidden ones), log |
 
