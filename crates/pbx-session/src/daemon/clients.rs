@@ -393,6 +393,8 @@ impl Client {
 
     pub fn stop(&mut self) {
         let Some(pid) = self.pid else { return };
+        // Out of the JACK graph first: stopped while in it, a client can miss a cycle (an xrun)
+        crate::jackcfg::detach_process(pid);
         let sig = if !self.entry.nsm && self.entry.stop_signal > 0 { self.entry.stop_signal } else { libc::SIGTERM };
         unsafe { libc::kill(pid as i32, sig) };
         self.status = Status::Stopping;
@@ -401,6 +403,9 @@ impl Client {
 
     pub fn kill(&mut self) {
         let Some(pid) = self.pid else { return };
+        if !matches!(self.status, Status::Stopping) {
+            crate::jackcfg::detach_process(pid);   // stop() did it already
+        }
         unsafe {
             // Its whole process group (it is a session leader), then itself if it left the group.
             libc::kill(-(pid as i32), libc::SIGKILL);

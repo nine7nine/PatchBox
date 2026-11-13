@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedValue, Value};
 
@@ -61,6 +63,39 @@ pub fn connect() -> Option<Connection> {
     let dbus = Proxy::new(&c, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus").ok()?;
     let has: bool = dbus.call("NameHasOwner", &(SERVICE,)).ok()?;
     has.then_some(c)
+}
+
+/// Before a client's process is stopped: take its JACK clients out of the graph
+/// (org.jackaudio.JackPatchbay.DetachProcess, jack2dbus-nspa), so that its departure costs the
+/// graph nothing, whatever its libjack and even if it is killed in the middle of its process
+/// callback. Returns how many clients were taken out; None if jackdbus is not running (never
+/// started just for this), its server is stopped, or it has no such method (another JACK2): the
+/// process is stopped as before either way.
+///
+/// Called from the daemon's loop, so bounded: a jackdbus that does not answer within a second
+/// is not asked again for 10 s (a session of stuck clients is not held up once per client).
+pub fn detach_process(pid: u32) -> Option<u32> {
+    static UNANSWERED: Mutex<Option<Instant>> = Mutex::new(None);
+    if UNANSWERED.lock().ok()?.is_some_and(|t| t.elapsed() < Duration::from_secs(10)) {
+        return None;
+    }
+    let c = zbus::blocking::connection::Builder::session().ok()?.method_timeout(Duration::from_secs(1)).build().ok()?;
+    let dbus = Proxy::new(&c, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus").ok()?;
+    let has: bool = dbus.call("NameHasOwner", &(SERVICE,)).ok()?;
+    if !has {
+        return None;
+    }
+    let patchbay = Proxy::new(&c, SERVICE, PATH, "org.jackaudio.JackPatchbay").ok()?;
+    match patchbay.call::<_, _, u32>("DetachProcess", &(pid as i64,)) {
+        Ok(n) => Some(n),
+        Err(zbus::Error::InputOutput(e)) if e.kind() == std::io::ErrorKind::TimedOut => {
+            if let Ok(mut t) = UNANSWERED.lock() {
+                *t = Some(Instant::now());
+            }
+            None
+        }
+        Err(_) => None,
+    }
 }
 
 fn configure(c: &Connection) -> Result<Proxy<'_>, String> {
