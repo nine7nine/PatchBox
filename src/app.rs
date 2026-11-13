@@ -149,6 +149,10 @@ pub struct App {
     pub layout_dir: Option<std::path::PathBuf>,
     /// The global canvas, put aside while a session's is in use.
     global_canvas: Option<Layout>,
+    /// PipeWire as the settings page shows it (from the pw-dump stream).
+    pub pw_state: Option<crate::pw::PwState>,
+    /// The settings page's tab last shown: 0 JACK, 1 PipeWire.
+    settings_tab: usize,
     /// Installed applications (.desktop), scanned when first needed.
     pub apps: Option<Vec<crate::session::App>>,
     pub log: Vec<LogLine>,
@@ -192,6 +196,8 @@ impl App {
             jack_canvas: None,
             layout_dir: None,
             global_canvas: None,
+            pw_state: None,
+            settings_tab: 0,
             apps: None,
             jack: None,
             waker,
@@ -475,19 +481,27 @@ impl App {
     /// PipeWire's graph changed (or pw-dump ended).
     fn on_pipewire(&mut self) {
         let Some(pw) = &mut self.pw else { return };
-        let (g, err, log) = pw.take();
-        for (m, bad) in log {
+        let t = pw.take();
+        for (m, bad) in t.log {
             self.say(m, bad);
         }
-        if let Some(g) = g {
+        if let Some(g) = t.graph {
             self.pw_graph = g;
             if self.source == Source::PipeWire {
                 self.rebuild();
             }
         }
-        if let Some(e) = err {
+        if let Some(st) = t.state
+            && self.pw_state.as_ref() != Some(&st)
+        {
+            self.pw_state = Some(st);
+            self.refresh_pw_page();
+        }
+        if let Some(e) = t.error {
             self.say(format!("PipeWire: {e}"), true);
             self.pw = None;
+            self.pw_state = None;
+            self.refresh_pw_page();
             if self.source == Source::PipeWire {
                 self.apply(Action::BackToJack);
             }
@@ -1451,14 +1465,11 @@ impl App {
             Action::ServerStart => self.server.run(crate::server::Cmd::Start),
             Action::ServerStop => self.server.run(crate::server::Cmd::Stop),
             Action::ServerRestart => self.server.run(crate::server::Cmd::Restart),
-            Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Server) => self.dialog = None,
+            Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire)) => self.dialog = None,
             Action::ServerSettings => {
-                self.server.send(crate::server::Cmd::LoadConfig);
-                let mut d = crate::dialog::Dialog::new(crate::dialog::Kind::Server, "JACK server (jackdbus)");
-                d.note = "Driver and engine settings apply when the server (re)starts; jackdbus keeps them.".into();
-                d.set_rows(self.server_rows());
-                d.buttons = self.server_buttons();
-                self.dialog = Some(d);
+                // Without jackdbus the PipeWire tab is the one that matters (pure PipeWire).
+                let tab = if self.server.status.available { self.settings_tab } else { 1 };
+                self.open_settings(tab);
             }
             Action::DialogSet(id, v) => self.dialog_event(crate::dialog::Event::Set(id, v)),
             Action::OpenPipeWire => {
@@ -1539,6 +1550,302 @@ impl App {
     }
 
     // ---- JACK server settings (jackdbus) ----
+
+    /// The settings page, on tab 0 (JACK, jackdbus) or 1 (PipeWire).
+    pub fn open_settings(&mut self, tab: usize) {
+        use crate::dialog::{Dialog, Kind};
+        self.settings_tab = tab;
+        let mut d = if tab == 0 {
+            self.server.send(crate::server::Cmd::LoadConfig);
+            let mut d = Dialog::new(Kind::Server, "Settings");
+            d.note = "Driver and engine settings apply when the server (re)starts; jackdbus keeps them.".into();
+            d.set_rows(self.server_rows());
+            d.buttons = self.server_buttons();
+            d
+        } else {
+            if self.pw.is_none() {
+                match crate::pw::PwLink::start(self.waker.clone()) {
+                    Ok(p) => self.pw = Some(p),
+                    Err(e) => self.say(format!("PipeWire: {e}"), true),
+                }
+            }
+            let mut d = Dialog::new(Kind::PipeWire, "Settings");
+            d.set_rows(self.pw_rows());
+            d.note = self.pw_note();
+            d.buttons = vec!["Close".into()];
+            d
+        };
+        d.tabs = vec!["JACK · jackdbus".into(), "PipeWire".into()];
+        d.tab = tab;
+        self.dialog = Some(d);
+    }
+
+    fn refresh_pw_page(&mut self) {
+        if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::PipeWire) {
+            let (rows, note) = (self.pw_rows(), self.pw_note());
+            if let Some(d) = &mut self.dialog {
+                d.set_rows(rows);
+                d.note = note;
+            }
+        }
+    }
+
+    fn pw_note(&self) -> String {
+        match &self.pw_state {
+            Some(st) if st.bridge.is_some() => "PipeWire runs on top of JACK here: its clock follows JACK's (the JACK tab).".into(),
+            Some(_) => "Clock settings apply now and last until PipeWire restarts, unless kept.".into(),
+            None => String::new(),
+        }
+    }
+
+    /// The PipeWire tab: what runs, the clock, the JACK bridge, default devices, device
+    /// profiles, WirePlumber's settings. Built from the pw-dump stream; adapts to PipeWire on
+    /// top of JACK (the clock is JACK's) or PipeWire alone.
+    pub fn pw_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::{Control, Row};
+        let mut rows = vec![Row::header("PipeWire")];
+        let Some(st) = &self.pw_state else {
+            let why = if self.pw.is_some() { "reading…" } else { "not running (pw-dump could not reach it)" };
+            rows.push(Row::info("Status", why));
+            return rows;
+        };
+        let bridged = st.bridge.is_some();
+        let mode = if bridged {
+            "on top of JACK (the bridge drives its graph)"
+        } else if st.serves_jack {
+            "the JACK server too (pipewire-jack)"
+        } else {
+            "beside JACK"
+        };
+        rows.push(Row::info("Status", format!("{} · {mode}", if st.version.is_empty() { "running".to_string() } else { st.version.clone() })));
+        let info = |id: &str, label: &str, text: String, help: &str| Row { id: id.into(), label: label.into(), help: help.into(), control: Control::Info(text), modified: false };
+        let set = |k: &str| st.settings.get(k).cloned().unwrap_or_default();
+
+        // The clock: PipeWire's own when it is alone; JACK's when it runs on top of it.
+        rows.push(Row::header("Clock"));
+        let clock_help = if bridged { "Follows JACK: the bridge drives PipeWire's graph at JACK's rate and buffer size" } else { "" };
+        if bridged {
+            rows.push(info("", "Rate", format!("{} Hz", set("clock.rate")), clock_help));
+            rows.push(info("", "Quantum", set("clock.quantum"), clock_help));
+        } else {
+            let rates = [44100u32, 48000, 88200, 96000, 176400, 192000];
+            let quanta = [16u32, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
+            let choice = |id: &str, label: &str, help: &str, opts: Vec<(String, String)>, editable: bool| {
+                let value = set(id.trim_start_matches("settings:"));
+                Row { id: id.into(), label: label.into(), help: help.into(), control: Control::Choice { value, options: opts, editable }, modified: false }
+            };
+            rows.push(choice("settings:clock.rate", "Default rate", "The graph's rate when nothing asks for another (default.clock.rate)", rates.iter().map(|r| (r.to_string(), format!("{r} Hz"))).collect(), true));
+            rows.push(Row {
+                id: "settings:clock.allowed-rates".into(),
+                label: "Allowed rates".into(),
+                help: "Rates the graph may switch to for a stream, e.g. [ 44100 48000 ] (default.clock.allowed-rates)".into(),
+                control: Control::Text(set("clock.allowed-rates")),
+                modified: false,
+            });
+            rows.push(choice("settings:clock.quantum", "Default quantum", "The buffer size, frames, when no stream asks for another (default.clock.quantum)", quanta.iter().map(|q| (q.to_string(), format!("{q} frames"))).collect(), true));
+            rows.push(choice("settings:clock.min-quantum", "Smallest quantum", "The smallest buffer a stream may ask for (default.clock.min-quantum)", quanta.iter().map(|q| (q.to_string(), format!("{q} frames"))).collect(), true));
+            rows.push(choice("settings:clock.max-quantum", "Largest quantum", "The largest buffer a stream may ask for (default.clock.max-quantum)", quanta.iter().map(|q| (q.to_string(), format!("{q} frames"))).collect(), true));
+            let mut fr = vec![("0".to_string(), "not forced".to_string())];
+            fr.extend(rates.iter().map(|r| (r.to_string(), format!("{r} Hz"))));
+            let mut fq = vec![("0".to_string(), "not forced".to_string())];
+            fq.extend(quanta.iter().map(|q| (q.to_string(), format!("{q} frames"))));
+            let mut r = choice("settings:clock.force-rate", "Force rate", "Run the graph at this rate whatever the streams ask (until PipeWire restarts)", fr, false);
+            r.modified = set("clock.force-rate") != "0" && !set("clock.force-rate").is_empty();
+            rows.push(r);
+            let mut r = choice("settings:clock.force-quantum", "Force quantum", "Run the graph with this buffer size whatever the streams ask (until PipeWire restarts)", fq, false);
+            r.modified = set("clock.force-quantum") != "0" && !set("clock.force-quantum").is_empty();
+            rows.push(r);
+            rows.push(Row {
+                id: "act:keep-clock".into(),
+                label: "Keep the defaults".into(),
+                help: format!("Write the default rate, allowed rates and quanta to {} so PipeWire starts with them", crate::pwconf::clock_dropin().map(|p| p.display().to_string()).unwrap_or_default()),
+                control: Control::Link("write the drop-in".into()),
+                modified: false,
+            });
+        }
+        let levels = ["none", "errors", "warnings", "info", "debug", "trace"];
+        rows.push(Row {
+            id: "settings:log.level".into(),
+            label: "Log level".into(),
+            help: "How much PipeWire's daemon logs (until it restarts)".into(),
+            control: Control::Choice { value: set("log.level"), options: levels.iter().enumerate().map(|(i, l)| (i.to_string(), format!("{i} · {l}"))).collect(), editable: false },
+            modified: false,
+        });
+
+        // The JACK bridge (module-jackdbus-detect / module-jack-tunnel).
+        if let Some(b) = &st.bridge {
+            rows.push(Row::header("JACK bridge"));
+            let what = if b.module == "jackdbus-detect" { "module-jackdbus-detect: follows jackdbus, appears as the PipeWire JACK client" } else { "module-jack-tunnel" };
+            rows.push(info("", "Module", what.into(), ""));
+            for (name, desc, audio, midi, drives) in &b.nodes {
+                let mut text = format!("{audio} audio");
+                if *midi > 0 {
+                    text.push_str(&format!(" + {midi} MIDI"));
+                }
+                if *drives {
+                    text.push_str(" · drives PipeWire's graph");
+                }
+                rows.push(info("", desc, text, name));
+            }
+            match crate::pwconf::bridge_conf(&b.module) {
+                Some(p) => rows.push(Row {
+                    id: format!("act:open:{}", p.display()),
+                    label: "Configured in".into(),
+                    help: "Channels, MIDI ports, auto-connect and the tunnel mode are the module's arguments there; they apply when PipeWire restarts".into(),
+                    control: Control::Link(p.display().to_string()),
+                    modified: false,
+                }),
+                None => rows.push(info("", "Configured in", "PipeWire's defaults".into(), "")),
+            }
+        }
+
+        // Default devices (the session manager's).
+        if let Some(defs) = &st.defaults {
+            rows.push(Row::header("Default devices"));
+            for (kind, label, list) in [("sink", "Output", &st.sinks), ("source", "Input", &st.sources)] {
+                let configured = defs.get(&format!("default.configured.audio.{kind}")).cloned();
+                let now = defs.get(&format!("default.audio.{kind}")).cloned();
+                let value = configured.clone().or(now.clone()).unwrap_or_default();
+                let mut options: Vec<(String, String)> = list.iter().map(|(n, d)| (n.clone(), d.clone())).collect();
+                if !value.is_empty() && !options.iter().any(|(n, _)| *n == value) {
+                    options.push((value.clone(), format!("{value} (not a{} {kind})", if kind == "input" { "n" } else { "" })));
+                }
+                let desc_of = |n: &str| list.iter().find(|(x, _)| x == n).map(|(_, d)| d.clone()).unwrap_or_else(|| n.to_string());
+                let help = match (&configured, &now) {
+                    (Some(c), Some(n)) if c != n => format!("Chosen: {c}; in use: {} (the chosen one is missing or not a {kind})", desc_of(n)),
+                    _ => format!("Where applications' {} goes unless they ask for another", if kind == "sink" { "output" } else { "input comes from" }),
+                };
+                rows.push(Row { id: format!("default:{kind}"), label: label.into(), help, control: Control::Choice { value, options, editable: false }, modified: false });
+                if let (Some(c), Some(n)) = (&configured, &now)
+                    && c != n
+                {
+                    rows.push(info("", "  in use", desc_of(n), "The session manager uses this one: the chosen device is missing or not of this kind"));
+                }
+            }
+        }
+
+        // Device profiles.
+        if !st.devices.is_empty() {
+            rows.push(Row::header("Devices"));
+            for d in &st.devices {
+                let options: Vec<(String, String)> = d.profiles.iter().map(|(i, n, desc, avail)| (i.to_string(), format!("{}{}", if desc.is_empty() { n } else { desc }, if *avail { "" } else { " (unavailable)" }))).collect();
+                rows.push(Row {
+                    id: format!("device:{}", d.id),
+                    label: d.description.clone(),
+                    help: format!("{}: its profile (which inputs and outputs it offers); off frees it, e.g. for JACK", d.name),
+                    control: Control::Choice { value: d.current.map(|c| c.to_string()).unwrap_or_default(), options, editable: false },
+                    modified: false,
+                });
+            }
+        }
+
+        // WirePlumber's settings, from its schema.
+        if !st.sm.is_empty() {
+            rows.push(Row::header("Session manager (WirePlumber)"));
+            for x in &st.sm {
+                let v = x.value.clone().unwrap_or_else(|| x.default.clone());
+                let shown = serde_json::from_str::<serde_json::Value>(&v).ok().map(|j| match j {
+                    serde_json::Value::String(t) => t,
+                    j => j.to_string(),
+                });
+                let control = match x.ty.as_str() {
+                    "bool" => Control::Toggle(v == "true"),
+                    "int" => Control::Number { value: v.parse().unwrap_or(0), min: x.min.unwrap_or(i64::MIN as f64) as i64, max: x.max.unwrap_or(i64::MAX as f64) as i64 },
+                    _ => Control::Text(shown.unwrap_or(v.clone())),
+                };
+                let mut help = x.description.clone();
+                if let (Some(a), Some(b)) = (x.min, x.max) {
+                    help.push_str(&format!(" ({a} to {b})"));
+                }
+                rows.push(Row { id: format!("sm:{}", x.key), label: x.name.clone(), help: format!("{help} (default: {})", x.default.trim_matches('"')), control, modified: x.value.as_ref().is_some_and(|v| *v != x.default) });
+            }
+        }
+
+        rows.push(Row::header("Service"));
+        rows.push(Row {
+            id: "act:restart-pw".into(),
+            label: "Restart PipeWire".into(),
+            help: "systemctl --user restart pipewire: WirePlumber and pipewire-pulse restart with it; on top of JACK the bridge reconnects".into(),
+            control: Control::Link("restart".into()),
+            modified: false,
+        });
+        rows
+    }
+
+    /// A change on the PipeWire tab.
+    fn pw_set(&mut self, id: &str, v: &str) {
+        let Some(st) = self.pw_state.clone() else { return };
+        if let Some(path) = id.strip_prefix("act:open:") {
+            let _ = std::process::Command::new("xdg-open").arg(path).stdin(std::process::Stdio::null()).spawn();
+            return;
+        }
+        if id == "act:restart-pw" {
+            self.say("Restarting PipeWire…", false);
+            let _ = std::process::Command::new("systemctl").args(["--user", "restart", "pipewire.service"]).stdin(std::process::Stdio::null()).spawn();
+            return;
+        }
+        if id == "act:keep-clock" {
+            match crate::pwconf::write_clock_dropin(&st.settings) {
+                Ok(p) => self.say(format!("Clock defaults kept in {}", p.display()), false),
+                Err(e) => self.say(format!("Could not write the drop-in: {e}"), true),
+            }
+            return;
+        }
+        let Some(pw) = &self.pw else { return };
+        if let Some(key) = id.strip_prefix("settings:") {
+            let v = v.trim();
+            let ok = match key {
+                "clock.allowed-rates" => v.starts_with('['),
+                _ => v.parse::<u32>().is_ok(),
+            };
+            if ok {
+                pw.set_meta("settings", key, Some(v), None);
+            } else {
+                self.say(format!("{key}: not a valid value: {v}"), true);
+            }
+        } else if let Some(kind) = id.strip_prefix("default:") {
+            let json = serde_json::json!({ "name": v }).to_string();
+            pw.set_meta("default", &format!("default.configured.audio.{kind}"), Some(&json), Some("Spa:String:JSON"));
+        } else if let Some(dev) = id.strip_prefix("device:") {
+            if let (Ok(d), Ok(i)) = (dev.parse(), v.parse()) {
+                pw.set_profile(d, i);
+            }
+        } else if let Some(key) = id.strip_prefix("sm:")
+            && let Some(x) = st.sm.iter().find(|x| x.key == key)
+        {
+            let json = match (x.ty.as_str(), v) {
+                ("bool", "on") => Some("true".to_string()),
+                ("bool", "off") => Some("false".to_string()),
+                ("int", n) => n.trim().parse::<i64>().ok().map(|n| n.to_string()),
+                ("float", n) => n.trim().parse::<f64>().ok().filter(|f| x.min.is_none_or(|m| *f >= m) && x.max.is_none_or(|m| *f <= m)).map(|f| f.to_string()),
+                (_, t) => Some(serde_json::Value::String(t.trim().to_string()).to_string()),
+            };
+            match json {
+                Some(j) => {
+                    pw.set_meta("sm-settings", key, Some(&j), Some("Spa:String:JSON"));
+                    if st.sm_persistent {
+                        pw.set_meta("persistent-sm-settings", key, Some(&j), Some("Spa:String:JSON"));
+                    }
+                }
+                None => self.say(format!("{}: not a valid value: {v}", x.name), true),
+            }
+        }
+    }
+
+    fn pw_reset(&mut self, id: &str) {
+        let Some(st) = self.pw_state.clone() else { return };
+        let Some(pw) = &self.pw else { return };
+        if let Some(key) = id.strip_prefix("settings:") {
+            pw.set_meta("settings", key, Some("0"), None);
+        } else if let Some(key) = id.strip_prefix("sm:")
+            && let Some(x) = st.sm.iter().find(|x| x.key == key)
+        {
+            pw.set_meta("sm-settings", key, Some(&x.default), Some("Spa:String:JSON"));
+            if st.sm_persistent {
+                pw.set_meta("persistent-sm-settings", key, None, None);
+            }
+        }
+    }
 
     fn server_buttons(&self) -> Vec<String> {
         let st = &self.server.status;
@@ -1738,6 +2045,10 @@ impl App {
                     None => self.say(format!("\"{text}\" is not a valid value for {id}"), true),
                 }
             }
+            (Kind::Server | Kind::PipeWire, Event::Tab(t)) => self.open_settings(t),
+            (Kind::PipeWire, Event::Set(id, v)) => self.pw_set(&id, &v),
+            (Kind::PipeWire, Event::Reset(id)) => self.pw_reset(&id),
+            (Kind::PipeWire, Event::Button(_)) => self.dialog = None,
             (Kind::Server, Event::Reset(id)) => self.server.run(crate::server::Cmd::Reset(id.split('/').map(str::to_string).collect())),
             (Kind::Server, Event::Button(b)) => {
                 let label = self.dialog.as_ref().and_then(|d| d.buttons.get(b).cloned()).unwrap_or_default();

@@ -65,6 +65,8 @@ pub enum Kind {
     /// Rename a node or a port; `Dialog::tag` holds the layout key.
     RenameItem,
     Views,
+    /// PipeWire's settings (the settings page's second tab).
+    PipeWire,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -82,6 +84,7 @@ enum Part {
 enum Hit {
     Row(usize, Part),
     Button(usize),
+    Tab(usize),
     Close,
 }
 
@@ -94,6 +97,8 @@ pub enum Event {
     /// Open the options of a choice row under this rectangle.
     Options(usize, Rect),
     Button(usize),
+    /// A tab of the page's title was clicked.
+    Tab(usize),
     Close,
 }
 
@@ -105,6 +110,9 @@ pub struct Dialog {
     pub rows: Vec<Row>,
     pub buttons: Vec<String>,
     pub note: String,
+    /// Tabs after the title (pages that are one of several), and the one shown.
+    pub tabs: Vec<String>,
+    pub tab: usize,
     pub scroll: f32,
     /// The row whose text is being edited, and the text.
     pub editing: Option<(usize, String)>,
@@ -126,6 +134,8 @@ impl Dialog {
             rows: Vec::new(),
             buttons: Vec::new(),
             note: String::new(),
+            tabs: Vec::new(),
+            tab: 0,
             scroll: 0.0,
             editing: None,
             fresh: false,
@@ -239,6 +249,7 @@ impl Dialog {
         match h {
             Hit::Close => Some(Event::Close),
             Hit::Button(b) => Some(Event::Button(b)),
+            Hit::Tab(t) => Some(Event::Tab(t)),
             Hit::Row(i, part) => {
                 let row = self.rows.get(i)?;
                 let id = row.id.clone();
@@ -267,6 +278,10 @@ impl Dialog {
     /// Test points: a row's control (by label), or a button (by label).
     pub fn point(&self, what: &str) -> Option<[f32; 2]> {
         let center = |r: &Rect| [r.cx(), r.cy()];
+        if let Some(t) = what.strip_prefix("tab:") {
+            let ti = self.tabs.iter().position(|l| l == t)?;
+            return self.hits.iter().find(|(_, h)| *h == Hit::Tab(ti)).map(|(r, _)| center(r));
+        }
         if let Some(b) = what.strip_prefix("button:") {
             let bi = self.buttons.iter().position(|l| l == b)?;
             return self.hits.iter().find(|(_, h)| *h == Hit::Button(bi)).map(|(r, _)| center(r));
@@ -277,7 +292,7 @@ impl Dialog {
 
     /// Pages (settings, lists) fill the canvas; prompts are a card over it.
     pub fn is_page(&self) -> bool {
-        matches!(self.kind, Kind::Server | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views)
+        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views)
     }
 
     /// Draw over `area` (the canvas): a page fills it, a prompt is a card in its middle. The
@@ -314,7 +329,22 @@ impl Dialog {
         let w = col_w;
         // Title.
         let tpx = if page { px * 1.3 } else { px * 1.1 };
-        g.text(Face::Bold, tpx, col_x + pad, panel.y + (title_h - lh * tpx / px) / 2.0, TEXT_BRIGHT, &self.title);
+        let tw = g.text(Face::Bold, tpx, col_x + pad, panel.y + (title_h - lh * tpx / px) / 2.0, TEXT_BRIGHT, &self.title);
+        // Tabs: Luluda buttons after the title, the shown one lit.
+        let mut tx = col_x + pad + tw + 18.0 * s;
+        let th = (lh + 12.0 * s).round();
+        for (i, t) in self.tabs.iter().enumerate() {
+            let w = g.measure(Face::Regular, px, t) + 24.0 * s;
+            let r = Rect::new(tx, (panel.y + (title_h - th) / 2.0).round(), w, th);
+            let on = i == self.tab;
+            let hv = !on && r.contains(mouse[0], mouse[1]);
+            crate::ui::lbutton(g, r, s, TINT_BLUE, hv, on, true);
+            g.text_center(Face::Regular, px, r, crate::ui::lbutton_text(TINT_BLUE, hv, on, true), t);
+            if !on {
+                self.hits.push((r, Hit::Tab(i)));
+            }
+            tx += w + 6.0 * s;
+        }
         let close = Rect::new(if page { col_x + col_w - title_h } else { panel.right() - title_h }, panel.y, title_h, title_h);
         let c = [close.cx(), close.cy()];
         let k = 5.0 * s;

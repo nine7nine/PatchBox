@@ -726,7 +726,8 @@ impl App {
             self.button(g, Rect::new(bx, y, bw, bh), "Restart", false, Action::ServerRestart);
             bx += bw + 6.0 * s;
         }
-        self.button(g, Rect::new(bx, y, bw, bh), "Settings", false, Action::ServerSettings);
+        let open = self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire));
+        self.button(g, Rect::new(bx, y, bw, bh), "Settings", open, Action::ServerSettings);
         y += bh + 12.0 * s;
         g.rect(Rect::new(r.x + pad, y, r.w - 2.0 * pad, s.max(1.0)), PANEL_LINE);
         y += 8.0 * s;

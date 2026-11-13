@@ -80,13 +80,33 @@ them (☰ session menu) and puts them back when it opens. PatchBox never starts 
 a plain jackd the patchbay and transport work, server control doesn't. The transport is in the
 toolbar (Space: play/pause).
 
+## PipeWire
+
+Settings has a second tab, PipeWire, read from `pw-dump --monitor` and written with
+`pw-metadata` / `pw-cli`. It adapts to what runs:
+
+- **On top of JACK** (jack2dbus-nspa with module-jackdbus-detect, or module-jack-tunnel): the
+  bridge drives PipeWire's graph, so its clock follows JACK's and is shown, not edited; the
+  bridge's nodes and ports, and the file that configures the module (its arguments apply when
+  PipeWire restarts).
+- **Alone** (PipeWire as the JACK server too, through pipewire-jack, or beside one): the clock
+  is editable live (default rate, allowed rates, quanta; forced rate and quantum until PipeWire
+  restarts), and the defaults can be kept in `~/.config/pipewire/pipewire.conf.d/60-patchbox-clock.conf`.
+  Without jackdbus, Settings opens on this tab.
+
+Either way: the log level, the default output and input (marking a choice the session manager
+can't use, e.g. a sink chosen as the input), device profiles, WirePlumber's settings from its
+own schema, and a PipeWire restart. PipeWire's graph itself opens from its JACK client (double
+click), never mixed into the JACK graph.
+
 ## Layout of the tree
 
 ```
 src/                 GUI: main loop (main.rs), app state and actions (app.rs), canvas (canvas.rs),
                      chrome and menus (ui.rs), decorations (csd.rs), KWin shadow (shadow.rs),
                      renderer (gfx.rs) and glyph atlas (text.rs), graph model (model.rs),
-                     layout file (layout.rs), scripted test input (testscript.rs)
+                     layout file (layout.rs), scripted test input (testscript.rs), jackdbus
+                     (server.rs), PipeWire's graph and settings (pw.rs, pwconf.rs)
 crates/pbx-jack/     libjack FFI, graph snapshot, events, transport; pbx-fake-clients (test tool)
 crates/pbx-session/  patchboxd (NSM server, clients, connection memory), patchbox-ctl, the
                      session format and control protocol; pbx-fake-nsm (test tool)
@@ -111,7 +131,9 @@ tests/nested/run.sh /tmp/x.png PATCHBOX_SNAPSHOT_DELAY_MS=600000 \
 
 `tests/session/run.sh` drives patchboxd end to end (sessions, an NSM client, connection memory)
 against a private jackd in its own namespace. `PB_JACKDBUS=1` makes the nested harness run
-jackdbus (scratch HOME) instead of jackd.
+jackdbus (scratch HOME) instead of jackd; `PB_PIPEWIRE=1` adds a private PipeWire beside it,
+`PB_PIPEWIRE=bridge` one on top of it (module-jack-tunnel, with stand-in session manager
+metadata). PatchBox gets a scratch XDG config home there.
 
 `PATCHBOX_STATS=1` prints main-loop wake-ups and frames at exit (idle: the 1 Hz DSP poll, no
 frames).

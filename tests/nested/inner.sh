@@ -30,7 +30,10 @@ if [ -n "${PB_PIPEWIRE:-}" ]; then
   # (-c with an absolute path: none of the owner's PipeWire configuration applies to the daemon.)
   export PIPEWIRE_RUNTIME_DIR="$L/pw-run"
   rm -rf "$PIPEWIRE_RUNTIME_DIR"; mkdir -p "$PIPEWIRE_RUNTIME_DIR"
-  env HOME="$L/pw-home" pipewire -c "$(dirname "$0")/pw-test.conf" > "$L/pipewire.log" 2>&1 &
+  # PB_PIPEWIRE=bridge: PipeWire on top of the JACK server above (module-jack-tunnel), as with
+  # jack2dbus-nspa + module-jackdbus-detect; anything else: PipeWire alone.
+  conf=pw-test.conf; [ "$PB_PIPEWIRE" = bridge ] && conf=pw-bridge.conf
+  env HOME="$L/pw-home" pipewire -c "$(dirname "$0")/$conf" > "$L/pipewire.log" 2>&1 &
   for i in $(seq 50); do [ -S "$PIPEWIRE_RUNTIME_DIR/pipewire-0" ] && break; sleep 0.1; done
   sleep 0.3
   timeout 5 pw-link firefox:capture_FL skype_in:playback_FL >/dev/null 2>&1
@@ -40,4 +43,6 @@ if [ -z "${PB_NO_FAKES:-}" ]; then
   "$BIN/pbx-fake-clients" > "$L/fakes.log" 2>&1 &
   for i in $(seq 50); do grep -q ready "$L/fakes.log" 2>/dev/null && break; sleep 0.1; done
 fi
-env PATCHBOX_CONFIG_DIR="$CFG" PATCHBOX_SNAPSHOT="$OUT" PATCHBOX_SNAPSHOT_EXIT=1 PATCHBOX_SHADOW=0 "$@" "$BIN/patchbox" 2>&1 | tee "$L/patchbox.log"
+# Its own XDG config home: the PipeWire tab's drop-in and config lookups stay in the scratch dir.
+mkdir -p "$L/xdg-config"
+env PATCHBOX_CONFIG_DIR="$CFG" XDG_CONFIG_HOME="$L/xdg-config" PATCHBOX_SNAPSHOT="$OUT" PATCHBOX_SNAPSHOT_EXIT=1 PATCHBOX_SHADOW=0 "$@" "$BIN/patchbox" 2>&1 | tee "$L/patchbox.log"

@@ -12,6 +12,7 @@ mod gfx;
 mod layout;
 mod model;
 mod pw;
+mod pwconf;
 mod server;
 mod session;
 mod sessui;
