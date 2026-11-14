@@ -359,6 +359,14 @@ impl App {
                     }
                     self.server.status = st;
                 }
+                Reply::ConstraintsChanged => {
+                    self.events.push(crate::events::Kind::Server, "Sound cards changed: device lists read again", false);
+                    // The page shows lists from the loaded tree: load it again (else it loads
+                    // when the page opens).
+                    if self.server.config.is_some() {
+                        self.server.send(crate::server::Cmd::LoadConfig);
+                    }
+                }
                 Reply::Config(c) => {
                     self.server.config = Some(*c);
                     // A parameter changed (or the page loaded): the settings a preset would keep.

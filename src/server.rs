@@ -132,6 +132,8 @@ pub struct Status {
 
 pub enum Cmd {
     Refresh,
+    /// jackdbus re-read a parameter's list of values (jack2dbus-nspa: a sound card came or went).
+    ConstraintsChanged,
     Start,
     Stop,
     Restart,
@@ -164,6 +166,8 @@ pub enum Reply {
     /// A finished action, for the log.
     Done(String),
     Error(String),
+    /// Parameter value lists changed (the ALSA devices): read the tree again if it is shown.
+    ConstraintsChanged,
 }
 
 pub struct Server {
@@ -231,6 +235,10 @@ fn worker(rx: Receiver<Cmd>, out: Arc<Mutex<Vec<Reply>>>, waker: pbx_jack::Waker
         };
         let res = match cmd {
             Cmd::Refresh => Ok(None),
+            Cmd::ConstraintsChanged => {
+                push(Reply::ConstraintsChanged);
+                Ok(None)
+            }
             Cmd::Stats => {
                 if let Some(st) = stats(c) {
                     push(Reply::Stats(st));
@@ -423,14 +431,37 @@ fn stats(c: &Connection) -> Option<Stats> {
     })
 }
 
-/// jackdbus's ServerStarted / ServerStopped, so a start or stop from elsewhere (jack_control,
-/// another program) shows at once: each one triggers a refresh.
+/// jackdbus's signals, so changes made elsewhere show at once: JackControl's ServerStarted /
+/// ServerStopped (jack_control, another program) trigger a refresh, and Configure's
+/// ConstraintsChanged (jack2dbus-nspa: a sound card came or went) re-reads the device lists.
+/// One thread, two match rules: the patchbay's frequent signals are not delivered here.
 fn watch_signals(tx: Sender<Cmd>) {
     let Ok(c) = Connection::session() else { return };
-    let Ok(p) = Proxy::new(&c, SERVICE, PATH, CONTROL) else { return };
-    let Ok(sigs) = p.receive_all_signals() else { return };
-    for _ in sigs {
-        if tx.send(Cmd::Refresh).is_err() {
+    let Ok(bus) = zbus::blocking::fdo::DBusProxy::new(&c) else { return };
+    let rule = |iface: &'static str, member: Option<&'static str>| -> zbus::Result<zbus::MatchRule<'static>> {
+        let b = zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal).sender(SERVICE)?.path(PATH)?.interface(iface)?;
+        Ok(match member {
+            Some(m) => b.member(m)?.build(),
+            None => b.build(),
+        })
+    };
+    for (iface, member) in [(CONTROL, None), (CONFIGURE, Some("ConstraintsChanged"))] {
+        if let Ok(r) = rule(iface, member) {
+            let _ = bus.add_match_rule(r);
+        }
+    }
+    for msg in zbus::blocking::MessageIterator::from(&c) {
+        let Ok(msg) = msg else { continue };
+        let h = msg.header();
+        if h.message_type() != zbus::message::Type::Signal {
+            continue;
+        }
+        let cmd = match (h.interface().map(|i| i.as_str()), h.member().map(|m| m.as_str())) {
+            (Some(CONTROL), _) => Cmd::Refresh,
+            (Some(CONFIGURE), Some("ConstraintsChanged")) => Cmd::ConstraintsChanged,
+            _ => continue,
+        };
+        if tx.send(cmd).is_err() {
             break;
         }
     }
