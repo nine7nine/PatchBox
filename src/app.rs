@@ -398,6 +398,7 @@ impl App {
         let events = c.take_events();
         let now = Instant::now();
         let mut lost = None;
+        let mut clock_changed = false;
         use crate::events::Kind as K;
         for e in events {
             match &e {
@@ -412,12 +413,14 @@ impl App {
                         self.events.push(K::Server, format!("Buffer size {n} frames ({ms:.2} ms)"), false);
                     }
                     self.stats.buffer_size = *n;
+                    clock_changed = true;
                 }
                 Event::SampleRate(n) => {
                     if *n != self.stats.sample_rate {
                         self.events.push(K::Server, format!("Sample rate {n} Hz"), false);
                     }
                     self.stats.sample_rate = *n;
+                    clock_changed = true;
                 }
                 Event::Freewheel(on) => {
                     self.events.push(K::Server, if *on { "Freewheeling" } else { "Freewheel off" }, false);
@@ -444,6 +447,9 @@ impl App {
                 self.graph_due = Some(now + GRAPH_QUIET);
             }
             self.redraw = true;
+        }
+        if clock_changed {
+            self.refresh_pw_page(); // its clock is JACK's when bridged
         }
         if let Some(reason) = lost {
             self.export_reset();
@@ -2119,8 +2125,19 @@ impl App {
         rows.push(Row::header("Clock"));
         let clock_help = if bridged { "Follows JACK: the bridge drives PipeWire's graph at JACK's rate and buffer size" } else { "" };
         if bridged {
-            rows.push(info("", "Rate", format!("{} Hz", set("clock.rate")), clock_help));
-            rows.push(info("", "Quantum", set("clock.quantum"), clock_help));
+            // The bridge runs PipeWire's graph one JACK cycle at a time: its rate and quantum
+            // are JACK's (the `settings` metadata only holds what PipeWire uses on its own)
+            let (rate, frames) = (self.stats.sample_rate, self.stats.buffer_size);
+            let rate = if rate > 0 { format!("{rate} Hz") } else { format!("{} Hz", set("clock.rate")) };
+            let quantum = if frames > 0 { format!("{frames} frames (JACK's buffer size)") } else { "JACK's buffer size".to_string() };
+            rows.push(info("", "Rate", rate, clock_help));
+            rows.push(info("", "Quantum", quantum, clock_help));
+            rows.push(info(
+                "",
+                "Default quantum",
+                format!("{} frames (when PipeWire runs alone)", set("clock.quantum")),
+                "default.clock.quantum: the buffer size PipeWire uses when it drives its own graph, not while JACK drives it",
+            ));
         } else {
             let rates = [44100u32, 48000, 88200, 96000, 176400, 192000];
             let quanta = [16u32, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
