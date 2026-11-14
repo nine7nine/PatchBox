@@ -18,6 +18,11 @@ the server. It doesn't need it:
 | another jackdbus | the same, except that a client is stopped without leaving the graph first, and a setting that can't change live restarts the server |
 | a plain jackd | the patchbay, sessions and transport; no server control |
 
+**[Architecture document](https://nine7nine.github.io/PatchBox/)**: how the window, the session
+daemon, JACK, jackdbus and PipeWire fit together, with diagrams and measurements (source:
+[`docs/index.html`](docs/index.html)). Every control is described in the
+[manual](docs/MANUAL.md).
+
 ## Why
 
 Patching, the server's settings and the session usually take several programs: a server panel
@@ -97,8 +102,8 @@ doesn't start one by itself, and reconnects when the server comes back.
 - The JACK section: start and stop the server, **Settings** for its parameters and presets.
 
 Every control, the session format, the settings and the test harness are described in
-[docs/MANUAL.md](docs/MANUAL.md). How it is built, with diagrams: the
-[architecture document](https://nine7nine.github.io/PatchBox/) (`docs/index.html`).
+[docs/MANUAL.md](docs/MANUAL.md); how it is built, in the
+[architecture document](https://nine7nine.github.io/PatchBox/).
 
 ## Testing
 
