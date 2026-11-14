@@ -97,7 +97,7 @@ pub struct Daemon {
     /// Clients kept running across a session switch: (the new session's client id, client).
     reserved: Vec<(String, Client)>,
     /// A jackdbus job running on a thread, and its result.
-    jack_job: Option<std::sync::mpsc::Receiver<Result<bool, String>>>,
+    jack_job: Option<std::sync::mpsc::Receiver<Result<crate::jackcfg::Applied, String>>>,
     quit: bool,
     /// No session and no front end since then: exit after a while.
     idle_since: Option<Instant>,
@@ -1096,8 +1096,12 @@ impl Daemon {
                 }
                 let res = self.jack_job.as_ref().and_then(|r| r.try_recv().ok());
                 match res {
-                    Some(Ok(true)) => self.log("JACK restarted with the session's settings", false),
-                    Some(Ok(false)) => {}
+                    Some(Ok(crate::jackcfg::Applied::Restarted)) => self.log("JACK restarted with the session's settings", false),
+                    Some(Ok(crate::jackcfg::Applied::Live(Some(frames)))) => {
+                        self.log(format!("JACK buffer size set to {frames} frames for the session (no restart)"), false)
+                    }
+                    Some(Ok(crate::jackcfg::Applied::Live(None))) => self.log("JACK settings applied for the session (no restart)", false),
+                    Some(Ok(crate::jackcfg::Applied::Unchanged)) => {}
                     Some(Err(e)) => self.log(e, true),
                     None if late => self.log("JACK settings: jackdbus did not answer in time", true),
                     None => return false,

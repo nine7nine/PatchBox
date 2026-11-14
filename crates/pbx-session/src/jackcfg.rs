@@ -1,13 +1,15 @@
 //! A session's JACK settings, through jackdbus (org.jackaudio.service): read the configuration
 //! (the driver, and every engine and driver parameter that is set rather than defaulted), and
 //! put one back: stop the server, set, start. RaySession does this with shell scripts around
-//! jack_control; here it is the D-Bus Configure interface directly.
+//! jack_control; here it is the D-Bus Configure interface directly. What a running server takes
+//! as it is (the buffer size, jackdbus' own log settings) is applied without the restart, which
+//! would throw every client off the server.
 //!
 //! Values are kept as typed strings ("u:48000", "b:true", "s:hw:PCH", "i:-1", "y:99"), so the
 //! session file stays plain TOML.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use zbus::blocking::{Connection, Proxy};
@@ -128,9 +130,66 @@ pub fn read(c: &Connection) -> Result<JackSettings, String> {
     Ok(JackSettings { remember: true, driver, params })
 }
 
-/// Make jackdbus's configuration `want` and (re)start the server with it. Ok(false): it was
-/// already so (the server is left alone, started if it wasn't).
-pub fn apply(c: &Connection, want: &JackSettings) -> Result<bool, String> {
+/// What `apply` did.
+#[derive(Debug, PartialEq)]
+pub enum Applied {
+    /// It was already so (the server is left alone, started if it wasn't).
+    Unchanged,
+    /// Changed on the running server, no restart: the buffer size (Some(frames)) and/or
+    /// jackdbus' own settings.
+    Live(Option<u32>),
+    /// The server was stopped, set and started.
+    Restarted,
+}
+
+/// The parameters set differently in `a` and `b`, or set in only one of them.
+fn changed<'a>(a: &'a BTreeMap<String, String>, b: &'a BTreeMap<String, String>) -> BTreeSet<&'a str> {
+    a.keys().chain(b.keys()).filter(|k| a.get(*k) != b.get(*k)).map(String::as_str).collect()
+}
+
+/// Whether a running server takes these parameters as they are: the buffer size (its period,
+/// org.jackaudio.JackControl.SetBufferSize) with the ALSA and dummy drivers, and jackdbus' own
+/// log settings (jack2dbus-nspa, read at each line). Anything else needs a restart.
+fn live(driver: &str, changed: &BTreeSet<&str>) -> bool {
+    !changed.is_empty()
+        && changed.iter().all(|k| match *k {
+            "driver/period" => matches!(driver, "alsa" | "dummy"),
+            "engine/log-level" | "engine/log-max-size" => true,
+            _ => false,
+        })
+}
+
+/// Set (or reset to its default) each changed parameter, as for a restart, then give the running
+/// server its new buffer size. Err: the server did not take it (a restart follows).
+fn apply_live(c: &Connection, ctl: &Proxy<'_>, want: &JackSettings, changed: &BTreeSet<&str>) -> Result<Option<u32>, String> {
+    let p = configure(c)?;
+    for k in changed {
+        let path: Vec<String> = k.split('/').map(str::to_string).collect();
+        match want.params.get(*k).and_then(|v| untyped(v)) {
+            Some(v) => p.call_method("SetParameterValue", &(path, v)).map(|_| ()).map_err(err)?,
+            None => p.call_method("ResetParameterValue", &(path,)).map(|_| ()).map_err(err)?,
+        }
+    }
+    if !changed.contains("driver/period") {
+        return Ok(None);
+    }
+    // The value now in effect for the next start: the session's, or the default it was reset to
+    let path = vec!["driver".to_string(), "period".to_string()];
+    let (_, _, v): (bool, OwnedValue, OwnedValue) = p.call("GetParameterValue", &(path,)).map_err(err)?;
+    let frames = typed(&v)
+        .and_then(|s| s.strip_prefix("u:").and_then(|n| n.parse::<u32>().ok()))
+        .ok_or("the driver's period is not a number")?;
+    ctl.call_method("SetBufferSize", &(frames,)).map_err(err)?;
+    let now: u32 = ctl.call("GetBufferSize", &()).map_err(err)?;
+    if now != frames {
+        return Err(format!("the buffer size is {now}, not {frames}"));
+    }
+    Ok(Some(frames))
+}
+
+/// Make jackdbus's configuration `want`, on the running server where it can be (`Applied::Live`),
+/// else by (re)starting the server with it.
+pub fn apply(c: &Connection, want: &JackSettings) -> Result<Applied, String> {
     let cur = read(c)?;
     let ctl = control(c)?;
     let started: bool = ctl.call("IsStarted", &()).map_err(err)?;
@@ -138,7 +197,14 @@ pub fn apply(c: &Connection, want: &JackSettings) -> Result<bool, String> {
         if !started {
             ctl.call_method("StartServer", &()).map_err(err)?;
         }
-        return Ok(false);
+        return Ok(Applied::Unchanged);
+    }
+    let diff = changed(&cur.params, &want.params);
+    if started && cur.driver == want.driver && live(&want.driver, &diff) {
+        // A failure leaves the parameters set: the restart below starts with them
+        if let Ok(frames) = apply_live(c, &ctl, want, &diff) {
+            return Ok(Applied::Live(frames));
+        }
     }
     if started {
         ctl.call_method("StopServer", &()).map_err(err)?;
@@ -162,12 +228,39 @@ pub fn apply(c: &Connection, want: &JackSettings) -> Result<bool, String> {
         p.call_method("ResetParameterValue", &(path,)).map_err(err)?;
     }
     ctl.call_method("StartServer", &()).map_err(err)?;
-    Ok(true)
+    Ok(Applied::Restarted)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn params(kv: &[(&str, &str)]) -> BTreeMap<String, String> {
+        kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn changed_parameters() {
+        let a = params(&[("driver/period", "u:512"), ("driver/rate", "u:48000"), ("engine/realtime", "b:true")]);
+        let b = params(&[("driver/period", "u:256"), ("driver/rate", "u:48000"), ("driver/nperiods", "u:2")]);
+        let d = changed(&a, &b);
+        assert_eq!(d.into_iter().collect::<Vec<_>>(), vec!["driver/nperiods", "driver/period", "engine/realtime"]);
+        assert!(changed(&a, &a).is_empty());
+    }
+
+    #[test]
+    fn live_or_restart() {
+        let set = |ks: &[&'static str]| ks.iter().copied().collect::<BTreeSet<&str>>();
+        assert!(live("alsa", &set(&["driver/period"])));
+        assert!(live("dummy", &set(&["driver/period"])));
+        assert!(live("alsa", &set(&["driver/period", "engine/log-level"])));
+        assert!(live("firewire", &set(&["engine/log-max-size"])));
+        assert!(!live("firewire", &set(&["driver/period"])));
+        assert!(!live("alsa", &set(&["driver/period", "driver/rate"])));
+        assert!(!live("alsa", &set(&["driver/nperiods"])));
+        assert!(!live("alsa", &set(&["engine/realtime-priority"])));
+        assert!(!live("alsa", &set(&[])));
+    }
 
     #[test]
     fn typed_roundtrip() {

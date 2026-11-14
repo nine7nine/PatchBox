@@ -244,10 +244,16 @@ fn worker(rx: Receiver<Cmd>, out: Arc<Mutex<Vec<Reply>>>, waker: pbx_jack::Waker
                 push(Reply::Settings(Box::new(s)));
                 None
             }),
-            Cmd::ApplySettings(s, name) => pbx_session::jackcfg::apply(c, &s).and_then(|changed| {
+            Cmd::ApplySettings(s, name) => pbx_session::jackcfg::apply(c, &s).and_then(|done| {
+                use pbx_session::jackcfg::Applied;
                 push(Reply::Config(Box::new(load_config(c)?)));
                 push(Reply::Settings(s));
-                Ok(Some(if changed { format!("Preset {name}: in place, the server restarted") } else { format!("Preset {name}: already in place") }))
+                Ok(Some(match done {
+                    Applied::Restarted => format!("Preset {name}: in place, the server restarted"),
+                    Applied::Live(Some(frames)) => format!("Preset {name}: in place, buffer size {frames} without a restart"),
+                    Applied::Live(None) => format!("Preset {name}: in place, without a restart"),
+                    Applied::Unchanged => format!("Preset {name}: already in place"),
+                }))
             }),
             Cmd::Slave(name, on) => slave(c, &name, on).and_then(|msg| {
                 let cfg = load_config(c)?;
