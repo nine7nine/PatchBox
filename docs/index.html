@@ -422,11 +422,13 @@ td code, li code, p code { font-size: 0.92em; }
   <div class="kicker">Architecture · Linux · Wayland · Rust + SDL3 · JACK / jackdbus · PipeWire · NSM</div>
   <h1>PatchBox</h1>
   <p class="lede">
-    A JACK patchbay, a jackdbus server control panel and an NSM session manager in one Rust application, drawn with
-    its own OpenGL renderer on a static, Wayland-only, patched SDL3. It replaces qjackctl and RaySession on a
-    jack2dbus-nspa system: PatchMatrix's graph &mdash; matrices, the AUDIO / MIDI / CV / OSC split &mdash; reworked with
-    Luluda's look, ports on the blocks, wires that come off by dragging, and everything RaySession's sessions do, in a
-    format of its own.
+    A patchbay for JACK and PipeWire, a jackdbus server control panel and an NSM session manager in one Rust
+    application, drawn with its own OpenGL renderer on a static, Wayland-only, patched SDL3. It edits JACK's graph and
+    PipeWire's own, never mixed; drives the JACK server through jackdbus and PipeWire's clock and devices through
+    PipeWire's tools; and runs sessions of NSM clients and plain programs. It is built alongside jack2dbus-nspa and uses
+    what that adds, and works as well with PipeWire alone (pipewire-jack), another jackdbus or a plain jackd. Its ideas
+    come from the patchbays and session managers before it &mdash; Patchage, Catia, PatchMatrix's matrices, qjackctl,
+    NSM and RaySession among them &mdash; reworked with a look and a session format of its own.
   </p>
   <p class="lede" style="margin-top:12px">
     The rule behind its shape: <b>PatchBox is never in the audio path.</b> Its JACK clients have no process callback,
@@ -444,20 +446,20 @@ td code, li code, p code { font-size: 0.92em; }
     <li><b>~20 MB</b><span>heap and stacks, running</span></li>
     <li><b>46 + 6 + 5</b><span>isolated checks: sessions · JACK settings · cameras · + 34 unit tests</span></li>
     <li><b>ASan · TSan</b><span>no errors · daemon, CLI, clients, GUI threads</span></li>
-    <li><b>71</b><span>commits · 17.9k lines of Rust</span></li>
+    <li><b>73</b><span>commits · 17.9k lines of Rust</span></li>
   </ul>
 </header>
 
   <div class="tablebox" style="margin-top:6px">
     <table>
-      <tr><th style="border-left:3px solid transparent">Area</th><th>qjackctl + RaySession</th><th>PatchBox</th></tr>
-      <tr><td style="border-left:3px solid #8b8ff5">Toolkit</td><td>Qt 5/6 (C++ and Python/PyQt), two programs, two patchbays</td><td>one Rust program on a static, Wayland-only SDL3 (no D-Bus, no GLX), its own GL renderer, client-side decorations</td></tr>
-      <tr><td style="border-left:3px solid #8b8ff5">Patchbay</td><td>boxes and wires (HoustonPatchbay); qjackctl's lists</td><td>ports on blocks (left-to-right or top-to-bottom), PatchMatrix's matrices, AUDIO / MIDI / CV / OSC tabs, per-view layouts, port groups, a block per Ardour track, find, rubber band, undo</td></tr>
-      <tr><td style="border-left:3px solid #8b8ff5">Server control</td><td>qjackctl's setup dialog (jackd command line or jackdbus)</td><td>jackdbus only, mapped in full from its own parameter tree: master and slave drivers, internals, engine, presets, live stats and signals; the buffer size and the CPU wake-up latency limit changed without a restart</td></tr>
-      <tr><td style="border-left:3px solid #8b8ff5">Sessions</td><td>RaySession daemon (Python) · NSM · its own format</td><td>patchboxd (Rust, one poll loop) · NSM API 1.1 · its own TOML format · snapshots, templates, scripts, switch, per-session JACK settings, client templates and hooks; a client taken out of the graph before it is stopped</td></tr>
-      <tr><td style="border-left:3px solid #8b8ff5">Connections that persist</td><td>RaySession's jackpatch per session; qjackctl's patchbay rules</td><td>both: RaySession's restore rules per session, and global rules (with <code>*</code>) kept by patchboxd, session or not</td></tr>
-      <tr><td style="border-left:3px solid #8b8ff5">PipeWire</td><td>separate tools (qpwgraph, pavucontrol)</td><td>PipeWire's own graph opened from its JACK client, never mixed in; a settings tab that adapts to how PipeWire runs</td></tr>
-      <tr style="background:rgba(251,191,36,0.05)"><td style="border-left:3px solid #fbbf24">JACK and NSM interfaces</td><td>libjack · jackdbus D-Bus · NSM 1.1 over OSC</td><td>the same: any JACK server, any NSM client, unchanged</td></tr>
+      <tr><th style="border-left:3px solid transparent">Area</th><th>Separate programs</th><th>PatchBox</th></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Toolkit</td><td>a program per job (Qt or GTK): a server panel, a patchbay, a session manager, a PipeWire graph</td><td>one Rust program on a static, Wayland-only SDL3 (no D-Bus, no GLX), its own GL renderer, client-side decorations</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Patchbay</td><td>boxes and wires (Patchage, Catia, RaySession's), matrices (PatchMatrix), lists (qjackctl)</td><td>ports on blocks (left-to-right or top-to-bottom), connection matrices, AUDIO / MIDI / CV / OSC tabs, per-view layouts, port groups, a block per Ardour track, find, rubber band, undo</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Server control</td><td>a setup dialog (qjackctl, Cadence): a jackd command line or jackdbus</td><td>jackdbus only, mapped in full from its own parameter tree: master and slave drivers, internals, engine, presets, live stats and signals; the buffer size and the CPU wake-up latency limit changed without a restart</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Sessions</td><td>nsmd and its front ends, RaySession's daemon · NSM · each with its own format</td><td>patchboxd (Rust, one poll loop) · NSM API 1.1 · its own TOML format · snapshots, templates, scripts, switch, per-session JACK settings, client templates and hooks; a client taken out of the graph before it is stopped</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Connections that persist</td><td>a patch client per session (jackpatch, RaySession's); global patchbay rules (qjackctl)</td><td>both: RaySession's restore rules per session, and global rules (with <code>*</code>) kept by patchboxd, session or not</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">PipeWire</td><td>separate tools (qpwgraph, Helvum, pavucontrol)</td><td>PipeWire's own graph opened from its JACK client, never mixed in; with pipewire-jack, PipeWire's nodes are the patchbay's; a settings tab that adapts to how PipeWire runs</td></tr>
+      <tr style="background:rgba(251,191,36,0.05)"><td style="border-left:3px solid #fbbf24">JACK and NSM interfaces</td><td>libjack · jackdbus D-Bus · NSM 1.1 over OSC</td><td>the same: any JACK server (jackdbus, jackd, PipeWire's pipewire-jack), any NSM client, unchanged</td></tr>
       <tr style="background:rgba(251,191,36,0.05)"><td style="border-left:3px solid #fbbf24">Audio path</td><td>not involved</td><td>not involved: no process callback, no RT thread, no port of its own in the graph</td></tr>
     </table>
   </div>
@@ -3067,7 +3069,7 @@ td code, li code, p code { font-size: 0.92em; }
     </div>
     <div class="card engine">
       <h3>Snapshots, templates, scripts</h3>
-      <p class="role">RaySession's ideas, done with git, folders and sh</p>
+      <p class="role">Ideas from RaySession and others, done with git, folders and sh</p>
       <ul>
         <li><b>Snapshots</b>: a git directory beside the work tree (<code>.patchbox-snapshots</code>), unsigned commits and no hooks; audio, video and files over 50 MB excluded; a tag per snapshot. Automatic ones at save and close skip when nothing changed. <b>Rewind</b> stops the clients, resets the folder to a tag and opens the session again.</li>
         <li><b>Session templates</b>: a copy of a session folder; <b>client templates</b>: a client's command, properties and files, with its file prefix replaced by <code>__CLIENT__</code>.</li>
@@ -3584,7 +3586,7 @@ td code, li code, p code { font-size: 0.92em; }
       </g>
 
       <text x="20" y="200" class="t-band">RELEASE BINARIES · BEFORE AND AFTER THE TRIM (R62)</text>
-      <text x="200" y="400" class="t-sub">Now (585a43f): patchbox 6.07 MB · patchboxd 2.64 MB · patchbox-ctl 0.52 MB, with everything added since.</text>
+      <text x="200" y="400" class="t-sub">Now (894a785): patchbox 6.07 MB · patchboxd 2.64 MB · patchbox-ctl 0.52 MB, with everything added since.</text>
       <g class="t-tiny">
         <line x1="200" y1="214" x2="200" y2="360" class="grid-line"/><text x="200" y="376" text-anchor="middle">0</text>
         <line x1="386" y1="214" x2="386" y2="360" class="grid-line"/><text x="386" y="376" text-anchor="middle">2 MB</text>
@@ -3751,8 +3753,8 @@ td code, li code, p code { font-size: 0.92em; }
         <tr><td><code>tests/session/run.sh</code></td><td>patchboxd end to end in the namespace: new, open, save, close, switch, duplicate, rename, snapshots and rewind, templates, scripts, plain programs and signals, NSM clients, connection memory, rules; removing clients (running or not), save-and-stop, deleting sessions and templates to a scratch Trash, restarting in place after an update</td><td class="num">46</td></tr>
         <tr><td><code>tests/session/jack-settings.sh</code></td><td>per-session JACK settings through a private jackdbus: saved, restored, unchanged when equal</td><td class="num">6</td></tr>
         <tr><td><code>tests/nested/cameras.sh</code></td><td>the window in the nested KWin, with a private JACK and a bridged PipeWire: each canvas's camera per style across style, graph and session switches, Fit, a style a graph never showed, sessions changed while on PipeWire, a restart from PipeWire (32 returns; all five checks fail on the code before)</td><td class="num">5</td></tr>
-        <tr><td><code>scripts/sanitize.sh address</code></td><td>ASan + LSan, std rebuilt with <code>-Zbuild-std</code>, at <code>585a43f</code>: both session suites and the camera suite pass with no memory errors (the GUI needs <code>detect_odr_violation=0</code>: SDL's stb_image and miniz tables merged identically). LSan reports one allocation when the window exits: 160 bytes, the hit-test closure the sdl3 crate's <code>set_hit_test</code> boxes for the window's life and never frees</td><td class="num">no errors</td></tr>
-        <tr><td><code>scripts/sanitize.sh thread</code></td><td>TSan, the same runs: clean at <code>585a43f</code>. One suppression, a lock-order report inside libdb (JACK's metadata store), third-party</td><td class="num">clean</td></tr>
+        <tr><td><code>scripts/sanitize.sh address</code></td><td>ASan + LSan, std rebuilt with <code>-Zbuild-std</code>, at <code>894a785</code>: both session suites and the camera suite pass with no memory errors (the GUI needs <code>detect_odr_violation=0</code>: SDL's stb_image and miniz tables merged identically). LSan reports one allocation when the window exits: 160 bytes, the hit-test closure the sdl3 crate's <code>set_hit_test</code> boxes for the window's life and never frees</td><td class="num">no errors</td></tr>
+        <tr><td><code>scripts/sanitize.sh thread</code></td><td>TSan, the same runs: clean at <code>894a785</code>. One suppression, a lock-order report inside libdb (JACK's metadata store), third-party</td><td class="num">clean</td></tr>
         <tr class="compat"><td>Build</td><td colspan="2">Zero compiler warnings, by rule, in every crate and configuration.</td></tr>
       </tbody>
     </table>
@@ -3778,7 +3780,7 @@ td code, li code, p code { font-size: 0.92em; }
         <li><b>optdepends</b>: jack2dbus-nspa (server control, presets), pipewire (its graph and tab), wireplumber, git (snapshots), xdg-utils.</li>
         <li><b>check()</b> runs <code>cargo test --release</code>; <code>options=(!lto)</code> for the C side.</li>
       </ul>
-      <div class="chips"><span class="chip">makepkg</span><span class="chip">cargo --frozen</span><span class="chip">pkgver r71</span></div>
+      <div class="chips"><span class="chip">makepkg</span><span class="chip">cargo --frozen</span><span class="chip">pkgver r73</span></div>
     </div>
     <div class="card engine">
       <h3>What it installs</h3>
@@ -3851,7 +3853,7 @@ td code, li code, p code { font-size: 0.92em; }
 <!-- ============================================================ 19. source map -->
 <section id="s19">
   <h2><span class="num">19</span>Source map</h2>
-  <p class="sub">17,863 lines of Rust in three crates, 71 commits. Line counts are from <code>wc -l</code> at <code>585a43f</code>.</p>
+  <p class="sub">17,863 lines of Rust in three crates, 73 commits. Line counts are from <code>wc -l</code> at <code>894a785</code>.</p>
   <div class="tablebox">
     <table>
       <thead><tr><th>File</th><th>What it holds</th><th class="num">Lines</th></tr></thead>
@@ -3887,7 +3889,7 @@ td code, li code, p code { font-size: 0.92em; }
 </section>
 
 <footer>
-  PatchBox · architecture · 0.1.0 r71 (<code>585a43f</code>, github.com/nine7nine/PatchBox) · Rust · SDL 3.4.18
+  PatchBox · architecture · 0.1.0 r73 (<code>894a785</code>, github.com/nine7nine/PatchBox) · Rust · SDL 3.4.18
   (static, Wayland) · for jack2dbus-nspa 1.9.22 r104 or later · tested on Linux 7.3 PREEMPT_RT, KDE Plasma · updated
   14 November 2026
 </footer>
