@@ -7,7 +7,7 @@ resolver = "3"
 name = "patchbox"
 version = "0.1.0"
 edition = "2024"
-description = "JACK patchbay and session manager (SDL3 + GL)"
+description = "Patchbay for JACK and PipeWire, audio server control and session manager (SDL3 + GL)"
 license = "GPL-2.0-or-later"
 publish = false
 

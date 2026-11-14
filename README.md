@@ -1,29 +1,43 @@
 # PatchBox
 
-A JACK patchbay, JACK server control and an NSM session manager in one program, for audio work on
-Linux. The graph keeps PatchMatrix's look and its connection matrices; RaySession's flexibility is
-underneath it and its session management beside it; the JACK server is driven through jackdbus.
-Rust, SDL3 (vendored, static, Wayland only) and a GL renderer of its own, with no toolkit.
+A patchbay, audio server control and session manager in one program, for JACK and PipeWire on
+Linux. It shows and edits JACK's graph and PipeWire's, drives the JACK server through jackdbus and
+PipeWire's clock and devices through PipeWire's own tools, and runs sessions of NSM clients and plain
+programs. Rust, SDL3 (vendored, static, Wayland only) and a GL renderer of its own, with no
+toolkit.
 
 PatchBox is built alongside [jack2dbus-nspa](https://github.com/nine7nine/jack2dbus-nspa), a JACK2
 fork for real-time work, and uses what it adds: an application's clients leave the graph before
 the application is stopped, and the buffer size and CPU wake-up latency change without restarting
-the server. With another jackdbus it works with what that offers; with a plain jackd the patchbay
-and transport work, server control doesn't.
+the server. It doesn't need it:
+
+| The set-up | What PatchBox does there |
+|---|---|
+| jack2dbus-nspa's jackdbus, with or without PipeWire on top | everything: JACK's graph, server control, sessions; with PipeWire bridged, its graph (opened from its JACK client) and its settings tab too |
+| PipeWire alone (pipewire-jack) | the patchbay (PipeWire's nodes through its JACK API), sessions, PipeWire's settings; no jackdbus page |
+| another jackdbus | the same, except that a client is stopped without leaving the graph first, and a setting that can't change live restarts the server |
+| a plain jackd | the patchbay, sessions and transport; no server control |
 
 ## Why
 
-It replaces three programs: qjackctl for the server, RaySession for sessions, and PatchMatrix or
-Catia for the graph. One window, one place for the server's settings, the graph and the session,
-and a daemon that keeps the session running when the window closes.
+Patching, the server's settings and the session usually take several programs: a server panel
+(qjackctl), a patchbay (Patchage, Catia, PatchMatrix, qpwgraph, Helvum…), a session manager (NSM,
+RaySession, Agordejo…). PatchBox puts them in one window, with a daemon that keeps the session
+running when the window closes. It borrows ideas from many of these programs (connection
+matrices, session behaviour, connection rules) and implements them anew, with a session format of
+its own.
 
 ## Features
 
-- **Patchbay.** Two views of the JACK graph: Ports (each block shows its ports, a wire per
-  connection) and Matrix (PatchMatrix's: one connection matrix per pair of clients). Audio, MIDI,
-  CV and OSC apart. Stereo pairs detected; port groups that connect 1:1; Ardour's tracks and
-  Carla's plugins split into blocks of their own; your names for clients and ports, exported to
-  other programs as JACK metadata; find; selection, alignment, hiding; a layout per view.
+- **Patchbay.** Two views of the graph: Ports (each block shows its ports, a wire per connection)
+  and Matrix (a connection matrix per pair of clients). Audio, MIDI, CV and OSC apart. Stereo
+  pairs detected; port groups that connect 1:1; Ardour's tracks and Carla's plugins split into
+  blocks of their own; your names for clients and ports, exported to other programs as JACK
+  metadata; find; selection, alignment, hiding; a layout and camera per view.
+- **PipeWire.** With PipeWire on top of JACK, its own graph (desktop streams, devices, audio,
+  MIDI, video) opens from its JACK client and is edited the same way, never mixed into JACK's.
+  With PipeWire as the JACK server, its nodes are the patchbay's. A settings tab for either: the
+  clock, default devices, device profiles, WirePlumber's settings, the log level, a restart.
 - **Connection rules.** Connections kept whenever both ports exist, with or without a session
   (`*` wildcards); one you remove by hand stays removed.
 - **Sessions.** `patchboxd`, an NSM server: NSM clients (Ardour, Carla, Hydrogen…) told to open
@@ -33,15 +47,13 @@ and a daemon that keeps the session running when the window closes.
 - **JACK server.** Start, stop, restart; every driver and engine parameter jackdbus offers, with
   its constraints; presets switched in one click; a session can carry the server's settings.
   Xruns, DSP load, the event log and jackdbus's own log; transport.
-- **PipeWire.** A settings tab for PipeWire on top of JACK (the bridge) or on its own: the clock,
-  default devices, device profiles, WirePlumber's settings, the log level, a restart.
 
 ## Requirements
 
 - Linux with a Wayland compositor.
-- JACK2's libjack; jackdbus for server control, ideally
+- libjack: JACK2's, or PipeWire's (pipewire-jack). jackdbus for JACK server control, ideally
   [jack2dbus-nspa](https://github.com/nine7nine/jack2dbus-nspa).
-- Optional: PipeWire and WirePlumber (the PipeWire tab), git (session snapshots), xdg-utils.
+- Optional: PipeWire and WirePlumber (PipeWire's graph and tab), git (session snapshots), xdg-utils.
 - To build: Rust (edition 2024), CMake, pkgconf, wayland, libxkbcommon, EGL (mesa), dbus; librsvg
   for the package's icons.
 
@@ -75,8 +87,8 @@ files in `dist/share/`.
 
 ## Getting started
 
-Start PatchBox with the JACK server running (it never starts one, and reconnects when the server
-comes back).
+Start PatchBox with the audio server running: jackdbus, jackd, or PipeWire with pipewire-jack. It
+doesn't start one by itself, and reconnects when the server comes back.
 
 - **1–4** choose the port type (AUDIO, MIDI, CV, OSC), **M** switches between the Ports and
   Matrix views, **Ctrl+F** finds a block or port, **F** fits the graph, **F9** shows the sidebar.
@@ -104,5 +116,5 @@ Sanitizer builds and the other harness options: see the manual.
 
 ## Licence
 
-GPL-2.0-or-later (`LICENSE`). Ideas taken from RaySession (GPL-2.0) and PatchMatrix (Artistic-2.0)
-are reimplemented, not copied. Cousine font: Apache-2.0 (`assets/fonts/LICENSE`). SDL: zlib.
+GPL-2.0-or-later (`LICENSE`). Ideas from other patchbays and session managers, among them
+RaySession (GPL-2.0) and PatchMatrix (Artistic-2.0), are reimplemented, not copied. Cousine font: Apache-2.0 (`assets/fonts/LICENSE`). SDL: zlib.

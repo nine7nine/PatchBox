@@ -2,7 +2,7 @@
 Type=Application
 Name=PatchBox
 GenericName=JACK Patchbay and Session Manager
-Comment=Patch JACK (and PipeWire), control jackdbus, manage NSM sessions
+Comment=Patch JACK and PipeWire, control the audio server, manage sessions
 Exec=patchbox
 Icon=patchbox
 Terminal=false

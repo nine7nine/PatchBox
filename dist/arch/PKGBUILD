@@ -1,5 +1,5 @@
-# PatchBox: a JACK patchbay (ports and PatchMatrix's matrices), jackdbus server control and an
-# NSM session manager, in Rust with a static, Wayland-only, patched SDL3 (docs/MANUAL.md).
+# PatchBox: a patchbay for JACK and PipeWire, jackdbus server control and an NSM session manager,
+# in Rust with a static, Wayland-only, patched SDL3 (docs/MANUAL.md).
 # Built for jack2dbus-nspa; the PipeWire graph and settings use PipeWire's tools when present.
 #
 # Builds the committed state of a local clone (this repository by default):
@@ -11,7 +11,7 @@
 pkgname=patchbox
 pkgver=0.1.0.r0.g0
 pkgrel=1
-pkgdesc="JACK patchbay, jackdbus control and NSM session manager (PatchMatrix + RaySession, in SDL3)"
+pkgdesc="Patchbay for JACK and PipeWire, jackdbus server control and NSM session manager"
 arch=(x86_64)
 url="https://github.com/nine7nine/PatchBox"
 license=(GPL-2.0-or-later Apache-2.0 Zlib)
