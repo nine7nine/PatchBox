@@ -85,7 +85,8 @@ comes back).
 - The JACK section: start and stop the server, **Settings** for its parameters and presets.
 
 Every control, the session format, the settings and the test harness are described in
-[docs/MANUAL.md](docs/MANUAL.md).
+[docs/MANUAL.md](docs/MANUAL.md). How it is built, with diagrams: the
+[architecture document](https://nine7nine.github.io/PatchBox/) (`docs/index.html`).
 
 ## Testing
 

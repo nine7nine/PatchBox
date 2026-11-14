@@ -127,7 +127,7 @@ crates/pbx-session/  patchboxd (NSM server, clients, connection memory), patchbo
 third_party/         sdl3-src (our CMake wrapper for sdl3-sys), SDL (gitignored, provisioned)
 patches/             our SDL changes
 tests/nested/        isolated GUI + JACK test harness
-docs/                MANUAL.md (this file)
+docs/                MANUAL.md (this file), index.html (the architecture document)
 assets/fonts/        Cousine (Apache-2.0), PatchMatrix's face
 ```
 
