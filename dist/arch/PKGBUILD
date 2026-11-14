@@ -90,6 +90,7 @@ package() {
   done
   install -Dm644 dist/share/patchboxd.service -t "$pkgdir/usr/lib/systemd/user"
   install -Dm644 README.md docs/*.md -t "$pkgdir/usr/share/doc/$pkgname"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
   install -Dm644 assets/fonts/LICENSE "$pkgdir/usr/share/licenses/$pkgname/Cousine-LICENSE"
   install -Dm644 third_party/SDL/LICENSE.txt "$pkgdir/usr/share/licenses/$pkgname/SDL-LICENSE"
 }
