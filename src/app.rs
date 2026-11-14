@@ -2061,6 +2061,25 @@ impl App {
     }
 
     /// The settings page, on tab 0 (JACK, jackdbus) or 1 (PipeWire).
+    /// The ALSA capture and playback devices to reset when the device changes to `new`: those
+    /// that name the old device's card would keep it (they override the device), so they
+    /// follow the new one. Set to another card, they are a deliberate split and stay.
+    fn device_followers(&self, new: &str) -> Vec<Vec<String>> {
+        let Some(cfg) = self.server.config.as_ref() else { return Vec::new() };
+        let find = |n: &str| cfg.all_params().find(|p| p.path.len() == 2 && p.path[0] == "driver" && p.path[1] == n);
+        let Some(old) = find("device").map(|p| p.value.show()) else { return Vec::new() };
+        let Some(card) = alsa_card(&old) else { return Vec::new() };
+        if alsa_card(new).as_deref() == Some(card.as_str()) {
+            return Vec::new();
+        }
+        ["capture", "playback"]
+            .iter()
+            .filter_map(|n| find(n))
+            .filter(|p| p.is_set && alsa_card(&p.value.show()).as_deref() == Some(card.as_str()))
+            .map(|p| p.path.clone())
+            .collect()
+    }
+
     pub fn open_settings(&mut self, tab: usize) {
         use crate::dialog::{Dialog, Kind};
         self.settings_tab = tab;
@@ -2625,7 +2644,13 @@ impl App {
                         .and_then(|p| p.value.parse_like(&text))
                 };
                 match value {
-                    Some(v) => self.server.run(crate::server::Cmd::Set(path, v)),
+                    Some(v) => {
+                        let follow = if id == "driver/device" { self.device_followers(&v.show()) } else { Vec::new() };
+                        self.server.run(crate::server::Cmd::Set(path, v));
+                        for p in follow {
+                            self.server.run(crate::server::Cmd::Reset(p));
+                        }
+                    }
                     None => self.say(format!("\"{text}\" is not a valid value for {id}"), true),
                 }
             }
@@ -2894,5 +2919,31 @@ pub fn kind_from(s: &str) -> PortKind {
         "OSC" => PortKind::Osc,
         "VIDEO" => PortKind::Video,
         _ => PortKind::Audio,
+    }
+}
+
+/// The card an ALSA device name points at, lower case: "hw:PCH,0" and "plughw:CARD=PCH,DEV=0"
+/// give "pch". None for names without one ("none", "default", a port count).
+fn alsa_card(dev: &str) -> Option<String> {
+    let first = dev.split_once(':')?.1.split(',').next()?;
+    let card = first.strip_prefix("CARD=").unwrap_or(first);
+    (!card.is_empty()).then(|| card.to_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::alsa_card;
+
+    #[test]
+    fn alsa_card_names() {
+        assert_eq!(alsa_card("hw:PCH,0").as_deref(), Some("pch"));
+        assert_eq!(alsa_card("hw:U44").as_deref(), Some("u44"));
+        assert_eq!(alsa_card("hw:u44,0").as_deref(), Some("u44"));
+        assert_eq!(alsa_card("plughw:CARD=PCH,DEV=0").as_deref(), Some("pch"));
+        assert_eq!(alsa_card("hw:1,0").as_deref(), Some("1"));
+        assert_eq!(alsa_card("none"), None);
+        assert_eq!(alsa_card("default"), None);
+        assert_eq!(alsa_card("2"), None);
+        assert_eq!(alsa_card("hw:"), None);
     }
 }
