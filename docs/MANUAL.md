@@ -90,7 +90,9 @@ them (☰ session menu) and puts them back when it opens. Presets (qjackctl's) n
 configuration, the driver and every parameter set away from its default: the sidebar's
 "Preset ▼" switches between them in one click (the server restarts only when something differs
 other than the buffer size and the CPU wake-up latency, which change on the running server)
-and the settings page saves and deletes them (`~/.config/patchbox/jack-presets.json`). PatchBox never starts jackd itself; with
+and the settings page saves and deletes them (`~/.config/patchbox/jack-presets.json`). With
+jack2dbus-nspa the ALSA device list follows sound cards plugged in or removed: jackdbus reads it
+again and says so, and the page shows the new list. PatchBox never starts jackd itself; with
 a plain jackd the patchbay and transport work, server control doesn't. The transport is in the
 toolbar (Space: play/pause).
 
