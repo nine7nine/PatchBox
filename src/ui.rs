@@ -135,6 +135,12 @@ impl UiState {
 }
 
 /// A value over a small caption (green, the LCD's), centred in `r`.
+/// The readouts' LCD face, with an optional edge colour (a clickable one under the pointer).
+fn lcd_face(g: &mut Gfx, r: Rect, s: f32, edge: Option<crate::gfx::Color>) {
+    g.rrect(r, 3.0 * s, LCD_BG);
+    g.rrect_stroke(r, 3.0 * s, s.max(1.0), edge.unwrap_or(PANEL_LINE));
+}
+
 fn readout(g: &mut Gfx, r: Rect, s: f32, value: &str, caption: &str, col: crate::gfx::Color) {
     let (px, spx) = (FONT * s, FONT_SMALL * s);
     let (lh, slh) = (g.line_height(Face::Regular, px), g.line_height(Face::Regular, spx));
@@ -739,8 +745,7 @@ impl App {
             self.group(g, r);
             let mut rx = r.right() - 4.0 * s;
             let dr = Rect::new(rx - dsp_w, by, dsp_w, bh);
-            g.rrect(dr, 3.0 * s, LCD_BG);
-            g.rrect_stroke(dr, 3.0 * s, s.max(1.0), PANEL_LINE);
+            lcd_face(g, dr, s, None);
             // The load as a level along the bottom: the face stays the LCD's, like the time's.
             if connected {
                 let frac = (st.dsp / 100.0).clamp(0.0, 1.0);
@@ -753,16 +758,18 @@ impl App {
             }
             readout(g, dr, s, &dsp, "DSP LOAD", if connected { LCD_TEXT } else { TEXT_DIM });
             rx -= dsp_w + bgap;
+            // Buffer and xruns are clickable but wear the same LCD face as their neighbours: a
+            // tinted edge shows under the pointer (and on xruns, while there are any).
             let xr = Rect::new(rx - xr_w, by, xr_w, bh);
-            let xt = if st.xruns > 0 { TINT_RED } else { TINT_GREY };
             let hov = self.hovered(&xr);
-            lbutton(g, xr, s, xt, hov, st.xruns > 0, true);
+            let edge = if st.xruns > 0 { Some(alpha(BAD, if hov { 0.9 } else { 0.55 })) } else if hov { Some(TINT_GREY) } else { None };
+            lcd_face(g, xr, s, edge);
             readout(g, xr, s, &xs, "XRUNS", if st.xruns > 0 { crate::gfx::mix(BAD, TEXT_BRIGHT, 0.2) } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             self.add_hit(xr, Action::ResetXruns);
             rx -= xr_w + bgap;
             let br = Rect::new(rx - buf_w, by, buf_w, bh);
             let hov = connected && self.hovered(&br);
-            lbutton(g, br, s, TINT_AMBER, hov, false, connected);
+            lcd_face(g, br, s, hov.then_some(TINT_AMBER));
             readout(g, br, s, &bs, "BUFFER", if !connected { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             if connected {
                 self.add_hit(br, Action::BufferMenu(br));
@@ -772,8 +779,7 @@ impl App {
                 return;
             }
             let rr = Rect::new(rx - rate_w, by, rate_w, bh);
-            g.rrect(rr, 3.0 * s, LCD_BG);
-            g.rrect_stroke(rr, 3.0 * s, s.max(1.0), PANEL_LINE);
+            lcd_face(g, rr, s, None);
             let col = if connected { if st.freewheel { WARN } else { LCD_TEXT } } else { BAD };
             readout(g, rr, s, &rate_v, &rate_c, col);
         }
