@@ -1,4 +1,4 @@
-# Our SDL, for sdl3-sys's build from source (docs/sdl-vendoring.md).
+# Our SDL, for sdl3-sys's build from source (docs/MANUAL.md, "The static SDL").
 #
 # Replaces the crates.io `sdl3-src` through [patch.crates-io] in the top-level Cargo.toml. sdl3-sys
 # configures, builds and links whatever SOURCE_DIR names: here our CMake wrapper (cmake/), which

@@ -53,7 +53,8 @@ cargo build --release    # builds our static SDL too (no libSDL3.so at run time)
 cargo test
 ```
 
-`--no-default-features` links the system's SDL instead. See `docs/sdl-vendoring.md`.
+`--no-default-features` links the system's SDL instead. See the manual's
+[static SDL](docs/MANUAL.md#the-static-sdl) section.
 
 ## Install
 
@@ -84,7 +85,7 @@ comes back).
 - The JACK section: start and stop the server, **Settings** for its parameters and presets.
 
 Every control, the session format, the settings and the test harness are described in
-[docs/MANUAL.md](docs/MANUAL.md). `docs/PLAN.md` is the design and what comes next.
+[docs/MANUAL.md](docs/MANUAL.md).
 
 ## Testing
 

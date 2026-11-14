@@ -127,10 +127,45 @@ crates/pbx-session/  patchboxd (NSM server, clients, connection memory), patchbo
 third_party/         sdl3-src (our CMake wrapper for sdl3-sys), SDL (gitignored, provisioned)
 patches/             our SDL changes
 tests/nested/        isolated GUI + JACK test harness
-docs/                MANUAL.md (this file), PLAN.md, reference notes on RaySession's
-                     patchbay and session manager
+docs/                MANUAL.md (this file)
 assets/fonts/        Cousine (Apache-2.0), PatchMatrix's face
 ```
+
+## The static SDL
+
+SDL 3 is built for PatchBox alone and linked statically (the `vendored-sdl` feature, on by default;
+`--no-default-features` links the system's `libSDL3.so` instead).
+
+| | |
+|---|---|
+| Source | `third_party/SDL`: upstream `release-3.4.18` (`829a65d7`), gitignored; `scripts/sdl.sh fetch` provisions it |
+| Changes | `patches/sdl-patchbox.patch` (`scripts/sdl.sh regen` rewrites it from the tree) |
+| Configuration | `third_party/sdl3-src/cmake/CMakeLists.txt` |
+| Build | `cargo build`; `sdl3-sys` is pinned `=0.7.2` (it builds SDL 3.4.18; 0.7.3 would fetch crates.io's 3.4.20 instead) |
+| Check | `ldd target/release/patchbox` shows no `libSDL3`; the binary carries `SDL-release-3.4.18-829a65d7 (patchbox)` |
+
+What's in it: video on Wayland only, OpenGL through EGL. What isn't: SDL's renderer and GPU API,
+audio (JACK is PatchBox's), camera, joystick, haptic, HIDAPI, sensor, power, dialog and tray,
+libdecor (`csd.rs` draws the decorations), X11, KMS, Vulkan, GLES and D-Bus. Without D-Bus the
+compositor draws the cursors (cursor-shape protocol), text input goes through text-input-v3, and
+PatchBox lets the screensaver be (`SDL_VIDEO_ALLOW_SCREENSAVER=1`); it uses neither the
+colour-scheme portal nor `SDL_OpenURL`, so libdbus isn't loaded. The C objects are compiled with
+`-ffunction-sections -fdata-sections`, so the linker drops the functions PatchBox never reaches.
+GL comes from GLVND's `libOpenGL.so.0` (`SDL_OPENGL_LIBRARY`), without GLX and Xlib; SDL falls back
+to `libGL.so.1` when it's missing.
+
+The patch:
+
+1. Dynamic API off (no jump table, no `SDL3_DYNAMIC_API` override).
+2. Wake-ups through an eventfd polled next to the display fd, not a `wl_display_sync` round trip
+   through the compositor. JACK's notification thread wakes the main loop this way.
+3. Lost wake-up (upstream bug): an event pushed between the wait loop's last peek and its storing
+   `wakeup_window` sent no wake-up. It matters here: the loop waits up to a second when idle.
+4. Key repeat after a preemption (upstream bug, unsigned wrap).
+5. Clipboard offer kept across focus moves between the program's own windows (3.4.18 regression).
+6. No cursor animation thread (it made every main-thread read wait for it).
+7. No colour-management binding (synchronous round trips in event dispatch, never used).
+8. A scroll in the same pointer frame as a leave (upstream NULL dereference).
 
 ## Testing
 

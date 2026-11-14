@@ -1,4 +1,4 @@
-//! Links what our static SDL links (the `vendored-sdl` feature, docs/sdl-vendoring.md).
+//! Links what our static SDL links (the `vendored-sdl` feature; docs/MANUAL.md, "The static SDL").
 //!
 //! sdl3-sys links libSDL3.a from the sdl3.pc it installs, but reads only that file's Libs. SDL lists
 //! the libraries it links directly (SDL_DEPS_SHARED=OFF: Wayland, EGL, xkbcommon) as

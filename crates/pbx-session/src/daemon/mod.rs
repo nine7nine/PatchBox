@@ -2,8 +2,7 @@
 //! UDP socket, a signalfd for SIGCHLD and an eventfd the JACK notification thread writes to.
 //!
 //! Session operations (open, save, close…) are queues of steps; a step either finishes at once or
-//! waits for clients (replies, exits) until its deadline. Timeouts follow RaySession's
-//! (docs/ref-raysession-sessions.md).
+//! waits for clients (replies, exits) until its deadline. Timeouts follow RaySession's.
 
 mod clients;
 mod ctemplates;

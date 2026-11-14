@@ -1,5 +1,5 @@
 # PatchBox: a JACK patchbay (ports and PatchMatrix's matrices), jackdbus server control and an
-# NSM session manager, in Rust with a static, Wayland-only, patched SDL3 (docs/sdl-vendoring.md).
+# NSM session manager, in Rust with a static, Wayland-only, patched SDL3 (docs/MANUAL.md).
 # Built for jack2dbus-nspa; the PipeWire graph and settings use PipeWire's tools when present.
 #
 # Builds the committed state of a local clone (this repository by default):

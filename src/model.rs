@@ -5,7 +5,7 @@
 //! (playback), PatchMatrix's and RaySession's default; other clients are one Main node with both
 //! directions. The user can split or join any client (layout `split`).
 //!
-//! Naming and stereo pairs follow RaySession's rules (docs/ref-raysession-patchbay.md §1-3).
+//! Naming and stereo pairs follow RaySession's rules.
 
 use crate::layout::Layout;
 use pbx_jack::{Graph, PortKind};

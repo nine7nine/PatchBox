@@ -1,4 +1,4 @@
-# patchbox's SDL configuration (docs/sdl-vendoring.md).
+# patchbox's SDL configuration (docs/MANUAL.md, "The static SDL").
 #
 # sdl3-sys configures this directory (sdl3_src::SOURCE_DIR) instead of SDL's own, and links what it
 # installs. It builds third_party/SDL as a subproject with the options below, which override both

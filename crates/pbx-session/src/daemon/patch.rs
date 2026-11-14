@@ -1,5 +1,5 @@
 //! Connection memory: the session's JACK connections, saved with it and restored as ports
-//! appear. RaySession's rules (docs/ref-raysession-patchbay.md §7):
+//! appear. RaySession's rules:
 //!
 //! - save: every current connection is kept; a saved one is dropped only when both its ports
 //!   exist and it is not connected (the user removed it); one whose port is missing stays;

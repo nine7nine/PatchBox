@@ -1177,7 +1177,7 @@ impl App {
     }
 
     /// After node `i` grew: push the nodes below it in its column down until nothing overlaps
-    /// (a vertical cascade; RaySession's full repulse is phase 2).
+    /// (a vertical cascade, not RaySession's full repulse).
     pub fn make_room(&mut self, i: usize) {
         const GAP: f32 = 24.0;
         let mut placed = vec![self.node_extent(i)];

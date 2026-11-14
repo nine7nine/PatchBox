@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Our SDL tree (docs/sdl-vendoring.md): upstream at a pinned release in third_party/SDL (gitignored)
+# Our SDL tree (docs/MANUAL.md, "The static SDL"): upstream at a pinned release in third_party/SDL (gitignored)
 # plus our changes, kept as one patch (patches/sdl-patchbox.patch). Cargo builds it through
 # third_party/sdl3-src; this script only provisions and records the tree.
 #

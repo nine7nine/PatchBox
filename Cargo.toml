@@ -16,9 +16,8 @@ name = "patchbox"
 path = "src/main.rs"
 
 [features]
-# Our own SDL: static, Wayland-only, patched (third_party/sdl3-src, docs/sdl-vendoring.md), the way
-# teams-sdl-cef and Paneless vendor theirs. `--no-default-features` links the system's libSDL3.so
-# instead (A/B runs).
+# Our own SDL: static, Wayland-only, patched (third_party/sdl3-src; docs/MANUAL.md, "The static
+# SDL"). `--no-default-features` links the system's libSDL3.so instead (A/B runs).
 default = ["vendored-sdl"]
 vendored-sdl = ["sdl3/build-from-source-static", "dep:sdl3-sys"]
 
