@@ -8,12 +8,12 @@ ROOT=$1 OUT=$2 CFG=$3; shift 3
 BIN=${PB_BIN:-$ROOT/target/debug}
 L=$HOME/.cache/patchbox-work/nested
 # The session daemon the GUI starts: scratch socket and sessions; test clients on PATH.
-# XDG_DATA_HOME: deleting moves things to a scratch Trash, never the owner's.
+# XDG_DATA_HOME: deleting moves things to a scratch Trash, never the user's.
 export PATH="$BIN:$PATH" PATCHBOX_SOCKET="$L/daemon.sock" PATCHBOX_SESSIONS="$L/sessions" XDG_DATA_HOME="$L/xdg-data" PATCHBOX_TEMPLATES="$L/templates"
 rm -rf "$L/sessions" "$L/xdg-data" "$L/templates"
 if [ -n "${PB_JACKDBUS:-}" ]; then
   # jackdbus on run.sh's private session bus, with a scratch HOME: its conf.xml and logs never
-  # touch the owner's ~/.config/jack.
+  # touch the user's ~/.config/jack.
   JH=$L/jackdbus-home; rm -rf "$JH"; mkdir -p "$JH/.config"
   env HOME="$JH" XDG_CONFIG_HOME="$JH/.config" jackdbus auto > "$L/jackdbus.log" 2>&1 &
   for i in $(seq 50); do HOME="$JH" jack_control status >/dev/null 2>&1 && break; sleep 0.1; done
@@ -28,7 +28,7 @@ for i in $(seq 50); do ls /dev/shm/jack_default_* >/dev/null 2>&1 && break; slee
 sleep 0.3
 if [ -n "${PB_PIPEWIRE:-}" ]; then
   # A private PipeWire: its socket in a scratch runtime dir that pw-dump/pw-link use too.
-  # (-c with an absolute path: none of the owner's PipeWire configuration applies to the daemon.)
+  # (-c with an absolute path: none of the user's PipeWire configuration applies to the daemon.)
   export PIPEWIRE_RUNTIME_DIR="$L/pw-run"
   rm -rf "$PIPEWIRE_RUNTIME_DIR"; mkdir -p "$PIPEWIRE_RUNTIME_DIR"
   # PB_PIPEWIRE=bridge: PipeWire on top of the JACK server above (module-jack-tunnel), as with

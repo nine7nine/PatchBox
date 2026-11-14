@@ -1,6 +1,6 @@
 //! The JACK server itself, through jackdbus (org.jackaudio.service): start, stop, restart, and
 //! its settings (engine, driver and the driver's parameters) — qjackctl's job. Never by spawning
-//! jackd: the owner's server is jackdbus (jack2dbus-nspa), with PipeWire on top.
+//! jackd: the server it's made for is jackdbus (jack2dbus-nspa), often with PipeWire on top.
 //!
 //! D-Bus calls can take seconds (StartServer opens the device), so a worker thread owns the
 //! connection; the GUI sends it commands and gets replies through the main loop's waker.

@@ -1,11 +1,11 @@
-//! Colours and sizes. The graph palette is PatchMatrix's with the owner's high-contrast colours
-//! (their fork, commit a417c10: "more contrast too"); the rest follows nuklear's dark defaults
+//! Colours and sizes. The graph palette is PatchMatrix's with the higher-contrast colours
+//! of a PatchMatrix fork (commit a417c10: "more contrast too"); the rest follows nuklear's dark defaults
 //! that PatchMatrix's widgets had.
 
 use crate::gfx::{Color, rgb};
 use pbx_jack::PortKind;
 
-// The graph (PatchMatrix, owner's colours).
+// The graph (PatchMatrix, the fork's higher-contrast colours).
 pub const GRID_BG: Color = rgb(0, 0, 0);
 pub const GRID_LINE: Color = rgb(40, 40, 40);
 pub const HILIGHT: Color = rgb(255, 165, 48);
@@ -54,7 +54,7 @@ pub const OK: Color = rgb(151, 255, 71);
 pub const WARN: Color = rgb(255, 165, 48);
 pub const BAD: Color = rgb(255, 80, 80);
 
-/// Port-type colours: wires, port strips and dots, tabs. Luluda's palette (the owner's Element
+/// Port-type colours: wires, port strips and dots, tabs. Luluda's palette (Luluda, an Element
 /// fork: src/ui/grapheditorcomponent.cpp), so the graph reads by type at a glance.
 pub fn kind_color(k: PortKind) -> Color {
     match k {

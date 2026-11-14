@@ -1,10 +1,9 @@
 # PatchBox
 
 A JACK patchbay, JACK server control and an NSM session manager in one program, for audio work on
-a Linux box. The graph keeps PatchMatrix's look and its connection matrices; RaySession's
-flexibility is underneath it and its session management beside it; the JACK server is driven
-through jackdbus. Rust, SDL3 (vendored, static, Wayland only) and a GL renderer of its own, with
-no toolkit.
+Linux. The graph keeps PatchMatrix's look and its connection matrices; RaySession's flexibility is
+underneath it and its session management beside it; the JACK server is driven through jackdbus.
+Rust, SDL3 (vendored, static, Wayland only) and a GL renderer of its own, with no toolkit.
 
 PatchBox is built alongside [jack2dbus-nspa](https://github.com/nine7nine/jack2dbus-nspa), a JACK2
 fork for real-time work, and uses what it adds: an application's clients leave the graph before
@@ -14,9 +13,9 @@ and transport work, server control doesn't.
 
 ## Why
 
-On this box it replaces three programs: qjackctl for the server, RaySession for sessions, and
-PatchMatrix or Catia for the graph. One window, one place for the server's settings, the graph
-and the session, and a daemon that keeps the session running when the window closes.
+It replaces three programs: qjackctl for the server, RaySession for sessions, and PatchMatrix or
+Catia for the graph. One window, one place for the server's settings, the graph and the session,
+and a daemon that keeps the session running when the window closes.
 
 ## Features
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Per-session JACK settings through jackdbus, end to end: a private session bus
 # (tests/nested/bus.conf), a private namespace with its own /dev/shm, jackdbus with a scratch
-# HOME (its conf.xml never touches the owner's), patchboxd with scratch sessions.
+# HOME (its conf.xml never touches the user's), patchboxd with scratch sessions.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)

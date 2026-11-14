@@ -44,7 +44,7 @@ patchbox_sdl(SDL_POWER OFF)
 patchbox_sdl(SDL_DIALOG OFF)
 patchbox_sdl(SDL_TRAY OFF)
 
-# Wayland only: this box has no X11. No decorations from SDL (csd.rs draws ours), no KMS/DRM,
+# Wayland only: no X11. No decorations from SDL (csd.rs draws ours), no KMS/DRM,
 # Vulkan or GLES.
 patchbox_sdl(SDL_WAYLAND ON)
 patchbox_sdl(SDL_WAYLAND_LIBDECOR OFF)
