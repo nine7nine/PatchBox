@@ -59,7 +59,8 @@ pub enum Action {
     ResetXruns,
     /// The event log page (toggles).
     EventLog,
-    /// Put a JACK preset in place (restarts the server when something differs).
+    /// Put a JACK preset in place (restarts the server when something differs, except the buffer
+    /// size and the CPU wake-up latency).
     ApplyPreset(String),
     /// The presets menu, under this rectangle.
     PresetMenu(Rect),
@@ -2423,7 +2424,7 @@ impl App {
                 rows.push(Row {
                     id: format!("preset:apply:{name}"),
                     label: if now == Some(name.as_str()) { format!("{name} (in place)") } else { name.clone() },
-                    help: format!("Put {name} in place: the server restarts with it when something differs; parameters it doesn't set go back to their defaults"),
+                    help: format!("Put {name} in place: the server restarts with it when something differs, except the buffer size and the CPU wake-up latency, which change without a restart; parameters it doesn't set go back to their defaults"),
                     control: Control::Link(crate::presets::summary(s)),
                     modified: false,
                 });

@@ -148,26 +148,54 @@ fn changed<'a>(a: &'a BTreeMap<String, String>, b: &'a BTreeMap<String, String>)
 }
 
 /// Whether a running server takes these parameters as they are: the buffer size (its period,
-/// org.jackaudio.JackControl.SetBufferSize) with the ALSA and dummy drivers, and jackdbus' own
-/// log settings (jack2dbus-nspa, read at each line). Anything else needs a restart.
+/// org.jackaudio.JackControl.SetBufferSize) with the ALSA and dummy drivers, jackdbus' own log
+/// settings (jack2dbus-nspa, read at each line), and the CPU wake-up latency it holds
+/// (jack2dbus-nspa: applied when set; checked, since an older jackdbus only stores it).
+/// Anything else needs a restart.
 fn live(driver: &str, changed: &BTreeSet<&str>) -> bool {
     !changed.is_empty()
         && changed.iter().all(|k| match *k {
             "driver/period" => matches!(driver, "alsa" | "dummy"),
-            "engine/log-level" | "engine/log-max-size" => true,
+            "engine/log-level" | "engine/log-max-size" | "engine/cpu-dma-latency" => true,
             _ => false,
         })
 }
 
+/// The CPU wake-up latency limit in effect system-wide (the smallest of all requests), µs;
+/// None if /dev/cpu_dma_latency cannot be read. Reading it holds no request.
+fn cpu_dma_latency_now() -> Option<i32> {
+    let b = std::fs::read("/dev/cpu_dma_latency").ok()?;
+    Some(i32::from_ne_bytes(b.get(..4)?.try_into().ok()?))
+}
+
 /// Set (or reset to its default) each changed parameter, as for a restart, then give the running
 /// server its new buffer size. Err: the server did not take it (a restart follows).
-fn apply_live(c: &Connection, ctl: &Proxy<'_>, want: &JackSettings, changed: &BTreeSet<&str>) -> Result<Option<u32>, String> {
+fn apply_live(c: &Connection, ctl: &Proxy<'_>, cur: &JackSettings, want: &JackSettings, changed: &BTreeSet<&str>) -> Result<Option<u32>, String> {
     let p = configure(c)?;
     for k in changed {
         let path: Vec<String> = k.split('/').map(str::to_string).collect();
         match want.params.get(*k).and_then(|v| untyped(v)) {
             Some(v) => p.call_method("SetParameterValue", &(path, v)).map(|_| ()).map_err(err)?,
             None => p.call_method("ResetParameterValue", &(path,)).map(|_| ()).map_err(err)?,
+        }
+    }
+    // A jackdbus that applies the request only at its next start leaves the limit in effect as it
+    // was: above a new limit asked for, or still at (or below) the one released. Then it needs the
+    // restart (a needless one only if another program holds a limit that low).
+    if changed.contains("engine/cpu-dma-latency") {
+        let usec = |s: &JackSettings| {
+            s.params.get("engine/cpu-dma-latency").and_then(|v| v.strip_prefix("i:")).and_then(|n| n.parse::<i32>().ok()).filter(|n| *n >= 0)
+        };
+        if let Some(now) = cpu_dma_latency_now() {
+            match (usec(cur), usec(want)) {
+                (_, Some(asked)) if now > asked => {
+                    return Err(format!("the CPU wake-up latency limit is {now} us, not {asked}: this jackdbus applies it at the next start"));
+                }
+                (Some(held), None) if now <= held => {
+                    return Err(format!("the CPU wake-up latency limit is still {now} us: this jackdbus releases it at the next start"));
+                }
+                _ => {}
+            }
         }
     }
     if !changed.contains("driver/period") {
@@ -202,7 +230,7 @@ pub fn apply(c: &Connection, want: &JackSettings) -> Result<Applied, String> {
     let diff = changed(&cur.params, &want.params);
     if started && cur.driver == want.driver && live(&want.driver, &diff) {
         // A failure leaves the parameters set: the restart below starts with them
-        if let Ok(frames) = apply_live(c, &ctl, want, &diff) {
+        if let Ok(frames) = apply_live(c, &ctl, &cur, want, &diff) {
             return Ok(Applied::Live(frames));
         }
     }
@@ -254,6 +282,9 @@ mod tests {
         assert!(live("alsa", &set(&["driver/period"])));
         assert!(live("dummy", &set(&["driver/period"])));
         assert!(live("alsa", &set(&["driver/period", "engine/log-level"])));
+        assert!(live("alsa", &set(&["engine/cpu-dma-latency"])));
+        assert!(live("alsa", &set(&["driver/period", "engine/cpu-dma-latency"])));
+        assert!(!live("alsa", &set(&["engine/cpu-dma-latency", "engine/realtime"])));
         assert!(live("firewire", &set(&["engine/log-max-size"])));
         assert!(!live("firewire", &set(&["driver/period"])));
         assert!(!live("alsa", &set(&["driver/period", "driver/rate"])));
