@@ -33,8 +33,17 @@ export WAYLAND_DISPLAY=pb-nested
 # PB_KEEP_CFG=1: keep the last run's PatchBox config (layout files), to test what persists.
 CFG=$W/config; [ -z "${PB_KEEP_CFG:-}" ] && rm -rf "$CFG"; mkdir -p "$CFG"
 [ -n "${PB_LAYOUT:-}" ] && cp "$PB_LAYOUT" "$CFG/layout.json"
+# PB_SND_FAKE=1: /dev/snd becomes a tmpfs of symlinks to the real nodes (still mounted at
+# $W/realsnd in the namespace), so a test can "unplug" a card by removing its links and plug it
+# back by restoring them, without privileges (see PB_SND_UNPLUG in inner.sh).
+SND_PRELUDE=true
+if [ -n "${PB_SND_FAKE:-}" ]; then
+  mkdir -p "$W/realsnd"
+  SND_PRELUDE="mount --bind /dev/snd '$W/realsnd' && mount -t tmpfs -o mode=1777 pb-snd /dev/snd && for n in '$W'/realsnd/*; do ln -s \"\$n\" /dev/snd/; done"
+fi
+export PB_REALSND="$W/realsnd"
 unshare --user --map-user="$(id -u)" --map-group="$(id -g)" --keep-caps --mount --ipc --pid --fork --mount-proc \
-  sh -c 'mount -t tmpfs -o size=256m,mode=1777 pb-test-shm /dev/shm && exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all "$@"' \
+  sh -c "mount -t tmpfs -o size=256m,mode=1777 pb-test-shm /dev/shm && $SND_PRELUDE"' && exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all "$@"' \
   sh "$HERE/inner.sh" "$ROOT" "$OUT" "$CFG" "$@"
 rc=$?
 kill $k 2>/dev/null; wait $k 2>/dev/null

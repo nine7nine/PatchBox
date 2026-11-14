@@ -328,6 +328,11 @@ impl Dialog {
             let bi = self.buttons.iter().position(|l| l == b)?;
             return self.hits.iter().find(|(_, h)| *h == Hit::Button(bi)).map(|(r, _)| center(r));
         }
+        // "choice:<label>": a row's ▾ (its list of values).
+        if let Some(l) = what.strip_prefix("choice:") {
+            let i = self.rows.iter().position(|r| r.label == l)?;
+            return self.hits.iter().find(|(_, h)| *h == Hit::Row(i, Part::Choice)).map(|(r, _)| center(r));
+        }
         // "remove:<label>": a removable row's ×.
         if let Some(l) = what.strip_prefix("remove:") {
             let i = self.rows.iter().position(|r| r.label == l)?;

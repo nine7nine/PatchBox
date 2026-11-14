@@ -15,7 +15,8 @@ if [ -n "${PB_JACKDBUS:-}" ]; then
   # jackdbus on run.sh's private session bus, with a scratch HOME: its conf.xml and logs never
   # touch the user's ~/.config/jack.
   JH=$L/jackdbus-home; rm -rf "$JH"; mkdir -p "$JH/.config"
-  env HOME="$JH" XDG_CONFIG_HOME="$JH/.config" jackdbus auto > "$L/jackdbus.log" 2>&1 &
+  # PB_JACKDBUS_BIN: another jackdbus (e.g. a wrapper running a jack2 build), default the PATH's.
+  env HOME="$JH" XDG_CONFIG_HOME="$JH/.config" "${PB_JACKDBUS_BIN:-jackdbus}" auto > "$L/jackdbus.log" 2>&1 &
   for i in $(seq 50); do HOME="$JH" jack_control status >/dev/null 2>&1 && break; sleep 0.1; done
   ( export HOME="$JH" XDG_CONFIG_HOME="$JH/.config"
     jack_control ds dummy && jack_control dps rate 48000 && jack_control dps period 256 \
@@ -50,6 +51,22 @@ if [ -n "${PB_OLD_DAEMON:-}" ]; then
   "$PB_OLD_DAEMON" > "$L/old-daemon.log" 2>&1 &
   for i in $(seq 50); do [ -S "$PATCHBOX_SOCKET" ] && break; sleep 0.1; done
   [ -n "${PB_OLD_SETUP:-}" ] && sh -c "$PB_OLD_SETUP" > "$L/old-setup.log" 2>&1
+fi
+# PB_SND_UNPLUG=<card>:<out s>:<back s> (with PB_SND_FAKE): the card's /dev/snd links are removed
+# <out s> after the window starts and restored <back s> later (its control node last, as the
+# kernel registers it).
+if [ -n "${PB_SND_UNPLUG:-}" ] && [ -n "${PB_SND_FAKE:-}" ]; then
+  ucard=${PB_SND_UNPLUG%%:*}; rest=${PB_SND_UNPLUG#*:}; uout=${rest%%:*}; uback=${rest#*:}
+  uidx=$(readlink "/proc/asound/$ucard" | sed 's/^card//')
+  (
+    sleep "$uout"
+    for n in "$PB_REALSND"/*C"$uidx"D* "$PB_REALSND/controlC$uidx"; do rm -f "/dev/snd/$(basename "$n")"; done
+    echo "unplugged $ucard"
+    sleep "$uback"
+    for n in "$PB_REALSND"/*C"$uidx"D*; do ln -s "$n" /dev/snd/; done
+    ln -s "$PB_REALSND/controlC$uidx" /dev/snd/
+    echo "plugged $ucard back"
+  ) > "$L/unplug.log" 2>&1 &
 fi
 # Its own XDG config home: the PipeWire tab's drop-in and config lookups stay in the scratch dir.
 mkdir -p "$L/xdg-config"

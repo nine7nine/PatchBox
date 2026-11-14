@@ -18,7 +18,8 @@
 //! file, e.g. `M:ardour`, `S:system`), `cell:<matrix key substring>:<col>:<row>`, `empty` (a
 //! spot on the canvas with nothing under it), `bar:<label>` (a control: AUDIO, MIDI, Buffer,
 //! Xruns, menu, zoom-, zoom+, zoomtrack, zoompct), `port:<client:port>` (its row in an expanded
-//! node), `menu:<item label>`.
+//! node), `menu:<item label>`, `dlg:<row label>` (a page's row; `dlg:choice:<row label>` its ▾,
+//! `dlg:tab:<label>`, `dlg:button:<label>`).
 
 use crate::app::App;
 use sdl3::event::Event;
@@ -300,7 +301,8 @@ pub fn resolve(app: &App, p: &str) -> Option<[f32; 2]> {
         "dlg" => app.dialog.as_ref()?.point(rest),
         "menu" => {
             let m = app.ui.menu.as_ref()?;
-            let i = m.items.iter().position(|it| it.label.contains(rest))?;
+            // the item with exactly this label, else the first that contains it
+            let i = m.items.iter().position(|it| it.label == rest).or_else(|| m.items.iter().position(|it| it.label.contains(rest)))?;
             m.rows.get(i).map(|r| [r.cx(), r.cy()])
         }
         _ => None,
