@@ -444,9 +444,9 @@ td code, li code, p code { font-size: 0.92em; }
     <li><b>1 / s</b><span>wake-ups at idle · 0 frames</span></li>
     <li><b>6.07 MB</b><span>patchbox, stripped · patchboxd 2.64 MB</span></li>
     <li><b>~20 MB</b><span>heap and stacks, running</span></li>
-    <li><b>46 + 6 + 5</b><span>isolated checks: sessions · JACK settings · cameras · + 34 unit tests</span></li>
+    <li><b>46 + 6 + 12</b><span>isolated checks: sessions · JACK settings · the window (cameras, sound cards) · + 42 unit tests</span></li>
     <li><b>ASan · TSan</b><span>no errors · daemon, CLI, clients, GUI threads</span></li>
-    <li><b>73</b><span>commits · 17.9k lines of Rust</span></li>
+    <li><b>86</b><span>commits · 18.8k lines of Rust</span></li>
   </ul>
 </header>
 
@@ -455,7 +455,7 @@ td code, li code, p code { font-size: 0.92em; }
       <tr><th style="border-left:3px solid transparent">Area</th><th>Separate programs</th><th>PatchBox</th></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Toolkit</td><td>a program per job (Qt or GTK): a server panel, a patchbay, a session manager, a PipeWire graph</td><td>one Rust program on a static, Wayland-only SDL3 (no D-Bus, no GLX), its own GL renderer, client-side decorations</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Patchbay</td><td>boxes and wires (Patchage, Catia, RaySession's), matrices (PatchMatrix), lists (qjackctl)</td><td>ports on blocks (left-to-right or top-to-bottom), connection matrices, AUDIO / MIDI / CV / OSC tabs, per-view layouts, port groups, a block per Ardour track, find, rubber band, undo</td></tr>
-      <tr><td style="border-left:3px solid #8b8ff5">Server control</td><td>a setup dialog (qjackctl, Cadence): a jackd command line or jackdbus</td><td>jackdbus only, mapped in full from its own parameter tree: master and slave drivers, internals, engine, presets, live stats and signals; the buffer size and the CPU wake-up latency limit changed without a restart</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Server control</td><td>a setup dialog (qjackctl, Cadence): a jackd command line or jackdbus</td><td>jackdbus only, mapped in full from its own parameter tree, in tabs: master and slave drivers, internals, engine, presets, live stats and signals; the buffer size and the CPU wake-up latency limit changed without a restart; with JackBus, other sound cards bridged with a switch</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Sessions</td><td>nsmd and its front ends, RaySession's daemon · NSM · each with its own format</td><td>patchboxd (Rust, one poll loop) · NSM API 1.1 · its own TOML format · snapshots, templates, scripts, switch, per-session JACK settings, client templates and hooks; a client taken out of the graph before it is stopped</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Connections that persist</td><td>a patch client per session (jackpatch, RaySession's); global patchbay rules (qjackctl)</td><td>both: RaySession's restore rules per session, and global rules (with <code>*</code>) kept by patchboxd, session or not</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">PipeWire</td><td>separate tools (qpwgraph, Helvum, pavucontrol)</td><td>PipeWire's own graph opened from its JACK client, never mixed in; with pipewire-jack, PipeWire's nodes are the patchbay's; a settings tab that adapts to how PipeWire runs</td></tr>
@@ -1453,7 +1453,8 @@ td code, li code, p code { font-size: 0.92em; }
     The canvas draws the same model three ways. <b>Ports</b> puts a wire per connection between port rows, with signal
     flowing left to right; <b>Ports ↓</b> is Luluda's vertical flow; <b>Matrix</b> is PatchMatrix's, with one wire per
     client pair through a grid of ports. Every canvas &mdash; JACK's global one, each session's, PipeWire's &mdash; keeps
-    block positions and a camera per view style.
+    block positions and a camera per view style, and JACK's graph and PipeWire's each keep their own style: Matrix
+    chosen on PipeWire's leaves JACK's as it was.
   </p>
   <div class="figure" data-pager id="fig-views">
     <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 560" role="img" aria-label="The three view styles">
@@ -1720,7 +1721,7 @@ td code, li code, p code { font-size: 0.92em; }
         <tr>
           <td>block positions (<code>style_nodes</code>) · the camera: position and zoom (<code>style_cams</code>)</td>
           <td>your names for blocks and ports · hidden blocks · split / joined clients · port groups · per-track blocks · saved views · grid, snap, no-overlap</td>
-          <td>the whole canvas, every style, in <code>patchbox-layout.json</code> in the session folder; the view itself (style, type, scale) stays global</td>
+          <td>the whole canvas, every style, in <code>patchbox-layout.json</code> in the session folder; the style shown is per graph (JACK's, PipeWire's), the port type and scale stay global</td>
         </tr>
       </tbody>
     </table>
@@ -1730,8 +1731,10 @@ td code, li code, p code { font-size: 0.92em; }
     or a session files the camera on screen under that style; arriving shows the arriving style's, or fits the graph
     when that canvas has never shown the style (a Matrix chosen while on PipeWire doesn't borrow JACK's Ports camera).
     Layout files carry every style's camera. While PipeWire's graph is up, JACK's canvas is set aside and still saved,
-    and a session opened or closed meanwhile changes it, not the canvas on screen. <code>tests/nested/cameras.sh</code>
-    checks 32 returns across style, graph and session switches, Fit and a restart from PipeWire.
+    with its own style, and a session opened or closed meanwhile changes it, not the canvas on screen. A graph's style
+    comes over with its canvas, before the canvas settles, so positions are filed under the style they were made in.
+    <code>tests/nested/cameras.sh</code> checks 34 returns across style, graph and session switches, Fit and a restart
+    from PipeWire.
   </p>
   <p class="caption">
     <b>Editing helpers.</b> Rubber-band selection, align and distribute, a grid with snap, no-overlap that pushes blocks
@@ -1892,64 +1895,70 @@ td code, li code, p code { font-size: 0.92em; }
   <p class="sub">
     PatchBox never spawns <code>jackd</code>. The server is jackdbus, and the settings page is built from jackdbus's
     own parameter tree, so every driver, every engine parameter and every internal client shows with its type, range,
-    default and description. Nothing is hard-coded except the order of sections. One worker thread owns the D-Bus
-    connection, because a <code>StartServer</code> that opens a device can take seconds.
+    default and description. What is PatchBox's own is the arrangement: tabs for the server (state, presets, engine,
+    jackdbus itself), the master driver, Devices (bridged sound cards and slave drivers), Netjack and the other internal
+    clients, then PipeWire's. Each tab says what it is about above its rows and what applies when in its footer. One
+    worker thread owns the D-Bus connection, because a <code>StartServer</code> that opens a device can take seconds.
   </p>
   <div class="figure" id="fig-dbus">
-    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 900" role="img" aria-label="The JACK settings page mapped onto jackdbus's D-Bus interface">
+    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 900" role="img" aria-label="The JACK settings tabs mapped onto jackdbus's D-Bus interface">
       <defs>
-        <path id="d-1" d="M380,130 C400,130 400,118 420,118"/>
-        <path id="d-2" d="M380,172 C400,172 400,196 420,196"/>
-        <path id="d-3" d="M380,260 C400,260 400,268 420,268"/>
-        <path id="d-4" d="M380,370 C400,370 400,346 420,346"/>
-        <path id="d-5" d="M380,480 C400,480 400,424 420,424"/>
-        <path id="d-6" d="M380,590 C400,590 400,502 420,502"/>
-        <path id="d-7" d="M380,656 C400,656 400,580 420,580"/>
-        <path id="d-8" d="M380,700 C400,700 400,650 420,650"/>
-        <path id="d-c" d="M780,190 C800,190 800,190 820,190"/>
-        <path id="d-k" d="M780,470 C800,470 800,520 820,520"/>
-        <path id="d-s" d="M856,520 L802,520 L802,709 L782,709"/>
+        <path id="d-1" d="M380,140 C400,140 400,118 420,118"/>
+        <path id="d-2" d="M380,162 C400,162 400,184 420,184"/>
+        <path id="d-3" d="M380,206 C400,206 400,250 420,250"/>
+        <path id="d-4" d="M380,334 C400,334 400,316 420,316"/>
+        <path id="d-5" d="M380,356 C400,356 400,382 420,382"/>
+        <path id="d-6" d="M380,460 C400,460 400,448 420,448"/>
+        <path id="d-7" d="M380,553 C400,553 400,514 420,514"/>
+        <path id="d-8" d="M380,620 C400,620 400,580 420,580"/>
+        <path id="d-c" d="M780,118 C800,118 800,150 820,150"/>
+        <path id="d-k" d="M780,448 C800,448 800,470 820,470"/>
+        <path id="d-s" d="M856,556 L802,556 L802,709 L782,709"/>
       </defs>
-      <text x="20" y="38" class="t-band">THE JACK TAB</text>
+      <text x="20" y="38" class="t-band">THE JACK SETTINGS · ITS TABS</text>
       <text x="420" y="38" class="t-band">WORKER THREAD · Cmd → CALLS</text>
       <text x="820" y="38" class="t-band">JACKDBUS · D-BUS</text>
 
-      <!-- column A: a mock of the page -->
+      <!-- column A: a mock of the page, a band per tab -->
       <rect x="20" y="52" width="360" height="676" rx="14" fill="#18181a" stroke="#343438"/>
-      <g style="font: 600 12px ui-monospace, Menlo, Consolas, monospace">
-        <text x="36" y="80" fill="#60a474">SERVER</text>
-        <text x="36" y="102" fill="#afafaf">Status</text><text x="364" y="102" text-anchor="end" fill="#70ccda">started · realtime</text>
-        <text x="36" y="124" fill="#afafaf">Load · latency</text><text x="364" y="124" text-anchor="end" fill="#70ccda">3.1 % · 2.67 ms</text>
-        <text x="36" y="146" fill="#afafaf">Round trip</text><text x="364" y="146" text-anchor="end" fill="#70ccda">5.92 ms</text>
-        <text x="36" y="168" fill="#afafaf">Server xruns: 0</text><text x="364" y="168" text-anchor="end" fill="#64b5f6">reset them</text>
-        <text x="36" y="190" fill="#afafaf">Switch master</text><text x="364" y="190" text-anchor="end" fill="#64b5f6">no restart</text>
-        <line x1="36" y1="204" x2="364" y2="204" stroke="#343438"/>
-        <text x="36" y="226" fill="#60a474">PRESETS</text>
-        <text x="36" y="248" fill="#e1e1e1">Studio 48k / 64 (in place)</text><text x="364" y="248" text-anchor="end" fill="#64b5f6">apply</text>
-        <text x="36" y="270" fill="#afafaf">Tracking 96k / 128</text><text x="364" y="270" text-anchor="end" fill="#64b5f6">apply</text>
-        <text x="36" y="292" fill="#afafaf">Save the current as</text><text x="364" y="292" text-anchor="end" fill="#64b5f6">name…</text>
-        <line x1="36" y1="306" x2="364" y2="306" stroke="#343438"/>
-        <text x="36" y="328" fill="#60a474">MASTER DRIVER: ALSA</text>
-        <text x="36" y="350" fill="#afafaf">Driver</text><text x="364" y="350" text-anchor="end" fill="#70ccda">alsa ▾</text>
-        <text x="36" y="372" fill="#ffa530">device</text><text x="364" y="372" text-anchor="end" fill="#70ccda">hw:PCH</text>
-        <text x="36" y="394" fill="#ffa530">rate</text><text x="364" y="394" text-anchor="end" fill="#70ccda">48000</text>
-        <text x="36" y="416" fill="#ffa530">period</text><text x="364" y="416" text-anchor="end" fill="#70ccda">64</text>
-        <text x="36" y="438" fill="#afafaf">nperiods</text><text x="364" y="438" text-anchor="end" fill="#6e6e6e">2 (default)</text>
-        <line x1="36" y1="452" x2="364" y2="452" stroke="#343438"/>
-        <text x="36" y="474" fill="#60a474">ENGINE</text>
-        <text x="36" y="496" fill="#afafaf">realtime</text><text x="364" y="496" text-anchor="end" fill="#97ff47">on</text>
-        <text x="36" y="518" fill="#ffa530">realtime-priority</text><text x="364" y="518" text-anchor="end" fill="#70ccda">89</text>
-        <text x="36" y="540" fill="#ffa530">cpu-dma-latency ✦</text><text x="364" y="540" text-anchor="end" fill="#70ccda">1 µs</text>
-        <text x="36" y="562" fill="#afafaf">log-level ✦</text><text x="364" y="562" text-anchor="end" fill="#70ccda">server</text>
-        <text x="36" y="584" fill="#afafaf">log-max-size ✦</text><text x="364" y="584" text-anchor="end" fill="#70ccda">4 MiB</text>
-        <line x1="36" y1="598" x2="364" y2="598" stroke="#343438"/>
-        <text x="36" y="620" fill="#60a474">SLAVE DRIVERS · INTERNALS</text>
-        <text x="36" y="642" fill="#afafaf">☐ dummy   ☐ net</text>
-        <text x="36" y="664" fill="#afafaf">☐ netmanager   ☐ audioadapter</text>
-        <line x1="36" y1="678" x2="364" y2="678" stroke="#343438"/>
-        <text x="36" y="700" fill="#60a474">SERVICE</text><text x="364" y="700" text-anchor="end" fill="#ef5350">Quit jackdbus</text>
+      <g style="font: 600 10px ui-monospace, Menlo, Consolas, monospace">
+        <rect x="32.0" y="62" width="45.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="36.5" y="77" fill="#8a8a8a">Server</text>
+        <rect x="80.0" y="62" width="45.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="84.5" y="77" fill="#8a8a8a">Master</text>
+        <rect x="128.0" y="62" width="51.0" height="22" rx="6" fill="#24412f" stroke="#60a474"/><text x="132.5" y="77" fill="#e1e1e1">Devices</text>
+        <rect x="182.0" y="62" width="51.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="186.5" y="77" fill="#8a8a8a">Netjack</text>
+        <rect x="236.0" y="62" width="63.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="240.5" y="77" fill="#8a8a8a">Internals</text>
+        <rect x="302.0" y="62" width="57.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="306.5" y="77" fill="#8a8a8a">PipeWire</text>
       </g>
-      <text x="36" y="746" class="t-tiny">AMBER: SET, NOT DEFAULT · ✦ JACK2DBUS-NSPA'S</text>
+      <line x1="32" y1="94" x2="368" y2="94" stroke="#343438"/>
+      <g style="font: 600 12px ui-monospace, Menlo, Consolas, monospace">
+        <rect x="32" y="105" width="58" height="21" rx="6" fill="rgba(96,164,116,0.14)" stroke="#60a474" stroke-opacity="0.55"/><text x="39" y="120" fill="#60a474">SERVER</text><text x="98" y="120" fill="#6e6e6e" style="font-size:10.5px">state · presets · engine</text>
+        <text x="40" y="144" fill="#afafaf">Status</text><text x="364" y="144" text-anchor="end" fill="#70ccda">started · realtime</text>
+        <text x="40" y="166" fill="#afafaf">Load · latency</text><text x="364" y="166" text-anchor="end" fill="#70ccda">3.1 % · 2.67 ms</text>
+        <text x="40" y="188" fill="#afafaf">Server xruns: 0</text><text x="364" y="188" text-anchor="end" fill="#64b5f6">reset them</text>
+        <text x="40" y="210" fill="#e1e1e1">Studio 48k / 64 (in place)</text><text x="364" y="210" text-anchor="end" fill="#64b5f6">apply</text>
+        <text x="40" y="232" fill="#ffa530">cpu-dma-latency ✦</text><text x="364" y="232" text-anchor="end" fill="#70ccda">1 µs</text>
+        <text x="40" y="254" fill="#afafaf">log-level ✦</text><text x="364" y="254" text-anchor="end" fill="#70ccda">server</text>
+        <text x="40" y="276" fill="#ef5350">Quit jackdbus</text>
+        <line x1="36" y1="290" x2="364" y2="290" stroke="#343438"/>
+        <rect x="32" y="299" width="58" height="21" rx="6" fill="rgba(96,164,116,0.14)" stroke="#60a474" stroke-opacity="0.55"/><text x="39" y="314" fill="#60a474">MASTER</text><text x="98" y="314" fill="#6e6e6e" style="font-size:10.5px">the driver, live</text>
+        <text x="40" y="338" fill="#afafaf">Driver</text><text x="364" y="338" text-anchor="end" fill="#70ccda">alsa ▾ · Switch master</text>
+        <text x="40" y="360" fill="#ffa530">device</text><text x="364" y="360" text-anchor="end" fill="#70ccda">hw:PCH</text>
+        <text x="40" y="382" fill="#ffa530">period · nperiods</text><text x="364" y="382" text-anchor="end" fill="#70ccda">64 · 2 (default)</text>
+        <line x1="36" y1="396" x2="364" y2="396" stroke="#343438"/>
+        <rect x="32" y="405" width="66" height="21" rx="6" fill="rgba(96,164,116,0.14)" stroke="#60a474" stroke-opacity="0.55"/><text x="39" y="420" fill="#60a474">DEVICES</text><text x="106" y="420" fill="#6e6e6e" style="font-size:10.5px">what else joins the graph</text>
+        <text x="40" y="444" fill="#8a8a8a" style="font-size:10.5px">SOUND CARDS, BRIDGED (THEIR OWN CLOCKS) ✦</text>
+        <rect x="40" y="456" width="26" height="14" rx="7" fill="#2e7d4f"/><circle cx="59" cy="463" r="5" fill="#e1e1e1"/><text x="74" y="467" fill="#e1e1e1">U44</text><text x="364" y="467" text-anchor="end" fill="#97ff47">locked · 9.3 / 14.6 ms</text>
+        <text x="74" y="487" fill="#6e6e6e" style="font-size:10.5px">64 × 3 · wake-ups auto · drift −4 ppm</text>
+        <rect x="40" y="500" width="26" height="14" rx="7" fill="#3a3a3e"/><circle cx="47" cy="507" r="5" fill="#8a8a8a"/><text x="74" y="511" fill="#afafaf">Headset</text><text x="364" y="511" text-anchor="end" fill="#6e6e6e">off · kept: 32 / 3 ×</text>
+        <text x="40" y="535" fill="#8a8a8a" style="font-size:10.5px">SLAVE DRIVERS (IN THE MASTER'S CYCLE)</text>
+        <text x="40" y="557" fill="#afafaf">☐ alsarawmidi · MIDI ports</text>
+        <line x1="36" y1="571" x2="364" y2="571" stroke="#343438"/>
+        <rect x="32" y="585" width="155" height="21" rx="6" fill="rgba(96,164,116,0.14)" stroke="#60a474" stroke-opacity="0.55"/><text x="39" y="600" fill="#60a474">NETJACK · INTERNALS</text><text x="195" y="600" fill="#6e6e6e" style="font-size:10.5px"></text>
+        <text x="40" y="624" fill="#afafaf">☐ netmanager   ☐ audioadapter</text>
+        <line x1="36" y1="638" x2="364" y2="638" stroke="#343438"/>
+        <text x="40" y="662" fill="#6e6e6e" style="font-size:10.5px">PIPEWIRE: its own tab (section 9)</text>
+      </g>
+      <text x="36" y="746" class="t-tiny">AMBER: SET, NOT DEFAULT · ✦ JACKBUS'S</text>
 
       <!-- column B: commands -->
       <g>
@@ -1958,30 +1967,34 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="434" y="131" class="t-sub">→ IsStarted · the tree, read in full</text>
       </g>
       <g>
-        <rect x="420" y="174" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
-        <text x="434" y="192" class="t-mono" style="font-size:11.5px">Stats (every 2 s, page open) · ResetXruns</text>
-        <text x="434" y="209" class="t-sub">→ GetLoad · GetLatency · GetXruns · IsRealtime</text>
+        <rect x="420" y="162" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
+        <text x="434" y="180" class="t-mono" style="font-size:11.5px">Stats (page open: 2 s, Devices 1 s) · ResetXruns</text>
+        <text x="434" y="197" class="t-sub">→ GetLoad · GetLatency · GetXruns · GetBridges ✦</text>
       </g>
       <g>
-        <rect x="420" y="246" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
-        <text x="434" y="264" class="t-mono" style="font-size:11.5px">ReadSettings · ApplySettings(preset)</text>
-        <text x="434" y="281" class="t-sub">→ jackcfg::apply: in place if it can, else restart</text>
+        <rect x="420" y="228" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
+        <text x="434" y="246" class="t-mono" style="font-size:11.5px">ReadSettings · ApplySettings(preset)</text>
+        <text x="434" y="263" class="t-sub">→ jackcfg::apply: in place if it can, else restart</text>
       </g>
       <g>
-        <rect x="420" y="324" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
-        <text x="434" y="342" class="t-mono" style="font-size:11.5px">Set(["driver","rate"], u32 48000)</text>
-        <text x="434" y="359" class="t-sub">→ SetParameterValue, then the tree again</text>
+        <rect x="420" y="294" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
+        <text x="434" y="312" class="t-mono" style="font-size:11.5px">Reset(path) · SwitchMaster</text>
+        <text x="434" y="329" class="t-sub">→ ResetParameterValue · SwitchMaster (live)</text>
       </g>
       <g>
-        <rect x="420" y="402" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
-        <text x="434" y="420" class="t-mono" style="font-size:11.5px">Reset(path) · SwitchMaster</text>
-        <text x="434" y="437" class="t-sub">→ ResetParameterValue · SwitchMaster (live)</text>
+        <rect x="420" y="360" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
+        <text x="434" y="378" class="t-mono" style="font-size:11.5px">Set([&quot;driver&quot;,&quot;period&quot;], u32 64)</text>
+        <text x="434" y="395" class="t-sub">→ SetParameterValue, then the tree again</text>
       </g>
-      <g>
-        <title>jackdbus accepts slave driver changes only while the server is stopped, so a running server is stopped, changed and started again, and the log says so</title>
-        <rect x="420" y="480" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
-        <text x="434" y="498" class="t-mono" style="font-size:11.5px">Slave(name, on)</text>
-        <text x="434" y="515" class="t-sub">→ Stop · Add/RemoveSlaveDriver · Start</text>
+      <g><title>A card's switch on the Devices tab: AddBridge or RemoveBridge on the running server, kept in jackdbus's bridges parameter; a new period, periods or wake-up mode sets that parameter and jackdbus replaces the bridge</title>
+        <rect x="420" y="426" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#4ade80" stroke-width="1.3"/>
+        <text x="434" y="444" class="t-mono" style="font-size:11.5px">AddBridge(spec) · RemoveBridge(card)</text>
+        <text x="434" y="461" class="t-sub">→ AddBridge · RemoveBridge ✦ (live)</text>
+      </g>
+      <g><title>jackdbus accepts slave driver changes only while the server is stopped, so a running server is stopped, changed and started again, and the log says so</title>
+        <rect x="420" y="492" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
+        <text x="434" y="510" class="t-mono" style="font-size:11.5px">Slave(name, on)</text>
+        <text x="434" y="527" class="t-sub">→ Stop · Add/RemoveSlaveDriver · Start</text>
       </g>
       <g>
         <rect x="420" y="558" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
@@ -1989,9 +2002,9 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="434" y="593" class="t-sub">→ LoadInternal · UnloadInternal</text>
       </g>
       <g>
-        <rect x="420" y="628" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
-        <text x="434" y="646" class="t-mono" style="font-size:11.5px">Start · Stop · Restart · Exit</text>
-        <text x="434" y="663" class="t-sub">→ StartServer · StopServer · Exit</text>
+        <rect x="420" y="624" width="360" height="44" rx="10" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.3"/>
+        <text x="434" y="642" class="t-mono" style="font-size:11.5px">Start · Stop · Restart (sidebar) · Exit</text>
+        <text x="434" y="659" class="t-sub">→ StartServer · StopServer · Exit</text>
       </g>
       <rect x="420" y="690" width="360" height="38" rx="10" fill="rgba(45,212,191,0.08)" stroke="#2dd4bf" stroke-dasharray="4 3"/>
       <text x="600" y="714" text-anchor="middle" class="t-sub">after every command: IsStarted → Reply::Status</text>
@@ -2013,7 +2026,7 @@ td code, li code, p code { font-size: 0.92em; }
         </g>
       </g>
       <g>
-        <rect x="840" y="282" width="320" height="300" rx="12" fill="rgba(251,191,36,0.07)" stroke="#8a6a1c"/>
+        <rect x="840" y="282" width="320" height="318" rx="12" fill="rgba(251,191,36,0.07)" stroke="#8a6a1c"/>
         <text x="856" y="304" class="t-title">JackControl</text>
         <g class="t-mono" style="font-size:11px">
           <text x="856" y="328">IsStarted · IsRealtime</text>
@@ -2023,21 +2036,22 @@ td code, li code, p code { font-size: 0.92em; }
           <text x="856" y="400">LoadInternal · UnloadInternal</text>
           <text x="856" y="418">GetLoad · GetLatency · GetXruns · ResetXruns</text>
           <text x="856" y="436">GetBufferSize · SetBufferSize</text>
-          <text x="856" y="454">Exit</text>
+          <text x="856" y="454" style="fill:#86efac">AddBridge · RemoveBridge · GetBridges ✦</text>
+          <text x="856" y="472">Exit</text>
         </g>
-        <rect x="856" y="474" width="288" height="92" rx="10" fill="rgba(74,222,128,0.07)" stroke="#4ade80" stroke-dasharray="4 3"/>
-        <text x="870" y="496" class="t-label" style="fill:#4ade80">SIGNALS</text>
-        <text x="870" y="518" class="t-mono" style="font-size:11px">ServerStarted · ServerStopped</text>
-        <text x="870" y="537" class="t-mono" style="font-size:11px">ConstraintsChanged ✦</text>
-        <text x="870" y="556" class="t-sub">starts, stops, cards: shown at once</text>
+        <rect x="856" y="492" width="288" height="92" rx="10" fill="rgba(74,222,128,0.07)" stroke="#4ade80" stroke-dasharray="4 3"/>
+        <text x="870" y="514" class="t-label" style="fill:#4ade80">SIGNALS</text>
+        <text x="870" y="536" class="t-mono" style="font-size:11px">ServerStarted · ServerStopped</text>
+        <text x="870" y="555" class="t-mono" style="font-size:11px">ConstraintsChanged ✦</text>
+        <text x="870" y="574" class="t-sub">starts, stops, cards: shown at once</text>
       </g>
       <g>
-        <rect x="840" y="596" width="320" height="116" rx="12" fill="rgba(251,191,36,0.07)" stroke="#8a6a1c"/>
-        <text x="856" y="618" class="t-title">jackdbus keeps</text>
-        <text x="856" y="640" class="t-mono" style="font-size:11px">~/.config/jack/conf.xml</text>
-        <text x="856" y="660" class="t-sub">the driver and every set parameter;</text>
-        <text x="856" y="678" class="t-mono" style="font-size:11px">~/.log/jack/jackdbus.log</text>
-        <text x="856" y="698" class="t-sub">bounded: log-max-size, one .1 copy</text>
+        <rect x="840" y="612" width="320" height="104" rx="12" fill="rgba(251,191,36,0.07)" stroke="#8a6a1c"/>
+        <text x="856" y="634" class="t-title">jackdbus keeps</text>
+        <text x="856" y="654" class="t-mono" style="font-size:11px">~/.config/jack/conf.xml</text>
+        <text x="856" y="671" class="t-sub">the driver, every set parameter, the bridges;</text>
+        <text x="856" y="690" class="t-mono" style="font-size:11px">~/.log/jack/jackdbus.log</text>
+        <text x="856" y="707" class="t-sub">bounded: log-max-size, one .1 copy</text>
       </g>
 
       <!-- connectors -->
@@ -2061,14 +2075,14 @@ td code, li code, p code { font-size: 0.92em; }
 
       <!-- the parameter tree -->
       <rect x="20" y="770" width="1160" height="120" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
-      <text x="40" y="794" class="t-label">THE PARAMETER TREE, AS JACKDBUS PUBLISHES IT · ONE ROW PER LEAF ON THE PAGE</text>
+      <text x="40" y="794" class="t-label">THE PARAMETER TREE, AS JACKDBUS PUBLISHES IT · ONE ROW PER LEAF, ON THE TAB IT BELONGS TO</text>
       <g>
         <rect x="40" y="812" width="56" height="30" rx="8" fill="url(#g-ms)" stroke="#fbbf24"/><text x="68" y="832" text-anchor="middle" class="t-mono">/</text>
         <path d="M96,827 L130,827 M130,827 L130,870 M130,827 L150,827 M130,850 L150,850 M130,870 L150,870" stroke="#8a6a1c" stroke-width="1.5" fill="none"/>
         <text x="156" y="831" class="t-mono" style="fill:#fde68a">engine</text>
-        <text x="216" y="831" class="t-sub">driver · realtime · realtime-priority · port-max · client-timeout · clock-source · self-connect-mode · log-level ✦ · log-max-size ✦ · cpu-dma-latency ✦</text>
+        <text x="216" y="831" class="t-sub">driver · realtime · realtime-priority · port-max · client-timeout · clock-source · log-level ✦ · log-max-size ✦ · cpu-dma-latency ✦ · bridges ✦</text>
         <text x="156" y="854" class="t-mono" style="fill:#fde68a">driver</text>
-        <text x="216" y="854" class="t-sub">the master driver's: device · capture · playback · rate · period · nperiods · hwmon · duplex · …</text>
+        <text x="216" y="854" class="t-sub">the master driver's: device · capture · playback · rate · period · nperiods · hwmon · duplex · wake-timer ✦ · …</text>
         <text x="156" y="876" class="t-mono" style="fill:#fde68a">drivers/&lt;name&gt; · internals/&lt;name&gt;</text>
         <text x="420" y="876" class="t-sub">every driver's and internal client's own (alsa, dummy, net, firewire, … · netmanager, audioadapter, …)</text>
       </g>
@@ -2089,10 +2103,137 @@ td code, li code, p code { font-size: 0.92em; }
     <p class="caption">
       <b>Live, where jackdbus allows it.</b> The master driver can be switched on a running server
       (<code>SwitchMaster</code>, no restart), and the buffer size changes live: through libjack from this page,
-      through <code>SetBufferSize</code> for presets and sessions. With JackBus, jackdbus's log settings and the
-      CPU wake-up latency limit take effect on the running server too. Slave drivers are the exception: jackdbus takes
+      through <code>SetBufferSize</code> for presets and sessions. With JackBus, jackdbus's log settings, the
+      CPU wake-up latency limit and the sound card bridges take effect on the running server too. Slave drivers are the exception: jackdbus takes
       them only while stopped, so PatchBox stops, changes and starts again and says so. Internal clients load and unload
       live; jackdbus can't say which are loaded, so the page remembers the ones it loaded.
+    </p>
+  </div>
+
+  <h3 class="minor">The Devices tab: other sound cards</h3>
+  <p>
+    With JackBus, a sound card on its own clock joins the graph as a <b>bridge</b>: its ports are physical ports
+    (<code>U44:capture_1</code>), resampled in the master's cycle, with the delay each card needs measured on the card
+    (JackBus's architecture document, section 12). The Devices tab is where a card is switched on and off, and where it
+    shows how it is doing; jackdbus keeps the list, so a bridged card comes back with the server, and whenever it is
+    plugged in.
+  </p>
+  <div class="figure" id="fig-devices">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 690" role="img" aria-label="The Devices tab: a card bridged, watched, changed, unplugged and switched off, through jackdbus to JackBus">
+<rect x="20" y="20" width="1160" height="660" rx="18" fill="url(#g-band)" stroke="#3a3f72"/>
+<rect x="35" y="34" width="230" height="46" rx="11" fill="#1b2246" stroke="#8b8ff5" stroke-width="1.4"/>
+<text x="150" y="54" text-anchor="middle" class="t-label" style="fill:#8b8ff5">THE DEVICES TAB</text>
+<text x="150" y="71" text-anchor="middle" class="t-sub" style="font-size:11px">a switch and options per card</text>
+<line x1="150" y1="80" x2="150" y2="668" stroke="#8b8ff5" stroke-opacity="0.35" stroke-dasharray="3 5"/>
+<rect x="325" y="34" width="230" height="46" rx="11" fill="#1b2246" stroke="#8b8ff5" stroke-width="1.4"/>
+<text x="440" y="54" text-anchor="middle" class="t-label" style="fill:#8b8ff5">PATCHBOX</text>
+<text x="440" y="71" text-anchor="middle" class="t-sub" style="font-size:11px">bridges.rs · the worker thread</text>
+<line x1="440" y1="80" x2="440" y2="668" stroke="#8b8ff5" stroke-opacity="0.35" stroke-dasharray="3 5"/>
+<rect x="645" y="34" width="230" height="46" rx="11" fill="#1b2246" stroke="#fbbf24" stroke-width="1.4"/>
+<text x="760" y="54" text-anchor="middle" class="t-label" style="fill:#fbbf24">JACKDBUS</text>
+<text x="760" y="71" text-anchor="middle" class="t-sub" style="font-size:11px">the bridges parameter · conf.xml</text>
+<line x1="760" y1="80" x2="760" y2="668" stroke="#fbbf24" stroke-opacity="0.35" stroke-dasharray="3 5"/>
+<rect x="935" y="34" width="230" height="46" rx="11" fill="#1b2246" stroke="#f472b6" stroke-width="1.4"/>
+<text x="1050" y="54" text-anchor="middle" class="t-label" style="fill:#f472b6">JACKBUS SERVER</text>
+<text x="1050" y="71" text-anchor="middle" class="t-sub" style="font-size:11px">the bridge and its card thread</text>
+<line x1="1050" y1="80" x2="1050" y2="668" stroke="#f472b6" stroke-opacity="0.35" stroke-dasharray="3 5"/>
+<circle cx="38" cy="112" r="11" fill="#1b2246" stroke="#8b8ff5"/><text x="38" y="116" text-anchor="middle" class="t-label">1</text>
+<text x="54" y="116" class="t-label" style="fill:#e7e9ff">SWITCHED ON</text>
+<path d="M 158 136 H 428" class="flow ctrl"/>
+<path d="M 428 130 L 437 136 L 428 142 Z" fill="#8b8ff5"/>
+<text x="295.0" y="127" text-anchor="middle" class="t-mono" style="font-size:11px">bridge:card:U44 on</text>
+<text x="295.0" y="154" text-anchor="middle" class="t-sub" style="font-size:11.5px">kept settings? (bridges-off.json)</text>
+<path d="M 448 136 H 748" class="flow desk"/>
+<path d="M 748 130 L 757 136 L 748 142 Z" fill="#4ade80"/>
+<text x="600.0" y="127" text-anchor="middle" class="t-mono" style="font-size:11px">AddBridge("U44/64/3")</text>
+<text x="600.0" y="154" text-anchor="middle" class="t-sub" style="font-size:11.5px">added to bridges, saved</text>
+<path d="M 768 136 H 1038" class="flow desk"/>
+<path d="M 1038 130 L 1047 136 L 1038 142 Z" fill="#4ade80"/>
+<text x="905.0" y="127" text-anchor="middle" class="t-mono" style="font-size:11px">jackctl_server_add_bridge_spec</text>
+<text x="905.0" y="154" text-anchor="middle" class="t-sub" style="font-size:11.5px">opened now if the server runs</text>
+<rect x="931.0" y="164" width="238" height="44" rx="9" fill="rgba(21,25,51,0.92)" stroke="#f472b6"/>
+<text x="941.0" y="183" class="t-mono" style="font-size:11.5px">U44:capture_1…4 · playback_1…4</text>
+<text x="941.0" y="200" class="t-sub" style="font-size:11.5px">learning 1 s → placed → locked</text>
+<circle cx="38" cy="224" r="11" fill="#1b2246" stroke="#8b8ff5"/><text x="38" y="228" text-anchor="middle" class="t-label">2</text>
+<text x="54" y="228" class="t-label" style="fill:#e7e9ff">WHILE THE TAB IS OPEN</text>
+<path d="M 448 248 H 748" class="flow desk"/>
+<path d="M 748 242 L 757 248 L 748 254 Z" fill="#4ade80"/>
+<text x="600.0" y="239" text-anchor="middle" class="t-mono" style="font-size:11px">GetBridges()  every 1 s</text>
+<path d="M 752 276 H 452" class="flow ntf slow"/>
+<path d="M 452 270 L 443 276 L 452 282 Z" fill="#fb923c"/>
+<text x="600.0" y="267" text-anchor="middle" class="t-mono" style="font-size:11px">a(sssssuuuuudddttt)</text>
+<path d="M 432 276 H 162" class="flow ntf slow"/>
+<path d="M 162 270 L 153 276 L 162 282 Z" fill="#fb923c"/>
+<rect x="25.0" y="290" width="250" height="44" rx="9" fill="rgba(21,25,51,0.92)" stroke="#4ade80"/>
+<text x="35.0" y="309" class="t-ok" style="font-size:11.5px">locked · 48 kHz · 4 in, 4 out</text>
+<text x="35.0" y="326" class="t-sub" style="font-size:11.5px">9.3 / 14.6 ms · −4 ppm · 0 xruns</text>
+<rect x="815.0" y="236" width="210" height="61" rx="9" fill="rgba(21,25,51,0.92)" stroke="#3d4683"/>
+<text x="825.0" y="255" class="t-sub" style="font-size:11.5px">state, rate, period, channels,</text>
+<text x="825.0" y="272" class="t-sub" style="font-size:11.5px">delays, drift, xruns, resyncs,</text>
+<text x="825.0" y="289" class="t-sub" style="font-size:11.5px">underruns: per bridge</text>
+<circle cx="38" cy="372" r="11" fill="#1b2246" stroke="#8b8ff5"/><text x="38" y="376" text-anchor="middle" class="t-label">3</text>
+<text x="54" y="376" class="t-label" style="fill:#e7e9ff">PERIOD 64 → 32</text>
+<path d="M 158 396 H 428" class="flow ctrl"/>
+<path d="M 428 390 L 437 396 L 428 402 Z" fill="#8b8ff5"/>
+<text x="295.0" y="387" text-anchor="middle" class="t-mono" style="font-size:11px">bridge:period:U44 32</text>
+<path d="M 448 396 H 748" class="flow desk"/>
+<path d="M 748 390 L 757 396 L 748 402 Z" fill="#4ade80"/>
+<text x="600.0" y="387" text-anchor="middle" class="t-mono" style="font-size:11px">Set(engine.bridges, "U44/32/3 …")</text>
+<text x="600.0" y="414" text-anchor="middle" class="t-sub" style="font-size:11.5px">the list, one entry changed</text>
+<path d="M 768 396 H 1038" class="flow desk"/>
+<path d="M 1038 390 L 1047 396 L 1038 402 Z" fill="#4ade80"/>
+<text x="905.0" y="387" text-anchor="middle" class="t-mono" style="font-size:11px">that bridge replaced</text>
+<text x="905.0" y="414" text-anchor="middle" class="t-sub" style="font-size:11.5px">the card opened at 32 × 3</text>
+<rect x="931.0" y="424" width="238" height="44" rx="9" fill="rgba(21,25,51,0.92)" stroke="#f472b6"/>
+<text x="941.0" y="443" class="t-ok" style="font-size:11.5px">relocked in about a second</text>
+<text x="941.0" y="460" class="t-sub" style="font-size:11.5px">the others untouched</text>
+<circle cx="38" cy="480" r="11" fill="#1b2246" stroke="#8b8ff5"/><text x="38" y="484" text-anchor="middle" class="t-label">4</text>
+<text x="54" y="484" class="t-label" style="fill:#e7e9ff">UNPLUGGED, PLUGGED BACK</text>
+<rect x="931.0" y="492" width="238" height="61" rx="9" fill="rgba(21,25,51,0.92)" stroke="#fb923c"/>
+<text x="941.0" y="511" class="t-bad" style="font-size:11.5px">lost: its ports kept, silent</text>
+<text x="941.0" y="528" class="t-sub" style="font-size:11.5px">connections kept · reservation held</text>
+<text x="941.0" y="545" class="t-ok" style="font-size:11.5px">back: reopened, placed, locked</text>
+<path d="M 922 516 H 162" class="flow ntf slow"/>
+<path d="M 162 510 L 153 516 L 162 522 Z" fill="#fb923c"/>
+<text x="495.0" y="507" text-anchor="middle" class="t-sub" style="font-size:11.5px">the next GetBridges says so: "gone", then "locked" again; nothing to click</text>
+<circle cx="38" cy="590" r="11" fill="#1b2246" stroke="#8b8ff5"/><text x="38" y="594" text-anchor="middle" class="t-label">5</text>
+<text x="54" y="594" class="t-label" style="fill:#e7e9ff">SWITCHED OFF</text>
+<path d="M 158 614 H 428" class="flow ctrl"/>
+<path d="M 428 608 L 437 614 L 428 620 Z" fill="#8b8ff5"/>
+<text x="295.0" y="605" text-anchor="middle" class="t-mono" style="font-size:11px">bridge:card:U44 off</text>
+<text x="295.0" y="632" text-anchor="middle" class="t-sub" style="font-size:11.5px">U44/32/3 kept (bridges-off.json)</text>
+<path d="M 448 614 H 748" class="flow desk"/>
+<path d="M 748 608 L 757 614 L 748 620 Z" fill="#4ade80"/>
+<text x="600.0" y="605" text-anchor="middle" class="t-mono" style="font-size:11px">RemoveBridge("U44")</text>
+<text x="600.0" y="632" text-anchor="middle" class="t-sub" style="font-size:11.5px">out of bridges, saved</text>
+<path d="M 768 614 H 1038" class="flow desk"/>
+<path d="M 1038 608 L 1047 614 L 1038 620 Z" fill="#4ade80"/>
+<text x="905.0" y="605" text-anchor="middle" class="t-mono" style="font-size:11px">removed</text>
+<text x="905.0" y="632" text-anchor="middle" class="t-sub" style="font-size:11.5px">freed two cycles later</text>
+</svg>
+    <div class="legend">
+      <span class="l-ctrl">PatchBox's own events</span>
+      <span class="l-desk">D-Bus method calls</span>
+      <span class="l-ntf">replies, read back</span>
+    </div>
+    <p class="caption">
+      <b>Which cards.</b> Every card in <code>/proc/asound/cards</code>: the master's, marked as the master, and every
+      other with a switch; the list follows cards plugged in or removed (jackdbus's <code>ConstraintsChanged</code>).
+      A card reads by its id and name (<code>U44 — U-44</code>); snd-aloop's reads "a virtual card". A listed bridge whose card isn't there
+      stays, waiting for it, with a × to drop it. A jackdbus without bridges says so on the tab.
+    </p>
+    <p class="caption">
+      <b>The settings.</b> A bridged card's period, periods and wake-ups (<code>auto</code>, <code>timer</code>,
+      <code>irq</code>) are its entry in jackdbus's <code>bridges</code> parameter
+      (<code>device[/period[/nperiods]][@wake]</code>); a change sets the parameter and jackdbus replaces that bridge alone.
+      Switched off, a card's settings go to <code>bridges-off.json</code> and come back when it is switched on again; a
+      "kept settings" row shows them, and its × forgets them. A preset or a session that differs from the running server
+      only in its bridges applies them live, with no restart.
+    </p>
+    <p class="caption">
+      <b>Slave drivers</b>, below on the same tab, are the other way into the graph: in the master's own cycle, without
+      resampling. Each says what it is for (alsarawmidi: MIDI ports; alsa: a card clocked by the master's; loopback:
+      JACK's own looped-back ports, not a card), the usual ones first.
     </p>
   </div>
 
@@ -2137,8 +2278,8 @@ td code, li code, p code { font-size: 0.92em; }
       <text x="36" y="232" class="t-label">TAKEN LIVE</text>
       <text x="36" y="254" class="t-mono" style="font-size:11px">driver/period · alsa, dummy</text>
       <text x="36" y="274" class="t-mono" style="font-size:11px">engine/log-level · log-max-size ✦</text>
-      <text x="36" y="294" class="t-mono" style="font-size:11px">engine/cpu-dma-latency ✦</text>
-      <text x="36" y="312" class="t-tiny">✦ APPLIED LIVE BY JACK2DBUS-NSPA</text>
+      <text x="36" y="294" class="t-mono" style="font-size:11px">engine/cpu-dma-latency · bridges ✦</text>
+      <text x="36" y="312" class="t-tiny">✦ APPLIED LIVE BY JACKBUS</text>
       <path d="M300,265 L320,265" stroke="#3a3f72" stroke-width="1.6" stroke-dasharray="3 3" fill="none"/>
 
       <!-- second question -->
@@ -2192,8 +2333,8 @@ td code, li code, p code { font-size: 0.92em; }
     </svg>
     <p class="caption">
       <b>In place where it can be.</b> Presets and sessions both go through <code>jackcfg::apply</code>. A change limited
-      to what a running jackdbus takes &mdash; the ALSA or dummy driver's period, jackdbus's log settings, and the CPU
-      wake-up latency limit it holds (<code>cpu-dma-latency</code>) &mdash; is made on the running server, so the
+      to what a running jackdbus takes &mdash; the ALSA or dummy driver's period, jackdbus's log settings, the CPU
+      wake-up latency limit it holds (<code>cpu-dma-latency</code>) and JackBus's sound card bridges &mdash; is made on the running server, so the
       applications, PipeWire's bridge and every connection stay. Each such change is checked, because an older jackdbus
       stores a value and applies it only at its next start: the buffer size is read back with <code>GetBufferSize</code>,
       and the limit in effect is read from <code>/dev/cpu_dma_latency</code>, the smallest of all requests on the system
@@ -3057,6 +3198,11 @@ td code, li code, p code { font-size: 0.92em; }
       <h3>Clients</h3>
       <p class="role">NSM clients and plain programs, side by side</p>
       <ul>
+        <li><b>Adding</b>: + Application lists the NSM-capable applications (<code>X-NSM-Capable</code> in their
+          <code>.desktop</code> file) and the other audio and MIDI ones, installed only, then your client templates. A
+          search finds any other installed application (a browser, OBS) by name, command or description, up to 20 at a
+          time; one picked is started and stopped with the session, as NSM if its <code>.desktop</code> file says so.
+          Executable takes any command line.</li>
         <li><b>Status</b>: stopped · launching · opening · ready · saving · stopping · running (a plain program) · no-announce · error.</li>
         <li><b>NSM</b>: <code>:dirty:</code>, <code>:optional-gui:</code> (shown or hidden as saved), <code>:progress:</code>, <code>:message:</code>, <code>:switch:</code>, <code>:server-control:</code>.</li>
         <li><b>Plain programs</b>: a save signal (0: it can't), a stop signal (0: SIGTERM), an optional terminal emulator; an NSM client that never announces is run as one.</li>
@@ -3150,32 +3296,33 @@ td code, li code, p code { font-size: 0.92em; }
       <rect x="630" y="52" width="550" height="370" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
       <g>
         <text x="650" y="84" class="dirt d">~/.config/patchbox/</text>
-        <text x="650" y="110" class="dirt c">├─</text><text x="676" y="110" class="dirt">layout.json</text>
-        <text x="650" y="136" class="dirt c">├─</text><text x="676" y="136" class="dirt">layout-pw.json</text>
-        <text x="650" y="162" class="dirt c">├─</text><text x="676" y="162" class="dirt">jack-presets.json</text>
-        <text x="650" y="188" class="dirt c">├─</text><text x="676" y="188" class="dirt">rules.json</text>
-        <text x="650" y="214" class="dirt c">├─</text><text x="676" y="214" class="dirt">recent-sessions.json</text>
-        <text x="650" y="240" class="dirt c">├─</text><text x="676" y="240" class="dirt d">templates/</text><text x="760" y="240" class="dirt f">&lt;name&gt;/</text>
-        <text x="650" y="266" class="dirt c">└─</text><text x="676" y="266" class="dirt d">client-templates/</text><text x="810" y="266" class="dirt f">&lt;name&gt;/</text>
+        <text x="650" y="108" class="dirt c">├─</text><text x="676" y="108" class="dirt">layout.json</text>
+        <text x="650" y="132" class="dirt c">├─</text><text x="676" y="132" class="dirt">layout-pw.json</text>
+        <text x="650" y="156" class="dirt c">├─</text><text x="676" y="156" class="dirt">jack-presets.json</text>
+        <text x="650" y="180" class="dirt c">├─</text><text x="676" y="180" class="dirt">bridges-off.json</text>
+        <text x="650" y="204" class="dirt c">├─</text><text x="676" y="204" class="dirt">rules.json</text>
+        <text x="650" y="228" class="dirt c">├─</text><text x="676" y="228" class="dirt">recent-sessions.json</text>
+        <text x="650" y="252" class="dirt c">├─</text><text x="676" y="252" class="dirt d">templates/</text><text x="760" y="252" class="dirt f">&lt;name&gt;/</text>
+        <text x="650" y="276" class="dirt c">└─</text><text x="676" y="276" class="dirt d">client-templates/</text><text x="810" y="276" class="dirt f">&lt;name&gt;/</text>
       </g>
       <g class="t-sub" style="font-size:11.5px">
-        <text x="900" y="110">the global canvas and the view</text>
-        <text x="900" y="136">PipeWire's canvas, a camera per style</text>
-        <text x="900" y="162">server presets</text>
-        <text x="900" y="188">connection rules</text>
-        <text x="900" y="214">7 newest, opened &gt; 30 s</text>
-        <text x="900" y="240">session templates</text>
-        <text x="900" y="266">client.toml + files/</text>
+        <text x="900" y="108">the global canvas, JACK's view style</text>
+        <text x="900" y="132">PipeWire's canvas and its own style</text>
+        <text x="900" y="156">server presets</text>
+        <text x="900" y="180">cards switched off: their settings</text>
+        <text x="900" y="204">connection rules</text>
+        <text x="900" y="228">7 newest, opened &gt; 30 s</text>
+        <text x="900" y="252">session templates</text>
+        <text x="900" y="276">client.toml + files/</text>
       </g>
       <g>
-        <circle cx="888" cy="106" r="4" fill="#8b8ff5"/><circle cx="888" cy="132" r="4" fill="#8b8ff5"/><circle cx="888" cy="158" r="4" fill="#8b8ff5"/>
-        <circle cx="888" cy="184" r="4" fill="#2dd4bf"/><circle cx="888" cy="210" r="4" fill="#2dd4bf"/><circle cx="888" cy="236" r="4" fill="#2dd4bf"/><circle cx="888" cy="262" r="4" fill="#2dd4bf"/>
+        <circle cx="888" cy="104" r="4" fill="#8b8ff5"/><circle cx="888" cy="128" r="4" fill="#8b8ff5"/><circle cx="888" cy="152" r="4" fill="#8b8ff5"/><circle cx="888" cy="176" r="4" fill="#8b8ff5"/><circle cx="888" cy="200" r="4" fill="#2dd4bf"/><circle cx="888" cy="224" r="4" fill="#2dd4bf"/><circle cx="888" cy="248" r="4" fill="#2dd4bf"/><circle cx="888" cy="272" r="4" fill="#2dd4bf"/>
       </g>
-      <line x1="650" y1="290" x2="1160" y2="290" stroke="#2a3060"/>
+      <line x1="650" y1="298" x2="1160" y2="298" stroke="#2a3060"/>
       <g>
-        <text x="650" y="316" class="dirt">$XDG_RUNTIME_DIR/patchbox/daemon.sock</text><circle cx="1150" cy="312" r="4" fill="#2dd4bf"/>
-        <text x="650" y="342" class="dirt">~/.config/pipewire/pipewire.conf.d/60-patchbox-clock.conf</text><circle cx="1150" cy="338" r="4" fill="#8b8ff5"/>
-        <text x="650" y="368" class="dirt f">~/.config/jack/conf.xml</text><text x="1140" y="368" text-anchor="end" class="t-sub" style="font-size:11.5px">jackdbus's own</text>
+        <text x="650" y="322" class="dirt">$XDG_RUNTIME_DIR/patchbox/daemon.sock</text><circle cx="1150" cy="318" r="4" fill="#2dd4bf"/>
+        <text x="650" y="346" class="dirt">~/.config/pipewire/pipewire.conf.d/60-patchbox-clock.conf</text><circle cx="1150" cy="342" r="4" fill="#8b8ff5"/>
+        <text x="650" y="370" class="dirt f">~/.config/jack/conf.xml</text><text x="1140" y="370" text-anchor="end" class="t-sub" style="font-size:11.5px">jackdbus's own: the bridges too</text>
         <text x="650" y="394" class="dirt f">~/.log/jack/jackdbus.log</text><text x="1140" y="394" text-anchor="end" class="t-sub" style="font-size:11.5px">jackdbus's, bounded (section 7)</text>
       </g>
 
@@ -3183,7 +3330,7 @@ td code, li code, p code { font-size: 0.92em; }
       <rect x="630" y="442" width="550" height="206" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
       <text x="650" y="470" class="t-label">WHO WRITES IT</text>
       <g class="t-sub">
-        <circle cx="660" cy="494" r="5" fill="#8b8ff5"/><text x="674" y="498">the window: layouts 800 ms after a change; presets; the clock drop-in when asked</text>
+        <circle cx="660" cy="494" r="5" fill="#8b8ff5"/><text x="674" y="498">the window: layouts 800 ms after a change; presets; card settings; the clock drop-in</text>
         <circle cx="660" cy="520" r="5" fill="#2dd4bf"/><text x="674" y="524">patchboxd: sessions, logs, snapshots, rules, recents, templates, the socket</text>
         <circle cx="660" cy="546" r="5" fill="#fbbf24"/><text x="674" y="550">the clients: their own files, under the path NSM gave them</text>
         <circle cx="660" cy="572" r="5" fill="#f472b6"/><text x="674" y="576">you: hook scripts (and anything, by hand: it's all text)</text>
@@ -3344,7 +3491,7 @@ td code, li code, p code { font-size: 0.92em; }
   <p class="sub">
     One borderless GL window in Luluda's manner: a slim title bar, a row of grouped tiles (an icon over a label), a
     darker sidebar, and the canvas. Settings, rules, the event log and the session dialogs are pages drawn over the
-    canvas, toggled from their buttons, so the chrome around them stays usable. Buttons are tinted by what they do:
+    canvas, toggled from their buttons (or left by the arrow before their title), so the chrome around them stays usable. Buttons are tinted by what they do:
     green starts, amber changes, red stops, blue opens.
   </p>
   <div class="figure" id="fig-window">
@@ -3469,20 +3616,28 @@ td code, li code, p code { font-size: 0.92em; }
       <rect x="760" y="300" width="390" height="276" rx="8" fill="#18181a" stroke="#343438"/>
       <rect x="760" y="300" width="390" height="30" rx="8" fill="#131416"/>
       <g style="font: 600 11px ui-monospace, Menlo, Consolas, monospace">
-        <rect x="770" y="305" width="54" height="20" rx="5" fill="#1b2a3a" stroke="#64b5f6" stroke-opacity="0.7"/><text x="797" y="319" text-anchor="middle" fill="#64b5f6">JACK</text>
-        <rect x="830" y="305" width="80" height="20" rx="5" fill="url(#btn-g)"/><text x="870" y="319" text-anchor="middle" fill="#9e9ea4">PipeWire</text>
-        <text x="1140" y="319" text-anchor="end" fill="#6e6e6e">✕</text>
-        <text x="776" y="352" fill="#60a474">SERVER</text>
-        <text x="776" y="372" fill="#afafaf">Status</text><text x="1136" y="372" text-anchor="end" fill="#70ccda">started · realtime</text>
-        <text x="776" y="392" fill="#afafaf">Load · latency</text><text x="1136" y="392" text-anchor="end" fill="#70ccda">3.1 % · 2.67 ms</text>
-        <text x="776" y="416" fill="#60a474">PRESETS</text>
-        <text x="776" y="436" fill="#e1e1e1">Studio 48k / 64 (in place)</text>
-        <text x="776" y="460" fill="#60a474">MASTER DRIVER: ALSA</text>
-        <text x="776" y="480" fill="#ffa530">rate</text><text x="1136" y="480" text-anchor="end" fill="#70ccda">48000</text>
-        <text x="776" y="500" fill="#ffa530">period</text><text x="1136" y="500" text-anchor="end" fill="#70ccda">64</text>
-        <text x="776" y="524" fill="#60a474">ENGINE</text>
-        <text x="776" y="544" fill="#afafaf">realtime</text><text x="1136" y="544" text-anchor="end" fill="#97ff47">on</text>
-        <text x="776" y="564" fill="#afafaf">log-level</text><text x="1136" y="564" text-anchor="end" fill="#70ccda">server</text>
+        <text x="772" y="321" fill="#64b5f6" style="font: 700 16px system-ui, sans-serif">←</text><text x="796" y="320" fill="#e1e1e1">Settings</text><text x="1140" y="320" text-anchor="end" fill="#6e6e6e">jackdbus · started</text>
+      </g>
+      <g style="font: 600 10px ui-monospace, Menlo, Consolas, monospace">
+        <rect x="770.0" y="337" width="48.0" height="20" rx="5" fill="#1b2a3a" stroke="#64b5f6" stroke-opacity="0.8"/><text x="776.0" y="351" fill="#64b5f6">Server</text>
+        <rect x="823.0" y="337" width="48.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="829.0" y="351" fill="#8a8a8a">Master</text>
+        <rect x="876.0" y="337" width="54.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="882.0" y="351" fill="#8a8a8a">Devices</text>
+        <rect x="935.0" y="337" width="54.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="941.0" y="351" fill="#8a8a8a">Netjack</text>
+        <rect x="994.0" y="337" width="66.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="1000.0" y="351" fill="#8a8a8a">Internals</text>
+        <rect x="1065.0" y="337" width="60.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="1071.0" y="351" fill="#8a8a8a">PipeWire</text>
+      </g>
+      <g style="font: 600 11px ui-monospace, Menlo, Consolas, monospace">
+        <text x="776" y="380" fill="#60a474">SERVER</text>
+        <text x="776" y="399" fill="#afafaf">Status</text><text x="1136" y="399" text-anchor="end" fill="#70ccda">started · realtime</text>
+        <text x="776" y="418" fill="#afafaf">Load · latency</text><text x="1136" y="418" text-anchor="end" fill="#70ccda">3.1 % · 2.67 ms</text>
+        <text x="776" y="442" fill="#60a474">PRESETS</text>
+        <text x="776" y="461" fill="#e1e1e1">Studio 48k / 64 (in place)</text><text x="1136" y="461" text-anchor="end" fill="#64b5f6">apply</text>
+        <text x="776" y="485" fill="#60a474">ENGINE</text>
+        <text x="776" y="504" fill="#afafaf">realtime</text><text x="1136" y="504" text-anchor="end" fill="#97ff47">on</text>
+        <text x="776" y="523" fill="#ffa530">cpu-dma-latency</text><text x="1136" y="523" text-anchor="end" fill="#70ccda">1 µs</text>
+        <text x="776" y="542" fill="#afafaf">log-level</text><text x="1136" y="542" text-anchor="end" fill="#70ccda">server</text>
+        <line x1="776" y1="553" x2="1136" y2="553" stroke="#343438"/>
+        <text x="776" y="568" fill="#6e6e6e" style="font-size:10px">the buffer size, cpu-dma-latency, log: live</text>
       </g>
       <!-- zoom widget -->
       <rect x="320" y="580" width="156" height="26" rx="8" fill="#131416" stroke="#343438"/>
@@ -3539,7 +3694,7 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="638" y="718">centres it, hidden ones dimmed, right-click for its menu.</text>
         <text x="638" y="740"><tspan class="t-title" style="font-size:13px">Log.</tspan> The newest messages; click opens the event log.</text>
         <text x="638" y="780"><tspan class="t-title" style="font-size:13px">Canvas.</tspan> Pan, Ctrl+wheel or pinch to zoom, find with Ctrl+F.</text>
-        <text x="638" y="810"><tspan class="t-title" style="font-size:13px">Pages</tspan> over the canvas: settings, rules, event log, dialogs.</text>
+        <text x="638" y="810"><tspan class="t-title" style="font-size:13px">Pages</tspan> over the canvas, in tabs; ← returns to the graph.</text>
         <text x="638" y="850"><tspan class="t-title" style="font-size:13px">Zoom.</tspan> −, a slider, +, and fit / centre.</text>
       </g>
     </svg>
@@ -3748,11 +3903,13 @@ td code, li code, p code { font-size: 0.92em; }
       <thead><tr><th>Suite</th><th>What</th><th class="num">Checks</th></tr></thead>
       <tbody>
         <tr><td><code>cargo test</code> · pbx-session</td><td>store (session files, ids, recent sessions), OSC encode/decode, rules globbing, connection memory, client logs, jackcfg typed values, which parameters changed and whether a running server takes them, the desktop Trash (.trashinfo, names kept apart)</td><td class="num">22</td></tr>
-        <tr><td><code>cargo test</code> · patchbox</td><td>the event log, layout (styles, migration), the model (pairs, tracks, names), presets, the PipeWire graph from objects, the bridge's config file</td><td class="num">12</td></tr>
+        <tr><td><code>cargo test</code> · patchbox</td><td>the event log, layout (styles, migration), the model (pairs, tracks, names), presets, the PipeWire graph from objects, PipeWire's bridge's config file, sound cards and bridge specs, the state and kept-settings lines, the application search</td><td class="num">20</td></tr>
         <tr><td>Fuzz (in <code>cargo test</code>)</td><td>deterministic randomised input to the session parser, OSC, rule globs and the jackdbus log splitter. It found a real panic: a byte-offset slice through a multibyte character in jackdbus's log</td><td class="num">4 files</td></tr>
         <tr><td><code>tests/session/run.sh</code></td><td>patchboxd end to end in the namespace: new, open, save, close, switch, duplicate, rename, snapshots and rewind, templates, scripts, plain programs and signals, NSM clients, connection memory, rules; removing clients (running or not), save-and-stop, deleting sessions and templates to a scratch Trash, restarting in place after an update</td><td class="num">46</td></tr>
         <tr><td><code>tests/session/jack-settings.sh</code></td><td>per-session JACK settings through a private jackdbus: saved, restored, unchanged when equal</td><td class="num">6</td></tr>
-        <tr><td><code>tests/nested/cameras.sh</code></td><td>the window in the nested KWin, with a private JACK and a bridged PipeWire: each canvas's camera per style across style, graph and session switches, Fit, a style a graph never showed, sessions changed while on PipeWire, a restart from PipeWire (32 returns; all five checks fail on the code before)</td><td class="num">5</td></tr>
+        <tr><td><code>tests/nested/cameras.sh</code></td><td>the window in the nested KWin, with a private JACK and a bridged PipeWire: each canvas's camera per style across style, graph and session switches, Fit, a style a graph never showed, sessions changed while on PipeWire, a restart from PipeWire, each graph's own style (34 returns)</td><td class="num">5</td></tr>
+        <tr><td><code>tests/nested/bridges.sh</code></td><td>a JackBus jackdbus on the private bus and snd-aloop's card: switched on from the Devices tab, locked; its period changed, locked again; switched off and on, its settings kept and saved in jackdbus's list; every tab shown (8 screenshots)</td><td class="num">4</td></tr>
+        <tr><td><code>tests/nested/hotplug.sh</code></td><td>a card's <code>/dev/snd</code> nodes taken away and brought back inside the namespace: jackdbus's two refreshes and the device list on the Master tab (3 screenshots)</td><td class="num">3</td></tr>
         <tr><td><code>scripts/sanitize.sh address</code></td><td>ASan + LSan, std rebuilt with <code>-Zbuild-std</code>, at <code>894a785</code>: both session suites and the camera suite pass with no memory errors (the GUI needs <code>detect_odr_violation=0</code>: SDL's stb_image and miniz tables merged identically). LSan reports one allocation when the window exits: 160 bytes, the hit-test closure the sdl3 crate's <code>set_hit_test</code> boxes for the window's life and never frees</td><td class="num">no errors</td></tr>
         <tr><td><code>scripts/sanitize.sh thread</code></td><td>TSan, the same runs: clean at <code>894a785</code>. One suppression, a lock-order report inside libdb (JACK's metadata store), third-party</td><td class="num">clean</td></tr>
         <tr class="compat"><td>Build</td><td colspan="2">Zero compiler warnings, by rule, in every crate and configuration.</td></tr>
@@ -3844,6 +4001,7 @@ td code, li code, p code { font-size: 0.92em; }
         <li>cargo-fuzz targets for the session parser and OSC, beyond the in-tree randomised tests.</li>
         <li>PatchMatrix's embedded mixer and monitor clients: undecided.</li>
         <li>A tray icon: skipped for now.</li>
+        <li>A newly plugged sound card offered a role (bridge it, or make it the master) instead of only appearing on the Devices tab.</li>
       </ul>
       <div class="chips"><span class="chip">leftovers</span></div>
     </div>
@@ -3853,23 +4011,24 @@ td code, li code, p code { font-size: 0.92em; }
 <!-- ============================================================ 19. source map -->
 <section id="s19">
   <h2><span class="num">19</span>Source map</h2>
-  <p class="sub">17,863 lines of Rust in three crates, 73 commits. Line counts are from <code>wc -l</code> at <code>894a785</code>.</p>
+  <p class="sub">18,762 lines of Rust in three crates, 86 commits. Line counts are from <code>wc -l</code> on 15 November 2026.</p>
   <div class="tablebox">
     <table>
       <thead><tr><th>File</th><th>What it holds</th><th class="num">Lines</th></tr></thead>
       <tbody>
         <tr class="compat"><td colspan="3"><b>patchbox</b> · the window (src/)</td></tr>
-        <tr><td><code>main.rs</code></td><td>SDL init and hints, the GL window, the event loop, wakes, pinch, stats, test scripts and snapshots</td><td class="num">630</td></tr>
-        <tr><td><code>app.rs</code></td><td>application state and every Action: JACK, jackdbus replies, the daemon link, PipeWire, pages (settings, rules, log), timers</td><td class="num">2,890</td></tr>
+        <tr><td><code>main.rs</code></td><td>SDL init and hints, the GL window, the event loop, wakes, pinch, stats, test scripts and snapshots</td><td class="num">631</td></tr>
+        <tr><td><code>app.rs</code></td><td>application state and every Action: JACK, jackdbus replies, the daemon link, PipeWire, pages (settings, rules, log), timers</td><td class="num">3,262</td></tr>
         <tr><td><code>canvas.rs</code></td><td>the patchbay: blocks, ports, wires, matrices, hit testing, drags (move, link, rewire, paint, band), menus, tooltips</td><td class="num">1,887</td></tr>
-        <tr><td><code>ui.rs</code></td><td>the chrome: title bar, toolbar tiles and readouts, sidebar, menus, Luluda's buttons</td><td class="num">1,161</td></tr>
+        <tr><td><code>ui.rs</code></td><td>the chrome: title bar, toolbar tiles and readouts, sidebar, menus, Luluda's buttons</td><td class="num">1,168</td></tr>
         <tr><td><code>sessui.rs</code> · <code>session.rs</code></td><td>the session panel and dialogs · the link to patchboxd (start it, subscribe, requests)</td><td class="num">998 · 264</td></tr>
         <tr><td><code>gfx.rs</code> · <code>text.rs</code> · <code>theme.rs</code></td><td>the renderer (one shader, one buffer, one texture) · fonts and the glyph atlas · colours and sizes</td><td class="num">656 · 167 · 100</td></tr>
         <tr><td><code>pw.rs</code> · <code>pwconf.rs</code></td><td>pw-dump reader, PipeWire graph and state, pw-link / pw-metadata / pw-cli · the bridge's config file, the clock drop-in</td><td class="num">569 · 85</td></tr>
-        <tr><td><code>dialog.rs</code></td><td>pages and dialogs: rows of labelled controls, immediate mode</td><td class="num">593</td></tr>
-        <tr><td><code>server.rs</code></td><td>jackdbus: the worker thread, Cmd / Reply, the parameter tree, signals</td><td class="num">437</td></tr>
+        <tr><td><code>dialog.rs</code></td><td>pages and dialogs: rows of labelled controls, immediate mode</td><td class="num">623</td></tr>
+        <tr><td><code>server.rs</code></td><td>jackdbus: the worker thread, Cmd / Reply, the parameter tree, signals, the bridges' calls and status</td><td class="num">545</td></tr>
+        <tr><td><code>bridges.rs</code></td><td>the Devices tab's cards: <code>/proc/asound/cards</code>, bridge specs (<code>device[/period[/nperiods]][@wake]</code>), state lines from <code>GetBridges</code>, the settings of cards switched off (<code>bridges-off.json</code>)</td><td class="num">277</td></tr>
         <tr><td><code>model.rs</code> · <code>layout.rs</code></td><td>snapshot → nodes and matrices · what the canvas remembers (per style, per canvas, a camera each)</td><td class="num">390 · 320</td></tr>
-        <tr><td><code>testscript.rs</code></td><td>PATCHBOX_TEST: synthetic input, screenshots, camera fingerprints</td><td class="num">313</td></tr>
+        <tr><td><code>testscript.rs</code></td><td>PATCHBOX_TEST: synthetic input, screenshots, camera fingerprints</td><td class="num">315</td></tr>
         <tr><td><code>csd.rs</code> · <code>shadow.rs</code></td><td>client-side decorations and hit test · KWin's shadow protocol on SDL's display</td><td class="num">214 · 193</td></tr>
         <tr><td><code>events.rs</code> · <code>export.rs</code> · <code>undo.rs</code> · <code>presets.rs</code></td><td>the event log · pretty-name export · undo and redo · server presets</td><td class="num">208 · 138 · 107 · 68</td></tr>
         <tr class="compat"><td colspan="3"><b>pbx-jack</b> · libjack (crates/pbx-jack)</td></tr>
@@ -3889,9 +4048,9 @@ td code, li code, p code { font-size: 0.92em; }
 </section>
 
 <footer>
-  PatchBox · architecture · 0.1.0 r73 (<code>894a785</code>, github.com/nine7nine/PatchBox) · Rust · SDL 3.4.18
-  (static, Wayland) · for JackBus 1.9.22 r104 or later · tested on Linux 7.3 PREEMPT_RT, KDE Plasma · updated
-  14 November 2026
+  PatchBox · architecture · 0.1.0 r86 (github.com/nine7nine/PatchBox) · Rust · SDL 3.4.18
+  (static, Wayland) · for JackBus 1.9.22 r150 or later · tested on Linux 7.3 PREEMPT_RT, KDE Plasma · updated
+  15 November 2026
 </footer>
 
 </main>

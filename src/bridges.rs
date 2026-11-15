@@ -1,7 +1,7 @@
 //! Sound card bridges (JackBus): a card on its own clock, joined to the JACK graph with
 //! adaptive resampling. jackdbus keeps the list in its engine parameter "bridges" (specs as
 //! `device[/period[/nperiods]][@wake]`, separated by spaces) and reports each bridge's state
-//! (GetBridges); the settings page's Bridges tab shows every sound card with a switch.
+//! (GetBridges); the settings page's Devices tab shows every sound card with a switch.
 
 use crate::server::Bridge;
 
@@ -103,7 +103,7 @@ impl Spec {
         (!card.is_empty()).then(|| (card.to_string(), dev))
     }
 
-    /// Whether it is this card's first device (what the Bridges tab's switch for it means).
+    /// Whether it is this card's first device (what the Devices tab's switch for it means).
     pub fn is_card(&self, card: &Card) -> bool {
         matches!(self.card(), Some((c, 0)) if c.eq_ignore_ascii_case(&card.id) || c == card.index.to_string())
     }

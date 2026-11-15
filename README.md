@@ -7,13 +7,14 @@ programs. Rust, SDL3 (vendored, static, Wayland only) and a GL renderer of its o
 toolkit.
 
 PatchBox is built alongside [JackBus](https://github.com/nine7nine/JackBus), a JACK2
-fork for real-time work, and uses what it adds: an application's clients leave the graph before
-the application is stopped, and the buffer size and CPU wake-up latency change without restarting
-the server. It doesn't need it:
+fork for real-time work, and uses what it adds: other sound cards join the graph from the Devices
+tab, each with a switch (JackBus's sound card bridges, resampled in the master's cycle); an
+application's clients leave the graph before the application is stopped; and the buffer size, the
+CPU wake-up latency and the bridges change without restarting the server. It doesn't need it:
 
 | The set-up | What PatchBox does there |
 |---|---|
-| JackBus's jackdbus, with or without PipeWire on top | everything: JACK's graph, server control, sessions; with PipeWire bridged, its graph (opened from its JACK client) and its settings tab too |
+| JackBus's jackdbus, with or without PipeWire on top | everything: JACK's graph, server control, sound card bridges, sessions; with PipeWire bridged, its graph (opened from its JACK client) and its settings tab too |
 | PipeWire alone (pipewire-jack) | the patchbay (PipeWire's nodes through its JACK API), sessions, PipeWire's settings; no jackdbus page |
 | another jackdbus | the same, except that a client is stopped without leaving the graph first, and a setting that can't change live restarts the server |
 | a plain jackd | the patchbay, sessions and transport; no server control |
@@ -38,7 +39,8 @@ its own.
   and Matrix (a connection matrix per pair of clients). Audio, MIDI, CV and OSC apart. Stereo
   pairs detected; port groups that connect 1:1; Ardour's tracks and Carla's plugins split into
   blocks of their own; your names for clients and ports, exported to other programs as JACK
-  metadata; find; selection, alignment, hiding; a layout and camera per view.
+  metadata; find; selection, alignment, hiding; a layout and camera per view, and a view style
+  per graph (JACK's, PipeWire's).
 - **PipeWire.** With PipeWire on top of JACK, its own graph (desktop streams, devices, audio,
   MIDI, video) opens from its JACK client and is edited the same way, never mixed into JACK's.
   With PipeWire as the JACK server, its nodes are the patchbay's. A settings tab for either: the
@@ -47,11 +49,17 @@ its own.
   (`*` wildcards); one you remove by hand stays removed.
 - **Sessions.** `patchboxd`, an NSM server: NSM clients (Ardour, Carla, Hydrogen…) told to open
   and save, plain programs started and stopped with the session, its connections restored as
-  ports appear. Templates, snapshots, client templates, per-client hooks, notes. Deleted things
+  ports appear. NSM and audio applications are listed to add; a search finds any other installed
+  one (a browser, OBS). Templates, snapshots, client templates, per-client hooks, notes. Deleted things
   go to the desktop's Trash. `patchbox-ctl` drives it all from a shell.
 - **JACK server.** Start, stop, restart; every driver and engine parameter jackdbus offers, with
-  its constraints; presets switched in one click; a session can carry the server's settings.
-  Xruns, DSP load, the event log and jackdbus's own log; transport.
+  its constraints, in tabs (Server, Master, Devices, Netjack, Internals); presets switched in one
+  click; a session can carry the server's settings. Xruns, DSP load, the event log and jackdbus's
+  own log; transport.
+- **Sound cards** (with JackBus). The Devices tab bridges any other card with a switch: its ports
+  join the graph, resampled in the master's cycle, with its period, periods and wake-ups set per
+  card and its state shown live (locked, the delay each way, drift, xruns). Unplugged and back,
+  it comes back by itself; switched off, it keeps its settings. Slave drivers are on the same tab.
 
 ## Requirements
 

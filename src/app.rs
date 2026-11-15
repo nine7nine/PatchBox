@@ -2531,7 +2531,7 @@ impl App {
         rows
     }
 
-    /// The Bridges tab: every sound card but the master's, each with a switch (JackBus).
+    /// The Devices tab's first section: every sound card but the master's, each with a switch (JackBus).
     fn bridge_rows(&self) -> Vec<crate::dialog::Row> {
         use crate::bridges::{Spec, DEFAULT_NPERIODS, DEFAULT_PERIOD};
         use crate::dialog::{Control, Row};
@@ -2736,7 +2736,7 @@ impl App {
 
     fn internal_row(&self, name: &str) -> crate::dialog::Row {
         let help = match name {
-            "audioadapter" => "A card on its own clock, resampled into the graph (the Bridges tab does this better: live, per card, hotplug)".to_string(),
+            "audioadapter" => "A card on its own clock, resampled into the graph (a bridge on the Devices tab does this better: live, per card, hotplug)".to_string(),
             "netmanager" => "Let netjack slaves on the network join this server".to_string(),
             "netadapter" => "A netjack master's audio here, resampled (no network clock sync)".to_string(),
             _ => "Load this internal client into the running server".to_string(),
@@ -2750,7 +2750,7 @@ impl App {
         }
     }
 
-    /// A Bridges tab row: a card's switch (`bridge:card:ID`), one of its options
+    /// A Devices tab row for a bridge: a card's switch (`bridge:card:ID`), one of its options
     /// (`bridge:period|nperiods|wake:ID`, None: back to the default), a listed bridge removed
     /// (`bridge:spec:SPEC`).
     fn bridge_event(&mut self, id: &str, value: Option<&str>) {
@@ -3174,7 +3174,7 @@ fn tab_message(tab: usize) -> &'static str {
     }
 }
 
-/// The drivers that can be a master or a slave (the bridge driver is neither: the Bridges tab).
+/// The drivers that can be a master or a slave (the bridge driver is neither: the Devices tab bridges cards).
 fn master_drivers(cfg: &crate::server::Config) -> impl Iterator<Item = &String> {
     cfg.drivers.iter().filter(|d| *d != "bridge")
 }

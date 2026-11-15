@@ -12,7 +12,7 @@ puts it in the graph.
 |---|---|
 | Title bar | window buttons, ☰ menu (views, scale, grid, undo…), the session's name |
 | Toolbar | Luluda-style tiles, an icon over a label: session (New, Open, Save; dropped first when narrow), transport (rewind, play/pause, stop, time and BBT), port type (AUDIO / MIDI / CV / OSC, keys 1–4), view (Ports, its icon showing the flow: click again to switch left-to-right and top-to-bottom (V); Matrix (M)), JACK readouts (rate and latency, buffer size menu, xruns: click to reset, right-click for the event log, DSP load) |
-| Views | **Ports** (default): each block shows its ports of the current type, inputs left, outputs right, a wire per connection; **Matrices** (M): PatchMatrix's view, one wire per client pair through a matrix of their ports, port counts on the blocks. Both keep the AUDIO / MIDI / CV / OSC split. Each view (ports left to right, ports top to bottom, matrices) keeps its own block positions and camera, in the global layout and in each session's, so switching views never rearranges another |
+| Views | **Ports** (default): each block shows its ports of the current type, inputs left, outputs right, a wire per connection; **Matrices** (M): PatchMatrix's view, one wire per client pair through a matrix of their ports, port counts on the blocks. Both keep the AUDIO / MIDI / CV / OSC split. Each view (ports left to right, ports top to bottom, matrices) keeps its own block positions and camera, in the global layout and in each session's, so switching views never rearranges another. JACK's graph and PipeWire's each keep their own view: Matrix on PipeWire's leaves JACK's as it was |
 | Tracks | right-click a block whose ports name tracks or plugins (Ardour's `Track/port`, Carla's `Plugin:port`) → A block per track / plugin: each becomes its own block, titled after it, the client above it; the rest stay in the client's block. Right-click any of them → One block for the whole client |
 | Port groups | right-click a port → Group ports from here…: a name and how many (this port and the ones after it). A bracket joins them; dragging one connects the whole group 1:1 to the group (or the ports from) where it lands, or disconnects them all when they already are; Ctrl+drag: that port alone. A group of two is a stereo pair (Shift-painting in matrices). Kept with the layout (per session in a session) |
 | Names | right-click a block or port → Rename: your names show here and, unless ☰ → Export our names is off, in other JACK programs too (JACK metadata pretty-name, RaySession's rules: one exporter at a time, someone else's pretty-name never overwritten, new ports left 200 ms, ours withdrawn when a name is cleared and when PatchBox quits; a split block's name stays ours) |
@@ -61,7 +61,9 @@ From the sidebar (hover any icon for what it does):
   saving, delete this session (both ask first).
 - **Programs**: + Application (NSM-capable `.desktop` entries, other audio applications, your
   client templates) and Executable (any command line), as in RaySession; both work with no session
-  open (they ask for its name first).
+  open (they ask for its name first). + Application's "Another application" search finds any other
+  installed one (a browser, OBS) by name, command or description: type, Enter, pick one of up to 20.
+  It is started and stopped with the session (as NSM if its `.desktop` file says so).
 - **Each client**: start/stop, save, show/hide its window, × to remove it. Stopping or removing one
   with unsaved changes asks first (save and stop, or stop without saving). Click or right-click its
   name for the rest (kill, properties, keep as a client template, find in the graph).
@@ -84,21 +86,53 @@ patchbox-ctl connect SRC DST | disconnect SRC DST | graph | state | watch | quit
 ## JACK server
 
 PatchBox is built for JackBus: the server is jackdbus's. The sidebar's JACK · jackdbus
-section starts, stops and restarts it, and Settings (a toggle) edits the driver and engine
-parameters jackdbus offers, with their constraints and descriptions. A session can remember
+section starts, stops and restarts it, and Settings (a toggle; the arrow before the page's title
+goes back to the graph too) edits the driver and engine parameters jackdbus offers, with their
+constraints and descriptions, in tabs:
+
+| Tab | |
+|---|---|
+| Server | state, load, latency and xruns; presets; the engine's parameters; jackdbus itself (Quit jackdbus) |
+| Master | the master driver, Switch master (no restart), its parameters |
+| Devices | what else joins the graph: sound cards, bridged; then slave drivers |
+| Netjack | netmanager, netadapter, and the net drivers as master |
+| Internals | the other internal clients jackdbus can load |
+| PipeWire | PipeWire's settings (below) |
+
+Each tab says what it is about above its rows, and what applies when in its footer. A session can remember
 them (☰ session menu) and puts them back when it opens. Presets (qjackctl's) name a whole
 configuration, the driver and every parameter set away from its default: the sidebar's
 "Preset ▼" switches between them in one click (the server restarts only when something differs
 other than the buffer size and the CPU wake-up latency, which change on the running server)
 and the settings page saves and deletes them (`~/.config/patchbox/jack-presets.json`). With
 JackBus the ALSA device list follows sound cards plugged in or removed: jackdbus reads it
-again and says so, and the page shows the new list. PatchBox never starts jackd itself; with
+again and says so, and the page shows the new list.
+
+### Devices: sound cards and slave drivers
+
+**Sound cards, bridged (their own clocks)** needs JackBus. Every card is listed by its id and
+name (snd-aloop's reads "a virtual card"): the master's as the master, every other with a switch. On: the card is
+bridged now (`AddBridge`) and whenever the server starts or the card is plugged in; its ports
+are physical ports, named after the card (`U44:capture_1`), resampled into the master's cycle. A
+bridged card shows its state, polled each second while the tab is open: locking or locked, rate,
+channels, the delay each way, the card's drift and xruns. Its period, periods and wake-ups
+(`auto`, `timer`, `irq`) are set below it; a change reopens that card alone. Off: the bridge is
+removed (`RemoveBridge`) and the card's settings are kept (`~/.config/patchbox/bridges-off.json`);
+switched on again, it gets them back. A "kept settings" row shows them, and its × forgets them.
+A bridge whose card isn't plugged in stays listed, waiting for it, with a × to remove it. The
+list is jackdbus's `bridges` engine parameter, kept in its conf.xml; presets and sessions carry
+it, and applying it needs no restart. A jackdbus without bridges says so here.
+
+**Slave drivers (in the master's cycle)**: alsarawmidi (MIDI ports), alsa (a card clocked by the
+master's: word clock, S/PDIF), firewire, net / netone, loopback (JACK's own looped-back ports, not
+a card), proxy, dummy. jackdbus takes slave drivers only while stopped, so a running server is
+stopped, changed and started again, and the log says so. PatchBox never starts jackd itself; with
 a plain jackd the patchbay and transport work, server control doesn't. The transport is in the
 toolbar (Space: play/pause).
 
 ## PipeWire
 
-Settings has a second tab, PipeWire, read from `pw-dump --monitor` and written with
+Settings' last tab, PipeWire, is read from `pw-dump --monitor` and written with
 `pw-metadata` / `pw-cli`. It adapts to what runs:
 
 - **On top of JACK** (JackBus with module-jackdbus-detect, or module-jack-tunnel): the
