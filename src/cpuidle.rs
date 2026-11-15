@@ -66,6 +66,12 @@ pub fn cached() -> &'static [State] {
     STATES.get_or_init(states)
 }
 
+/// The largest limit the menu offers here (µs): the second-deepest state's latency, or 0.
+pub fn widest_level() -> u32 {
+    let st = cached();
+    st.iter().take(st.len().saturating_sub(1)).map(|s| s.latency).max().unwrap_or(0)
+}
+
 /// A state's name as shown: intel_idle's names from ACPI tables lose their "_ACPI".
 pub fn short(name: &str) -> &str {
     name.strip_suffix("_ACPI").unwrap_or(name)

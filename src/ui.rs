@@ -619,10 +619,11 @@ impl App {
         let bs = if connected { format!("{} ▼", st.buffer_size) } else { "– ▼".into() };
         let xs = st.xruns.to_string();
         let dsp = if connected { format!("{:.1} %", st.dsp) } else { "–".into() };
-        // The JACK readouts are segments of one LCD: each only as wide as its text, plus a little.
+        // The JACK readouts are segments of one LCD, each as wide as its widest possible text, so
+        // the LCD never changes size with the values.
         let seg_w = |g: &Gfx, v: &str, c: &str| g.measure(Face::Regular, px, v).max(g.measure(Face::Regular, spx, c)) + 16.0 * s;
-        let rate_w = seg_w(g, &rate_v, &rate_c);
-        let buf_w = seg_w(g, &bs, "BUF");
+        let rate_w = seg_w(g, "88.2 kHz", "FREEWHEEL").max(seg_w(g, &rate_v, &rate_c));
+        let buf_w = seg_w(g, "8192 ▼", "BUF");
         let xr_w = seg_w(g, "0000", "XRUNS");
         let dsp_w = seg_w(g, "100.0 %", "DSP").max(60.0 * s);
         // JackBus's CPU wake-up latency limit, left of the rate (dropped with it when narrow)
@@ -631,7 +632,13 @@ impl App {
             Some(n) if n >= 0 => format!("{n} µs ▼"),
             _ => "off ▼".to_string(),
         };
-        let cpu_w = if cpu.is_some() { seg_w(g, &cpu_v, "DMA") } else { 0.0 };
+        // the widest level this machine's menu offers (a larger value set elsewhere widens it)
+        let cpu_w = if cpu.is_some() {
+            let widest = format!("{} µs ▼", crate::cpuidle::widest_level().max(100));
+            seg_w(g, &widest, "DMA").max(seg_w(g, &cpu_v, "DMA"))
+        } else {
+            0.0
+        };
         // the LCD's inset in its group, and a margin inside it at either end
         let jack_core = buf_w + xr_w + dsp_w + 6.0 * s + 8.0 * s;
         let gap = 8.0 * s;
