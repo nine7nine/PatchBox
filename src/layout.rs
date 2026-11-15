@@ -206,6 +206,25 @@ impl Layout {
         (other, has)
     }
 
+    /// As with_view_of, but `other` keeps its own view style (ports, vertical or matrices) and
+    /// the camera it had for it: JACK's canvas set aside while PipeWire's graph is shown.
+    pub fn with_view_keeping_style(mut other: Layout, view: &View) -> Layout {
+        let cams = other.cams();
+        let style = (other.view.matrices, other.view.vertical);
+        other.view = view.clone();
+        (other.view.matrices, other.view.vertical) = style;
+        other.set_cams(cams);
+        other
+    }
+
+    /// Take another graph's canvas (JACK's or PipeWire's) with its own view style (ports,
+    /// vertical or matrices); the rest of the view and the window stay ours. The style is set
+    /// first: settle files the block positions under it.
+    pub fn take_graph_canvas(&mut self, other: Layout) {
+        (self.view.matrices, self.view.vertical) = (other.view.matrices, other.view.vertical);
+        self.take_canvas(other);
+    }
+
     /// Take the canvas of `other`, keeping our view and window (those stay global).
     pub fn take_canvas(&mut self, other: Layout) {
         let (view, window) = (self.view.clone(), self.window);

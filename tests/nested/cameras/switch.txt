@@ -1,5 +1,6 @@
-# Each graph (JACK, PipeWire) keeps, per view style (Ports, vertical Ports, Matrix), its camera
-# and its block positions, across style and graph switches; Fit in one graph leaves the other's.
+# Each graph (JACK, PipeWire) keeps its own view style (Ports, vertical Ports, Matrix) and, per
+# style, its camera and block positions, across style and graph switches; Fit in one graph leaves
+# the other's.
 wait 2500
 click bar:zoom\+
 click bar:zoom\+
@@ -20,9 +21,7 @@ click bar:zoom\+
 drag node:M:Carla 600,500
 wait 400
 cam V
-click bar:ports
-wait 600
-cam =A
+# JACK left in vertical; PipeWire shows its own style (Ports: never set)
 action pipewire
 wait 2000
 click bar:zoomfit
@@ -46,6 +45,10 @@ wait 800
 click bar:zoom-
 wait 300
 cam W
+click bar:matrix
+wait 600
+cam =D
+# PipeWire left in Matrix: JACK comes back vertical, as it was left
 action jack
 wait 1500
 cam =V
@@ -58,16 +61,17 @@ cam =V
 click bar:ports
 wait 600
 cam =A
+# and PipeWire in Matrix; its Ports goes back to the flow it last used (vertical)
 action pipewire
 wait 1500
-cam =C
+cam =D
 click bar:ports
 wait 600
 cam =W
-click bar:matrix
+click bar:ports
 wait 600
-cam =D
+cam =C
 action jack
 wait 1500
-cam =B
+cam =A
 quit

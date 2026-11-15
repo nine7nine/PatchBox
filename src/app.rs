@@ -574,7 +574,7 @@ impl App {
             // JACK's canvas, set aside: on disk too, with the shared settings as they are now and
             // its own cameras.
             if let Some(j) = self.jack_canvas.clone() {
-                let (mut j, _) = Layout::with_view_of(j, &self.layout.view);
+                let mut j = Layout::with_view_keeping_style(j, &self.layout.view);
                 j.window = self.layout.window;
                 self.write_jack_canvas(&mut j);
             }
@@ -615,7 +615,7 @@ impl App {
         if self.source == Source::PipeWire {
             // A session's canvas is JACK's: switch the one set aside, not PipeWire's on screen.
             if let Some(j) = self.jack_canvas.take() {
-                let (mut j, _) = Layout::with_view_of(j, &self.layout.view);
+                let mut j = Layout::with_view_keeping_style(j, &self.layout.view);
                 self.switch_session_canvas(&mut j, &dir);
                 self.jack_canvas = Some(j);
             }
@@ -1847,8 +1847,9 @@ impl App {
                 // PipeWire's graph has its own cameras, one per view style (its file's; the graph
                 // is fitted for a style it has none for yet).
                 let pw_cams = pw_canvas.cams();
+                // and its own view style (ports, vertical, matrices): JACK's stays JACK's
                 self.jack_canvas = Some(self.layout.clone());
-                self.layout.take_canvas(pw_canvas);
+                self.layout.take_graph_canvas(pw_canvas);
                 if !self.layout.set_cams(pw_cams) {
                     self.fit_pending = true;
                 }
@@ -1869,7 +1870,7 @@ impl App {
                     // JACK's cameras back as they were left, the current style's shown (none for
                     // it yet, the style having changed meanwhile: fitted).
                     let jack_cams = j.cams();
-                    self.layout.take_canvas(j);
+                    self.layout.take_graph_canvas(j);
                     if !self.layout.set_cams(jack_cams) {
                         self.fit_pending = true;
                     }

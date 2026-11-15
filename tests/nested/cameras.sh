@@ -1,9 +1,9 @@
 #!/bin/bash
-# Views: each graph (JACK, PipeWire) and each session canvas keeps, per view style (Ports,
-# vertical Ports, Matrix), its own camera and block/matrix positions, across style and graph
-# switches, Fit, sessions and restarts. Runs the scripts in cameras/ in the nested harness (private
-# JACK + PipeWire bridge) and checks every "cam =X" line equals "cam X" (graph, style, camera,
-# position fingerprints).
+# Views: each graph (JACK, PipeWire) keeps its own view style (Ports, vertical Ports, Matrix), and
+# each graph and session canvas keeps, per style, its own camera and block/matrix positions,
+# across style and graph switches, Fit, sessions and restarts. Runs the scripts in cameras/ in the
+# nested harness (private JACK + PipeWire bridge) and checks every "cam =X" line equals "cam X"
+# (graph, style, camera, position fingerprints).
 #   tests/nested/cameras.sh            (PB_BIN defaults to target/release)
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
