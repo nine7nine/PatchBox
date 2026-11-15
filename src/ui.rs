@@ -620,9 +620,9 @@ impl App {
         let xs = st.xruns.to_string();
         let dsp = if connected { format!("{:.1} %", st.dsp) } else { "–".into() };
         // The JACK readouts are segments of one LCD: each only as wide as its text, plus a little.
-        let seg_w = |g: &Gfx, v: &str, c: &str| g.measure(Face::Regular, px, v).max(g.measure(Face::Regular, spx, c)) + 12.0 * s;
+        let seg_w = |g: &Gfx, v: &str, c: &str| g.measure(Face::Regular, px, v).max(g.measure(Face::Regular, spx, c)) + 16.0 * s;
         let rate_w = seg_w(g, &rate_v, &rate_c);
-        let buf_w = seg_w(g, &bs, "BUFFER");
+        let buf_w = seg_w(g, &bs, "BUF");
         let xr_w = seg_w(g, "0000", "XRUNS");
         let dsp_w = seg_w(g, "100.0 %", "DSP").max(60.0 * s);
         // JackBus's CPU wake-up latency limit, left of the rate (dropped with it when narrow)
@@ -632,7 +632,8 @@ impl App {
             _ => "off ▼".to_string(),
         };
         let cpu_w = if cpu.is_some() { seg_w(g, &cpu_v, "DMA") } else { 0.0 };
-        let jack_core = buf_w + xr_w + dsp_w + 6.0 * s;
+        // the LCD's inset in its group, and a margin inside it at either end
+        let jack_core = buf_w + xr_w + dsp_w + 6.0 * s + 8.0 * s;
         let gap = 8.0 * s;
         let avail = bar.w - 2.0 * pad;
         // What fits, dropped in this order as the window narrows: the session's buttons, the
@@ -761,13 +762,12 @@ impl App {
             self.tile(g, mr, "Matrix", Icon::Matrix, TINT_TEAL, None, matrices, !matrices, Action::SetStyle(true, vertical));
         }
         // JACK, right-aligned, as one LCD: the DMA latency limit (JackBus), rate and latency,
-        // buffer size, xruns, DSP load, with thin dividers between them. The DMA latency, buffer
-        // and xruns segments are clickable: their text brightens under the pointer.
+        // buffer size, xruns, DSP load. The DMA latency, buffer and xruns segments are clickable:
+        // their text brightens under the pointer.
         {
             let r = Rect::new(bar.right() - pad - jack_w, gy, jack_w, gh);
             self.group(g, r);
             lcd_face(g, Rect::new(r.x + 3.0 * s, by, r.w - 6.0 * s, bh), s, None);
-            let divider = |g: &mut Gfx, x: f32| g.rect(Rect::new(x.round(), by + 6.0 * s, s.max(1.0), bh - 12.0 * s), alpha(PANEL_LINE, 0.9));
             // A level along a segment's bottom (the DSP load; xruns while there are any).
             let level = |g: &mut Gfx, r: Rect, frac: f32, col: crate::gfx::Color| {
                 let track = Rect::new(r.x + 6.0 * s, r.bottom() - 5.0 * s, r.w - 12.0 * s, (2.0 * s).max(1.0));
@@ -776,7 +776,7 @@ impl App {
                     g.rect(Rect::new(track.x, track.y, (track.w * frac).max(s), track.h), alpha(col, 0.85));
                 }
             };
-            let mut x = r.x + 3.0 * s;
+            let mut x = r.x + 7.0 * s;
             if show_rate {
                 if cpu.is_some() {
                     // dim while the server is stopped: no request is held then
@@ -786,22 +786,19 @@ impl App {
                     readout(g, cr, s, &cpu_v, "DMA", col);
                     self.add_hit(cr, Action::CpuWakeMenu(cr));
                     x += cpu_w;
-                    divider(g, x);
                 }
                 let rr = Rect::new(x, by, rate_w, bh);
                 let col = if connected { if st.freewheel { WARN } else { LCD_TEXT } } else { BAD };
                 readout(g, rr, s, &rate_v, &rate_c, col);
                 x += rate_w;
-                divider(g, x);
             }
             let br = Rect::new(x, by, buf_w, bh);
             let hov = connected && self.hovered(&br);
-            readout(g, br, s, &bs, "BUFFER", if !connected { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
+            readout(g, br, s, &bs, "BUF", if !connected { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             if connected {
                 self.add_hit(br, Action::BufferMenu(br));
             }
             x += buf_w;
-            divider(g, x);
             let xr = Rect::new(x, by, xr_w, bh);
             let hov = self.hovered(&xr);
             if st.xruns > 0 {
@@ -810,7 +807,6 @@ impl App {
             readout(g, xr, s, &xs, "XRUNS", if st.xruns > 0 { crate::gfx::mix(BAD, TEXT_BRIGHT, 0.2) } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             self.add_hit(xr, Action::ResetXruns);
             x += xr_w;
-            divider(g, x);
             let dr = Rect::new(x, by, dsp_w, bh);
             if connected {
                 let col = if st.dsp < 50.0 { OK } else if st.dsp < 80.0 { WARN } else { BAD };
