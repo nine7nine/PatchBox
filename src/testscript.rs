@@ -17,7 +17,7 @@
 //! Points (`+` stands for a space): `x,y` (window pixels), `node:<id>`, `out:<id>`, `in:<id>` (node ids as in the layout
 //! file, e.g. `M:ardour`, `S:system`), `cell:<matrix key substring>:<col>:<row>`, `empty` (a
 //! spot on the canvas with nothing under it), `bar:<label>` (a control: AUDIO, MIDI, Buffer,
-//! Xruns, menu, zoom-, zoom+, zoomtrack, zoompct), `port:<client:port>` (its row in an expanded
+//! Xruns, CpuWake, menu, zoom-, zoom+, zoomtrack, zoompct), `port:<client:port>` (its row in an expanded
 //! node), `menu:<item label>`, `dlg:<row label>` (a page's row; `dlg:choice:<row label>` its ▾,
 //! `dlg:tab:<label>`, `dlg:button:<label>`).
 

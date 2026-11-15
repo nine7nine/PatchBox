@@ -188,6 +188,9 @@ pub struct Status {
     /// jackdbus answered on the session bus.
     pub available: bool,
     pub started: bool,
+    /// The CPU wake-up latency limit asked for while the server runs (JackBus's engine
+    /// cpu-dma-latency, µs; -1: off). None: this jackdbus has no such parameter.
+    pub cpu_dma_latency: Option<i32>,
 }
 
 pub enum Cmd {
@@ -403,8 +406,19 @@ fn control(c: &Connection, method: &str) -> Result<(), String> {
 
 fn status(c: &Connection) -> Status {
     match proxy(c, CONTROL).and_then(|p| p.call::<_, _, bool>("IsStarted", &()).map_err(err)) {
-        Ok(started) => Status { available: true, started },
-        Err(_) => Status { available: false, started: false },
+        Ok(started) => Status { available: true, started, cpu_dma_latency: cpu_dma_latency(c) },
+        Err(_) => Status::default(),
+    }
+}
+
+/// JackBus's engine cpu-dma-latency (µs, -1: off); None where jackdbus has no such parameter.
+fn cpu_dma_latency(c: &Connection) -> Option<i32> {
+    let path = vec!["engine".to_string(), "cpu-dma-latency".to_string()];
+    let (_, _, v): (bool, OwnedValue, OwnedValue) = configure(c).ok()?.call("GetParameterValue", &(path,)).ok()?;
+    match Value::from_z(&v)? {
+        Value::I32(n) => Some(n),
+        Value::U32(n) => i32::try_from(n).ok(),
+        _ => None,
     }
 }
 

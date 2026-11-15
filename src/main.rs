@@ -7,6 +7,7 @@
 mod app;
 mod bridges;
 mod canvas;
+mod cpuidle;
 mod csd;
 mod dialog;
 mod events;

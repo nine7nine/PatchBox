@@ -99,6 +99,21 @@ impl UiState {
         self.open_menu([under.x, under.bottom() + 2.0], items);
     }
 
+    /// JackBus's cpu-dma-latency, as levels from this machine's idle states (performance to
+    /// power saving), and the current value if it is none of them.
+    pub fn open_cpu_wake_menu(&mut self, under: Rect, current: i32) {
+        let states = crate::cpuidle::states();
+        let mut levels = crate::cpuidle::levels(&states);
+        if !levels.iter().any(|l| l.usec == current) {
+            let at = levels.iter().position(|l| l.usec < 0 || l.usec > current).unwrap_or(levels.len());
+            let label = format!("{current} µs · idle {} (set elsewhere)", crate::cpuidle::allows(&states, current));
+            levels.insert(at, crate::cpuidle::Level { usec: current, label });
+        }
+        let mut items = vec![MenuItem::new("cpu-dma-latency while the server runs:", Action::SetCpuWake(current)).enabled(false)];
+        items.extend(levels.into_iter().map(|l| MenuItem::new(l.label, Action::SetCpuWake(l.usec)).checked(l.usec == current)));
+        self.open_menu([under.x, under.bottom() + 2.0], items);
+    }
+
     pub fn open_scale_menu(&mut self, at: Rect, current: f32) {
         let items = [1.0f32, 1.1, 1.25, 1.5, 1.75, 2.0]
             .into_iter()
@@ -611,6 +626,13 @@ impl App {
         let buf_w = read_w(g, &bs, "BUFFER");
         let xr_w = read_w(g, "0000", "XRUNS");
         let dsp_w = read_w(g, "100.0 %", "DSP LOAD").max(84.0 * s);
+        // JackBus's CPU wake-up latency limit, left of the rate (dropped with it when narrow)
+        let cpu = self.server.status.cpu_dma_latency;
+        let cpu_v = match cpu {
+            Some(n) if n >= 0 => format!("{n} µs ▼"),
+            _ => "off ▼".to_string(),
+        };
+        let cpu_w = if cpu.is_some() { read_w(g, &cpu_v, "DMA LATENCY").max(read_w(g, "1000 µs ▼", "")) + bgap } else { 0.0 };
         let jack_core = buf_w + xr_w + dsp_w + 2.0 * bgap + 8.0 * s;
         let gap = 8.0 * s;
         let avail = bar.w - 2.0 * pad;
@@ -624,7 +646,7 @@ impl App {
                 (s[1], views_w),
                 (s[5], trans_btns + if s[2] { 6.0 * self.scale + lcd_w } else { 0.0 }),
                 (s[4], kinds_w),
-                (true, jack_core + if s[3] { rate_w + bgap } else { 0.0 }),
+                (true, jack_core + if s[3] { rate_w + bgap + cpu_w } else { 0.0 }),
             ];
             let shown: Vec<f32> = parts.iter().filter(|(on, _)| *on).map(|(_, w)| *w).collect();
             shown.iter().sum::<f32>() + gap * (shown.len().saturating_sub(1)) as f32
@@ -637,7 +659,7 @@ impl App {
         }
         let [show_sess, show_views, show_lcd, show_rate, show_kinds, show_trans] = show;
         let trans_w = trans_btns + if show_lcd { 6.0 * s + lcd_w } else { 0.0 };
-        let jack_w = jack_core + if show_rate { rate_w + bgap } else { 0.0 };
+        let jack_w = jack_core + if show_rate { rate_w + bgap + cpu_w } else { 0.0 };
 
         let mut x = bar.x + pad;
         // Session.
@@ -783,6 +805,17 @@ impl App {
             lcd_face(g, rr, s, None);
             let col = if connected { if st.freewheel { WARN } else { LCD_TEXT } } else { BAD };
             readout(g, rr, s, &rate_v, &rate_c, col);
+            rx -= rate_w + bgap;
+            if cpu.is_some() {
+                // dim while the server is stopped: no request is held then
+                let w = cpu_w - bgap;
+                let cr = Rect::new(rx - w, by, w, bh);
+                let hov = self.hovered(&cr);
+                lcd_face(g, cr, s, None);
+                let col = if !self.server.status.started { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT };
+                readout(g, cr, s, &cpu_v, "DMA LATENCY", col);
+                self.add_hit(cr, Action::CpuWakeMenu(cr));
+            }
         }
     }
 
@@ -1045,6 +1078,15 @@ impl App {
             Action::ZoomTo(_) => "Zoom: click for 100 %".into(),
             Action::ResetXruns => "Xruns since the last reset: click resets, right-click shows the event log".into(),
             Action::BufferMenu(_) => "Buffer size (frames): click to change it".into(),
+            Action::CpuWakeMenu(_) => {
+                let n = self.server.status.cpu_dma_latency.unwrap_or(-1);
+                let held = if self.server.status.started { "" } else { " (held while the server runs)" };
+                format!(
+                    "cpu-dma-latency: {}{held}. Idle CPUs stay out of states slower to wake than this: idle now {}. Lower wakes faster and costs power. Click to change it",
+                    if n < 0 { "off".to_string() } else { format!("{n} µs") },
+                    crate::cpuidle::allows(crate::cpuidle::cached(), n)
+                )
+            }
             Action::PresetMenu(_) => "Switch the JACK server to a saved preset".into(),
             Action::CenterNode(_) => "Find it in the graph; right-click for its menu".into(),
             Action::EventLog => "Click for the whole event log".into(),
@@ -1127,6 +1169,7 @@ impl App {
             let hit = match a {
                 Action::SetKind(k) => k.label() == name,
                 Action::BufferMenu(_) => name == "Buffer",
+                Action::CpuWakeMenu(_) => name == "CpuWake",
                 Action::ResetXruns => name == "Xruns",
                 Action::EventLog => name == "log",
                 Action::PresetMenu(_) => name == "preset",

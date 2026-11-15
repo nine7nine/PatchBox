@@ -48,6 +48,10 @@ pub enum Action {
     RecallViewN(usize),
     ToggleSnap,
     BufferMenu(Rect),
+    /// The CPU wake-up latency limit's menu (JackBus's cpu-dma-latency), under this tile.
+    CpuWakeMenu(Rect),
+    /// Ask for this CPU wake-up latency limit while the server runs (µs; -1: off).
+    SetCpuWake(i32),
     ScaleMenu(Rect),
     SetUiScale(f32),
     /// Multiply the zoom, about the canvas centre.
@@ -1492,6 +1496,17 @@ impl App {
                 self.layout_changed();
             }
             Action::BufferMenu(r) => self.ui.open_buffer_menu(r, self.stats.buffer_size),
+            Action::CpuWakeMenu(r) => {
+                if let Some(n) = self.server.status.cpu_dma_latency {
+                    self.ui.open_cpu_wake_menu(r, n);
+                }
+            }
+            Action::SetCpuWake(n) => {
+                use crate::server::{Cmd, Value};
+                let path = vec!["engine".to_string(), "cpu-dma-latency".to_string()];
+                // off is the parameter's default: reset it, so jackdbus keeps no value for it
+                self.server.run(if n < 0 { Cmd::Reset(path) } else { Cmd::Set(path, Value::I32(n)) });
+            }
             Action::ScaleMenu(r) => self.ui.open_scale_menu(r, self.layout.view.ui_scale),
             Action::SetUiScale(f) => {
                 let c = self.canvas_center_world();
