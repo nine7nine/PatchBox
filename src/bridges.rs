@@ -100,6 +100,45 @@ impl Spec {
     }
 }
 
+/// What a spec asks for, briefly: "64 frames × 3 · timer" (defaults left out; "" for none).
+pub fn describe(spec: &str) -> String {
+    let sp = Spec::parse(spec);
+    let mut parts = Vec::new();
+    if sp.period.is_some() || sp.nperiods.is_some() {
+        parts.push(format!("{} frames × {}", sp.period.unwrap_or(DEFAULT_PERIOD), sp.nperiods.unwrap_or(DEFAULT_NPERIODS)));
+    }
+    if let Some(w) = sp.wake.filter(|w| w != "auto") {
+        parts.push(w);
+    }
+    parts.join(" · ")
+}
+
+/// The settings of cards switched off (card id → spec), so that switching one on again brings
+/// them back: PatchBox's own (bridges-off.json in its configuration directory).
+pub fn remembered() -> std::collections::BTreeMap<String, String> {
+    let Some(p) = crate::layout::config_dir().map(|d| d.join("bridges-off.json")) else { return Default::default() };
+    std::fs::read(&p).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Keep (Some) or forget (None) a card's settings.
+pub fn remember(card: &str, spec: Option<&str>) {
+    let Some(dir) = crate::layout::config_dir() else { return };
+    let mut m = remembered();
+    match spec {
+        Some(s) => {
+            m.insert(card.to_string(), s.to_string());
+        }
+        None => {
+            m.remove(card);
+        }
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let (p, tmp) = (dir.join("bridges-off.json"), dir.join("bridges-off.json.tmp"));
+    if let Ok(body) = serde_json::to_vec_pretty(&m) {
+        let _ = std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &p));
+    }
+}
+
 /// The bridges listed in the engine parameter.
 pub fn specs(list: &str) -> Vec<String> {
     list.split([' ', '\t', ';']).filter(|s| !s.is_empty()).map(str::to_string).collect()
@@ -186,6 +225,14 @@ mod tests {
         }
         assert_eq!(Spec::parse("hw:PCH,3").card(), Some(("PCH".into(), 3)));
         assert_eq!(Spec::parse("plughw:CARD=PCH,DEV=3").card(), Some(("PCH".into(), 3)));
+    }
+
+    #[test]
+    fn described() {
+        assert_eq!(describe("U44"), "");
+        assert_eq!(describe("U44/64/3@timer"), "64 frames × 3 · timer");
+        assert_eq!(describe("U44@irq"), "irq");
+        assert_eq!(describe("hw:PCH,3/256"), "256 frames × 2");
     }
 
     #[test]

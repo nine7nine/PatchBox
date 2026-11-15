@@ -32,7 +32,7 @@ cat > "$script" <<'EOF'
 wait 2500
 click bar:settings
 wait 1500
-click dlg:tab:Bridges
+click dlg:tab:Devices
 wait 1500
 shot HOME/.cache/patchbox-work/bridges-1-tab.png
 click dlg:Loopback+—+Loopback
@@ -43,6 +43,12 @@ wait 600
 click menu:64+frames
 wait 9000
 shot HOME/.cache/patchbox-work/bridges-3-period.png
+click dlg:Loopback+—+Loopback
+wait 2500
+shot HOME/.cache/patchbox-work/bridges-3b-off-kept.png
+click dlg:Loopback+—+Loopback
+wait 9000
+shot HOME/.cache/patchbox-work/bridges-3c-on-again.png
 click dlg:tab:Server
 wait 800
 shot HOME/.cache/patchbox-work/bridges-4-server.png
@@ -62,10 +68,10 @@ fail=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
 log=$W/nested/jackdbus-home/.log/jack/jackdbus.log
 conf=$W/nested/jackdbus-home/.config/jack/conf.xml
-check "six screenshots" 'for i in 1-tab 2-on 3-period 4-server 5-master 6-netjack; do [ -s "$W/bridges-$i.png" ] || exit 1; done'
+check "eight screenshots" 'for i in 1-tab 2-on 3-period 3b-off-kept 3c-on-again 4-server 5-master 6-netjack; do [ -s "$W/bridges-$i.png" ] || exit 1; done'
 check "the switch bridged the card, and it locked" 'grep -q "bridge Loopback: locked" "$log"'
 check "the new period: the bridge again, locked" '[ "$(grep -c "bridge Loopback: locked" "$log")" -ge 2 ] && grep -q "period 64 x 2" "$log"'
-check "the list saved: Loopback/64" 'grep -q "<option name=\"bridges\">Loopback/64</option>" "$conf"'
+check "switched off and on again: its period kept (Loopback/64 saved)" '[ "$(grep -c "period 64 x 2" "$log")" -ge 2 ] && grep -q "<option name=\"bridges\">Loopback/64</option>" "$conf"'
 grep "bridge" "$log" | cut -c26- | sed 's/^/    /'
 echo "screenshots: $W/bridges-*.png"
 exit $fail

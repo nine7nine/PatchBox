@@ -202,6 +202,10 @@ pub struct App {
     pub export: crate::export::Export,
     /// Installed applications (.desktop), scanned when first needed.
     pub apps: Option<Vec<crate::session::App>>,
+    /// Every installed application (the add page's search), scanned when first searched; and
+    /// what was searched for.
+    pub all_apps: Option<Vec<crate::session::App>>,
+    pub app_query: String,
     pub log: Vec<LogLine>,
     /// The event log (xruns, the server, clients, connections, messages), with times.
     pub events: crate::events::Events,
@@ -254,6 +258,8 @@ impl App {
             search: None,
             export: Default::default(),
             apps: None,
+            all_apps: None,
+            app_query: String::new(),
             jack: None,
             waker,
             graph: Graph::default(),
@@ -553,7 +559,7 @@ impl App {
             if now >= self.server_stats_at {
                 self.server.send(crate::server::Cmd::Stats);
                 // the bridges' states change by the second (locking, a card unplugged)
-                self.server_stats_at = now + Duration::from_secs(if self.settings_tab == TAB_BRIDGES { 1 } else { 2 });
+                self.server_stats_at = now + Duration::from_secs(if self.settings_tab == TAB_DEVICES { 1 } else { 2 });
             }
             at(self.server_stats_at);
         }
@@ -2408,8 +2414,12 @@ impl App {
     pub fn server_rows(&self) -> Vec<crate::dialog::Row> {
         match self.settings_tab {
             TAB_MASTER => self.master_rows(),
-            TAB_BRIDGES => self.bridge_rows(),
-            TAB_SLAVES => self.slave_rows(),
+            TAB_DEVICES if self.server.config.is_none() => vec![crate::dialog::Row::info("Settings", "loading…")],
+            TAB_DEVICES => {
+                let mut rows = self.bridge_rows();
+                rows.extend(self.slave_rows());
+                rows
+            }
             TAB_NETJACK => self.netjack_rows(),
             TAB_INTERNALS => self.internal_rows(),
             _ => self.server_tab_rows(),
@@ -2540,7 +2550,8 @@ impl App {
             .then(|| cfg.driver_params.iter().find(|p| p.name == "device").and_then(|p| alsa_card(&p.value.show())))
             .flatten();
         let mut shown = Vec::new();
-        rows.push(Row::header("Sound cards"));
+        let kept = crate::bridges::remembered();
+        rows.push(Row::header("Sound cards, bridged (their own clocks)"));
         for card in crate::bridges::cards() {
             let label = if card.name.is_empty() { card.id.clone() } else { format!("{} — {}", card.id, card.name) };
             if master_card.as_deref().is_some_and(|m| m == card.id.to_lowercase() || m == card.index.to_string()) {
@@ -2555,7 +2566,19 @@ impl App {
                 control: Control::Toggle(spec.is_some()),
                 modified: false,
             });
-            let Some(spec) = spec else { continue };
+            let Some(spec) = spec else {
+                // switched off: its settings kept for when it is switched on again
+                if let Some(k) = kept.get(&card.id).filter(|k| !crate::bridges::describe(k).is_empty()) {
+                    rows.push(Row {
+                        id: format!("bridge:forget:{}", card.id),
+                        label: "      kept settings".into(),
+                        help: "Switched on again, the card gets these; × forgets them".into(),
+                        control: Control::LinkRemove(crate::bridges::describe(k)),
+                        modified: false,
+                    });
+                }
+                continue;
+            };
             shown.push(spec.clone());
             let sp = Spec::parse(spec);
             rows.push(Row {
@@ -2612,12 +2635,30 @@ impl App {
     fn slave_rows(&self) -> Vec<crate::dialog::Row> {
         use crate::dialog::{Control, Row};
         let Some(cfg) = &self.server.config else { return vec![Row::info("Settings", "loading…")] };
-        let mut rows = vec![Row::header("Slave drivers")];
-        for d in master_drivers(cfg).filter(|d| **d != cfg.driver) {
+        let mut rows = vec![Row::header("Slave drivers (in the master's cycle)")];
+        // the usual ones first, each said what it is for
+        let about = |d: &str| -> (&'static str, &'static str) {
+            match d {
+                "alsarawmidi" => ("MIDI ports", "The ALSA MIDI devices' ports (hardware MIDI in and out) as JACK MIDI ports"),
+                "alsa" => ("a card clocked by the master's", "Another ALSA card in the master's cycle: it must run on the master's clock (word clock, S/PDIF, or the same card); a card on its own clock is bridged above"),
+                "firewire" => ("a FireWire card, clocked by the master's", "A FireWire (FFADO) device in the master's cycle, on the master's clock"),
+                "net" => ("netjack", "A netjack connection run in this cycle"),
+                "netone" => ("netjack (NetJack1)", "A NetJack1 connection run in this cycle"),
+                "loopback" => ("ports looped back", "Ports whose output comes back as input a cycle later"),
+                "proxy" => ("another server's ports", "Another JACK server's ports in this server"),
+                "dummy" => ("silent ports", "Ports with no hardware behind them"),
+                _ => ("", "Run this driver as a slave of the master driver"),
+            }
+        };
+        let rank = |d: &str| ["alsarawmidi", "alsa", "firewire"].iter().position(|x| *x == d).unwrap_or(9);
+        let mut drivers: Vec<&String> = master_drivers(cfg).filter(|d| **d != cfg.driver).collect();
+        drivers.sort_by(|a, b| rank(a).cmp(&rank(b)).then(a.cmp(b)));
+        for d in drivers {
+            let (what, help) = about(d);
             rows.push(Row {
                 id: format!("slave:{d}"),
-                label: d.clone(),
-                help: "Run this driver as a slave of the master driver".into(),
+                label: if what.is_empty() { d.clone() } else { format!("{d} · {what}") },
+                help: help.into(),
                 control: Control::Toggle(cfg.slaves.contains(d)),
                 modified: false,
             });
@@ -2715,7 +2756,23 @@ impl App {
         let specs = crate::bridges::specs(&list);
         let Some((what, key)) = id.strip_prefix("bridge:").and_then(|r| r.split_once(':')) else { return };
         match (what, value) {
-            ("card", Some(v)) => self.server.run(if v == "on" { Cmd::AddBridge(key.to_string()) } else { Cmd::RemoveBridge(key.to_string()) }),
+            ("card", Some("on")) => {
+                // the settings it had when switched off, if any
+                let spec = crate::bridges::remembered().get(key).cloned().unwrap_or_else(|| key.to_string());
+                crate::bridges::remember(key, None);
+                self.server.run(Cmd::AddBridge(spec));
+            }
+            ("card", Some(_)) => {
+                // its settings kept for when it is switched on again
+                if let Some(card) = crate::bridges::cards().into_iter().find(|c| c.id == key)
+                    && let Some(s) = specs.iter().find(|s| Spec::parse(s).is_card(&card))
+                    && !crate::bridges::describe(s).is_empty()
+                {
+                    crate::bridges::remember(key, Some(&Spec { device: key.to_string(), ..Spec::parse(s) }.to_spec()));
+                }
+                self.server.run(Cmd::RemoveBridge(key.to_string()));
+            }
+            ("forget", Some("remove")) => crate::bridges::remember(key, None),
             ("spec", Some("remove")) => self.server.run(Cmd::RemoveBridge(key.to_string())),
             ("period" | "nperiods" | "wake", v) => {
                 let Some(card) = crate::bridges::cards().into_iter().find(|c| c.id == key) else { return };
@@ -3086,19 +3143,19 @@ pub fn kind_from(s: &str) -> PortKind {
 }
 
 /// The settings page's tabs: the JACK server's (through jackdbus), then PipeWire's.
-const JACK_TABS: [&str; 6] = ["Server", "Master", "Bridges", "Slaves & MIDI", "Netjack", "Internals"];
+const JACK_TABS: [&str; 5] = ["Server", "Master", "Devices", "Netjack", "Internals"];
 const TAB_MASTER: usize = 1;
-const TAB_BRIDGES: usize = 2;
-const TAB_SLAVES: usize = 3;
-const TAB_NETJACK: usize = 4;
-const TAB_INTERNALS: usize = 5;
-const TAB_PIPEWIRE: usize = 6;
+/// Other devices joining the graph: sound cards bridged (their own clocks) and slave drivers
+/// (in the master's cycle)
+const TAB_DEVICES: usize = 2;
+const TAB_NETJACK: usize = 3;
+const TAB_INTERNALS: usize = 4;
+const TAB_PIPEWIRE: usize = 5;
 
 /// What each JACK tab's footer says.
 fn tab_note(tab: usize) -> &'static str {
     match tab {
-        TAB_BRIDGES => "Bridges change at once while the server runs; jackdbus keeps the list.",
-        TAB_SLAVES => "Slave drivers are added and removed at once while the server runs.",
+        TAB_DEVICES => "Cards and slave drivers change at once while the server runs; jackdbus keeps them.",
         TAB_NETJACK | TAB_INTERNALS => "Internal clients load into the running server; their parameters apply when loaded.",
         _ => "Driver and engine settings apply when the server (re)starts; jackdbus keeps them.",
     }
@@ -3107,8 +3164,7 @@ fn tab_note(tab: usize) -> &'static str {
 /// What a JACK tab is about, above its rows.
 fn tab_message(tab: usize) -> &'static str {
     match tab {
-        TAB_BRIDGES => "Sound cards on their own clocks, joined to the graph as the master's card is: each resampled to the master's clock, no word clock needed. A card switched on is bridged now and whenever the server starts; unplugged, its ports stay, silent, until it is back.",
-        TAB_SLAVES => "Drivers run in the master's own cycle: alsarawmidi for MIDI ports, or a second card clocked by the master's (word clock). A card on its own clock is a bridge.",
+        TAB_DEVICES => "Other devices in the graph. A sound card on its own clock is bridged: resampled to the master's clock, no word clock needed; switched on, it is bridged now and whenever the server starts, and unplugged, its ports stay, silent, until it is back. A slave driver runs in the master's own cycle: MIDI ports, or a card clocked by the master's (word clock).",
         TAB_NETJACK => "Audio over the network: other machines joining this server (netmanager), or this machine joining another's (the net driver as master).",
         _ => "",
     }

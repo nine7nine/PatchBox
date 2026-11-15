@@ -377,6 +377,26 @@ impl App {
         for (i, a) in other {
             rows.push(Row { id: format!("app:{i}"), label: a.name.clone(), help: a.comment.clone(), control: Control::Link(a.exe.clone()), modified: false });
         }
+        // Any other installed application, found by a search (a browser, OBS…): not listed, there
+        // are hundreds
+        rows.push(Row::header("Another application (started and stopped only)"));
+        rows.push(Row {
+            id: "find".into(),
+            label: "Search all applications".into(),
+            help: "Part of a name, a command or a description; Enter shows what matches".into(),
+            control: Control::Text(self.app_query.clone()),
+            modified: false,
+        });
+        if !self.app_query.trim().is_empty() {
+            let all = self.all_apps.as_deref().unwrap_or(&[]);
+            let found = crate::session::find_apps(all, &self.app_query, 20);
+            if found.is_empty() {
+                rows.push(Row::info("Nothing found", format!("no installed application matches \"{}\"", self.app_query.trim())));
+            }
+            for (i, a) in found {
+                rows.push(Row { id: format!("any:{i}"), label: a.name.clone(), help: a.comment.clone(), control: Control::Link(a.exe.clone()), modified: false });
+            }
+        }
         rows.push(Row::header("Any command"));
         rows.push(Row { id: "cmd".into(), label: "Command".into(), help: "An executable and its arguments".into(), control: Control::Text(String::new()), modified: false });
         rows.push(Row {
@@ -648,6 +668,21 @@ impl App {
             Event::Set(id, v) if kind == Kind::Snapshots && id == "auto" => {
                 d.set_local(&id, &v);
                 self.send(Request::SetAutoSnapshot { on: v == "on" });
+            }
+            Event::Set(id, v) if kind == Kind::AddApp && id == "find" => {
+                self.all_apps.get_or_insert_with(crate::session::scan_all_apps);
+                self.app_query = v;
+                let rows = self.add_app_rows();
+                if let Some(d) = &mut self.dialog {
+                    d.set_rows(rows);
+                }
+            }
+            Event::Set(id, v) if id.starts_with("any:") && v == "activate" => {
+                let i: usize = id.trim_start_matches("any:").parse().unwrap_or(usize::MAX);
+                let Some(a) = self.all_apps.as_ref().and_then(|a| a.get(i)).cloned() else { return };
+                self.dialog = None;
+                // NSM-capable or not, as its .desktop file says
+                self.send(Request::Add { exe: a.exe, args: a.args, nsm: a.nsm, label: if a.nsm { String::new() } else { a.name } });
             }
             Event::Set(id, v) if id.starts_with("app:") && v == "activate" => {
                 let i: usize = id.trim_start_matches("app:").parse().unwrap_or(usize::MAX);

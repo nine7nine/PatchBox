@@ -758,18 +758,19 @@ impl App {
             }
             readout(g, dr, s, &dsp, "DSP LOAD", if connected { LCD_TEXT } else { TEXT_DIM });
             rx -= dsp_w + bgap;
-            // Buffer and xruns are clickable but wear the same LCD face as their neighbours: a
-            // tinted edge shows under the pointer (and on xruns, while there are any).
+            // Buffer and xruns are clickable but wear the same LCD face as their neighbours, edge
+            // included (no outline under the pointer; their text brightens). Xruns' edge is red
+            // while there are any.
             let xr = Rect::new(rx - xr_w, by, xr_w, bh);
             let hov = self.hovered(&xr);
-            let edge = if st.xruns > 0 { Some(alpha(BAD, if hov { 0.9 } else { 0.55 })) } else if hov { Some(TINT_GREY) } else { None };
+            let edge = (st.xruns > 0).then(|| alpha(BAD, 0.55));
             lcd_face(g, xr, s, edge);
             readout(g, xr, s, &xs, "XRUNS", if st.xruns > 0 { crate::gfx::mix(BAD, TEXT_BRIGHT, 0.2) } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             self.add_hit(xr, Action::ResetXruns);
             rx -= xr_w + bgap;
             let br = Rect::new(rx - buf_w, by, buf_w, bh);
             let hov = connected && self.hovered(&br);
-            lcd_face(g, br, s, hov.then_some(TINT_AMBER));
+            lcd_face(g, br, s, None);
             readout(g, br, s, &bs, "BUFFER", if !connected { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             if connected {
                 self.add_hit(br, Action::BufferMenu(br));

@@ -198,6 +198,47 @@ fn in_path(exe: &str) -> bool {
 /// NSM-capable applications (X-NSM-Capable=true) and other audio/MIDI applications, from the
 /// XDG data directories, installed ones only.
 pub fn scan_apps() -> Vec<App> {
+    scan(false)
+}
+
+/// Every application installed (a browser, OBS…), for a search: the add page lists only the
+/// NSM and audio ones.
+pub fn scan_all_apps() -> Vec<App> {
+    scan(true)
+}
+
+/// The applications whose name, command or comment has `query` in it (any case), at most `max`.
+pub fn find_apps<'a>(apps: &'a [App], query: &str, max: usize) -> Vec<(usize, &'a App)> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    apps.iter()
+        .enumerate()
+        .filter(|(_, a)| a.name.to_lowercase().contains(&q) || a.exe.to_lowercase().contains(&q) || a.comment.to_lowercase().contains(&q))
+        .take(max)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finding_apps() {
+        let app = |name: &str, exe: &str, comment: &str| App { name: name.into(), exe: exe.into(), args: Vec::new(), nsm: false, comment: comment.into() };
+        let apps = vec![app("OBS Studio", "obs", "Live streaming and recording"), app("Firefox", "firefox", "Web browser"), app("Ardour", "ardour9", "Digital audio workstation")];
+        let names = |q: &str| find_apps(&apps, q, 20).into_iter().map(|(_, a)| a.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names("obs"), vec!["OBS Studio"]);
+        assert_eq!(names("BROWSER"), vec!["Firefox"]);
+        assert_eq!(names("ardour9"), vec!["Ardour"]);
+        assert!(names("  ").is_empty());
+        assert!(names("nothing like it").is_empty());
+        assert_eq!(find_apps(&apps, "o", 2).len(), 2);
+    }
+}
+
+fn scan(any: bool) -> Vec<App> {
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
     if let Some(h) = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))) {
         dirs.push(h);
@@ -215,7 +256,7 @@ pub fn scan_apps() -> Vec<App> {
             if !seen.insert(id) {
                 continue; // the user's copy shadows the system's
             }
-            if let Some(a) = parse_desktop(&f) {
+            if let Some(a) = parse_desktop(&f, any) {
                 out.push(a);
             }
         }
@@ -224,7 +265,8 @@ pub fn scan_apps() -> Vec<App> {
     out
 }
 
-fn parse_desktop(path: &std::path::Path) -> Option<App> {
+/// `any`: every application, not only NSM and audio ones.
+fn parse_desktop(path: &std::path::Path, any: bool) -> Option<App> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut in_entry = false;
     let mut kv = std::collections::HashMap::new();
@@ -247,13 +289,14 @@ fn parse_desktop(path: &std::path::Path) -> Option<App> {
     let audio = cats.split(';').any(|c| matches!(c, "Audio" | "Midi" | "Music" | "Sequencer" | "Mixer"));
     // Media players, disc burners, video: audio in their categories but not for a session.
     let consumer = cats.split(';').any(|c| matches!(c, "Player" | "DiscBurning" | "Video" | "TV" | "Viewer"));
-    if !nsm && (!audio || consumer) {
+    if !any && !nsm && (!audio || consumer) {
         return None;
     }
     let exec = if nsm && !get("X-NSM-Exec").is_empty() { get("X-NSM-Exec") } else { get("Exec") };
     let mut words = exec.split_whitespace().filter(|w| !w.starts_with('%')).map(|w| w.trim_matches('"').to_string());
     let exe = words.next()?;
-    if exe == "env" || exe.ends_with("flatpak") {
+    // a session's audio programs are run themselves; a search may find wrapped ones too
+    if !any && (exe == "env" || exe.ends_with("flatpak")) {
         return None;
     }
     if !in_path(&exe) {
