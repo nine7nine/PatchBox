@@ -157,6 +157,8 @@ fn live(driver: &str, changed: &BTreeSet<&str>) -> bool {
         && changed.iter().all(|k| match *k {
             "driver/period" => matches!(driver, "alsa" | "dummy"),
             "engine/log-level" | "engine/log-max-size" | "engine/cpu-dma-latency" => true,
+            // jack2dbus-nspa applies its list of sound card bridges at once
+            "engine/bridges" => true,
             _ => false,
         })
 }
@@ -291,6 +293,9 @@ mod tests {
         assert!(!live("alsa", &set(&["driver/nperiods"])));
         assert!(!live("alsa", &set(&["engine/realtime-priority"])));
         assert!(!live("alsa", &set(&[])));
+        assert!(live("alsa", &set(&["engine/bridges"])));
+        assert!(live("dummy", &set(&["engine/bridges", "driver/period"])));
+        assert!(!live("alsa", &set(&["engine/bridges", "driver/rate"])));
     }
 
     #[test]

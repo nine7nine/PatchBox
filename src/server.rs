@@ -121,6 +121,66 @@ pub struct Stats {
     pub latency_ms: f64,
     pub xruns: u32,
     pub realtime: bool,
+    /// The sound card bridges (jack2dbus-nspa's GetBridges); None: this jackdbus has none.
+    pub bridges: Option<Vec<Bridge>>,
+}
+
+/// A sound card bridge as jackdbus reports it: a card on its own clock, resampled into the
+/// graph (jack2dbus-nspa).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Bridge {
+    /// As listed in the engine's "bridges": device[/period[/nperiods]][@wake].
+    pub spec: String,
+    /// Its JACK client's name ("" while it is not running).
+    pub name: String,
+    /// The card: running, gone (unplugged), failed, closed; absent (not there), stopped (the
+    /// server is).
+    pub card: String,
+    /// Each direction: none, idle, learning, starting, acquiring, locked, lost.
+    pub capture: String,
+    pub playback: String,
+    pub rate: u32,
+    pub period: u32,
+    pub nperiods: u32,
+    pub capture_channels: u32,
+    pub playback_channels: u32,
+    /// Master frames, as the ports report them.
+    pub capture_latency: f64,
+    pub playback_latency: f64,
+    /// The card's clock against the master's.
+    pub drift_ppm: f64,
+    pub xruns: u64,
+    pub resyncs: u64,
+    pub underruns: u64,
+}
+
+type BridgeTuple = (String, String, String, String, String, u32, u32, u32, u32, u32, f64, f64, f64, u64, u64, u64);
+
+/// The bridges (None: jackdbus has no GetBridges).
+fn bridges(p: &Proxy<'_>) -> Option<Vec<Bridge>> {
+    let v: Vec<BridgeTuple> = p.call("GetBridges", &()).ok()?;
+    Some(
+        v.into_iter()
+            .map(|t| Bridge {
+                spec: t.0,
+                name: t.1,
+                card: t.2,
+                capture: t.3,
+                playback: t.4,
+                rate: t.5,
+                period: t.6,
+                nperiods: t.7,
+                capture_channels: t.8,
+                playback_channels: t.9,
+                capture_latency: t.10,
+                playback_latency: t.11,
+                drift_ppm: t.12,
+                xruns: t.13,
+                resyncs: t.14,
+                underruns: t.15,
+            })
+            .collect(),
+    )
 }
 
 #[derive(Clone, Debug, Default)]
@@ -146,6 +206,10 @@ pub enum Cmd {
     Slave(String, bool),
     /// Load or unload an internal client.
     Internal(String, bool),
+    /// Bridge a sound card (a spec: device[/period[/nperiods]][@wake]), now if the server runs.
+    AddBridge(String),
+    /// Stop bridging one (by client name, spec or device).
+    RemoveBridge(String),
     ResetXruns,
     /// The server's figures (load, latency, xruns).
     Stats,
@@ -271,6 +335,18 @@ fn worker(rx: Receiver<Cmd>, out: Arc<Mutex<Vec<Reply>>>, waker: pbx_jack::Waker
             Cmd::Internal(name, on) => proxy(c, CONTROL)
                 .and_then(|p| p.call_method(if on { "LoadInternal" } else { "UnloadInternal" }, &(name.clone(),)).map_err(err))
                 .map(|_| Some(format!("{} the internal client {name}", if on { "Loaded" } else { "Unloaded" }))),
+            Cmd::AddBridge(spec) => proxy(c, CONTROL)
+                .and_then(|p| p.call::<_, _, String>("AddBridge", &(spec.clone(),)).map_err(err))
+                .and_then(|name| {
+                    push(Reply::Config(Box::new(load_config(c)?)));
+                    Ok(Some(if name.is_empty() { format!("{spec} bridged when the server starts") } else { format!("{name} bridged ({spec})") }))
+                }),
+            Cmd::RemoveBridge(what) => proxy(c, CONTROL)
+                .and_then(|p| p.call_method("RemoveBridge", &(what.clone(),)).map_err(err))
+                .and_then(|_| {
+                    push(Reply::Config(Box::new(load_config(c)?)));
+                    Ok(Some(format!("{what}: no longer bridged")))
+                }),
             Cmd::Start => control(c, "StartServer").map(|_| Some("JACK server started".to_string())),
             Cmd::Stop => control(c, "StopServer").map(|_| Some("JACK server stopped".to_string())),
             Cmd::Restart => control(c, "StopServer")
@@ -428,6 +504,7 @@ fn stats(c: &Connection) -> Option<Stats> {
         latency_ms: p.call("GetLatency", &()).unwrap_or(0.0),
         xruns: p.call("GetXruns", &()).unwrap_or(0),
         realtime: p.call("IsRealtime", &()).unwrap_or(false),
+        bridges: bridges(&p),
     })
 }
 

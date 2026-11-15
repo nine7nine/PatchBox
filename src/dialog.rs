@@ -359,8 +359,10 @@ impl Dialog {
         let title_h = (if page { 48.0 } else { 40.0 } * s).round();
         let foot_h = (52.0 * s).round();
         let pad = 14.0 * s;
+        // A page's rows use most of the canvas's width (up to a width still easy to read across).
+        let page_col = |w: f32| (w - 2.0 * pad).min(1400.0 * s);
         // The message, wrapped to the width the rows get.
-        let msg_w = if page { (820.0 * s).min(area.w - 2.0 * pad) } else { (560.0 * s).min(area.w - 40.0 * s) } - 2.0 * pad;
+        let msg_w = if page { page_col(area.w) } else { (560.0 * s).min(area.w - 40.0 * s) } - 2.0 * pad;
         let msg_lines = if self.message.is_empty() { Vec::new() } else { crate::ui::wrap(g, px, &self.message, msg_w) };
         let msg_h = if msg_lines.is_empty() { 0.0 } else { msg_lines.len() as f32 * (lh + 4.0 * s) + pad };
         self.content_h = self.rows.iter().map(|r| if matches!(r.control, Control::Header) { row_h * 1.2 } else { row_h }).sum::<f32>() + pad + msg_h;
@@ -379,15 +381,34 @@ impl Dialog {
             p
         };
         self.panel = panel;
-        // A page's rows sit in a readable column, not stretched across a wide canvas.
-        let col_w = if page { (820.0 * s).min(panel.w - 2.0 * pad) } else { panel.w };
+        let col_w = if page { page_col(panel.w) } else { panel.w };
         let col_x = if page { (panel.cx() - col_w / 2.0).round() } else { panel.x };
         let w = col_w;
+        // A page goes back to the graph with the arrow before its title (the toolbar button that
+        // opened it closes it too); a prompt has its × at the right.
+        let mut title_x = col_x + pad;
+        if page {
+            let b = (28.0 * s).round();
+            let back = Rect::new(col_x + pad * 0.5, (panel.y + (title_h - b) / 2.0).round(), b, b);
+            let on = back.contains(mouse[0], mouse[1]);
+            if on {
+                g.rrect(back, 4.0 * s, BUTTON_HOVER);
+            }
+            let (c, k) = ([back.cx() + 1.5 * s, back.cy()], 5.5 * s);
+            let col = if on { HILIGHT } else { TEXT };
+            g.line([c[0] + k * 0.5, c[1] - k], [c[0] - k * 0.5, c[1]], 1.8 * s, col);
+            g.line([c[0] - k * 0.5, c[1]], [c[0] + k * 0.5, c[1] + k], 1.8 * s, col);
+            self.hits.push((back, Hit::Close));
+            if on {
+                self.hover_help = Some(("Back to the graph".into(), mouse));
+            }
+            title_x = back.right() + 8.0 * s;
+        }
         // Title.
         let tpx = if page { px * 1.3 } else { px * 1.1 };
-        let tw = g.text(Face::Bold, tpx, col_x + pad, panel.y + (title_h - lh * tpx / px) / 2.0, TEXT_BRIGHT, &self.title);
+        let tw = g.text(Face::Bold, tpx, title_x, panel.y + (title_h - lh * tpx / px) / 2.0, TEXT_BRIGHT, &self.title);
         // Tabs: Luluda buttons after the title, the shown one lit.
-        let mut tx = col_x + pad + tw + 18.0 * s;
+        let mut tx = title_x + tw + 18.0 * s;
         let th = (lh + 12.0 * s).round();
         for (i, t) in self.tabs.iter().enumerate() {
             let w = g.measure(Face::Regular, px, t) + 24.0 * s;
@@ -401,13 +422,15 @@ impl Dialog {
             }
             tx += w + 6.0 * s;
         }
-        let close = Rect::new(if page { col_x + col_w - title_h } else { panel.right() - title_h }, panel.y, title_h, title_h);
-        let c = [close.cx(), close.cy()];
-        let k = 5.0 * s;
-        let ccol = if close.contains(mouse[0], mouse[1]) { HILIGHT } else { TEXT };
-        g.line([c[0] - k, c[1] - k], [c[0] + k, c[1] + k], 1.6 * s, ccol);
-        g.line([c[0] - k, c[1] + k], [c[0] + k, c[1] - k], 1.6 * s, ccol);
-        self.hits.push((close, Hit::Close));
+        if !page {
+            let close = Rect::new(panel.right() - title_h, panel.y, title_h, title_h);
+            let c = [close.cx(), close.cy()];
+            let k = 5.0 * s;
+            let ccol = if close.contains(mouse[0], mouse[1]) { HILIGHT } else { TEXT };
+            g.line([c[0] - k, c[1] - k], [c[0] + k, c[1] + k], 1.6 * s, ccol);
+            g.line([c[0] - k, c[1] + k], [c[0] + k, c[1] - k], 1.6 * s, ccol);
+            self.hits.push((close, Hit::Close));
+        }
         g.rect(Rect::new(panel.x, panel.y + title_h, panel.w, s.max(1.0)), PANEL_LINE);
 
         // Rows.
@@ -424,7 +447,9 @@ impl Dialog {
             }
             y += pad * 0.5;
         }
-        let label_w = w * 0.42;
+        // The labels' column: enough for the longest usual label, no more (a wide page's controls
+        // stay near their labels)
+        let label_w = if page { (w * 0.36).clamp(220.0 * s, 460.0 * s) } else { w * 0.42 };
         let ctl_x = col_x + pad + label_w;
         let ctl_w = col_x + col_w - pad - ctl_x;
         for i in 0..self.rows.len() {

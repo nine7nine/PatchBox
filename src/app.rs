@@ -187,7 +187,7 @@ pub struct App {
     global_canvas: Option<Layout>,
     /// PipeWire as the settings page shows it (from the pw-dump stream).
     pub pw_state: Option<crate::pw::PwState>,
-    /// The settings page's tab last shown: 0 JACK, 1 PipeWire.
+    /// The settings page's tab last shown: the JACK tabs (JACK_TABS), then PipeWire.
     settings_tab: usize,
     /// JACK server presets, and the server's settings as a preset would keep them.
     pub presets: crate::presets::Presets,
@@ -552,7 +552,8 @@ impl App {
         if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Server) && self.server.status.started {
             if now >= self.server_stats_at {
                 self.server.send(crate::server::Cmd::Stats);
-                self.server_stats_at = now + Duration::from_secs(2);
+                // the bridges' states change by the second (locking, a card unplugged)
+                self.server_stats_at = now + Duration::from_secs(if self.settings_tab == TAB_BRIDGES { 1 } else { 2 });
             }
             at(self.server_stats_at);
         }
@@ -1827,7 +1828,7 @@ impl App {
             Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire)) => self.dialog = None,
             Action::ServerSettings => {
                 // Without jackdbus the PipeWire tab is the one that matters (pure PipeWire).
-                let tab = if self.server.status.available { self.settings_tab } else { 1 };
+                let tab = if self.server.status.available { self.settings_tab } else { TAB_PIPEWIRE };
                 self.open_settings(tab);
             }
             Action::DialogSet(id, v) => self.dialog_event(crate::dialog::Event::Set(id, v)),
@@ -2060,7 +2061,6 @@ impl App {
         }
     }
 
-    /// The settings page, on tab 0 (JACK, jackdbus) or 1 (PipeWire).
     /// The ALSA capture and playback devices to reset when the device changes to `new`: those
     /// that name the old device's card would keep it (they override the device), so they
     /// follow the new one. Set to another card, they are a deliberate split and stay.
@@ -2080,13 +2080,19 @@ impl App {
             .collect()
     }
 
+    /// The settings page, on one of the JACK tabs (jackdbus) or PipeWire's.
     pub fn open_settings(&mut self, tab: usize) {
         use crate::dialog::{Dialog, Kind};
-        self.settings_tab = tab;
-        let mut d = if tab == 0 {
+        self.settings_tab = tab.min(TAB_PIPEWIRE);
+        let tab = self.settings_tab;
+        let mut d = if tab < TAB_PIPEWIRE {
             self.server.send(crate::server::Cmd::LoadConfig);
+            if self.server.status.started {
+                self.server.send(crate::server::Cmd::Stats);
+            }
             let mut d = Dialog::new(Kind::Server, "Settings");
-            d.note = "Driver and engine settings apply when the server (re)starts; jackdbus keeps them.".into();
+            d.note = tab_note(tab).into();
+            d.message = tab_message(tab).into();
             d.set_rows(self.server_rows());
             d.buttons = self.server_buttons();
             d
@@ -2103,7 +2109,7 @@ impl App {
             d.buttons = vec!["Close".into()];
             d
         };
-        d.tabs = vec!["JACK · jackdbus".into(), "PipeWire".into()];
+        d.tabs = JACK_TABS.iter().map(|t| t.to_string()).chain(["PipeWire".to_string()]).collect();
         d.tab = tab;
         self.dialog = Some(d);
     }
@@ -2397,9 +2403,21 @@ impl App {
         b
     }
 
+    /// The JACK tabs' rows (the settings page's tab `settings_tab`).
     pub fn server_rows(&self) -> Vec<crate::dialog::Row> {
+        match self.settings_tab {
+            TAB_MASTER => self.master_rows(),
+            TAB_BRIDGES => self.bridge_rows(),
+            TAB_SLAVES => self.slave_rows(),
+            TAB_NETJACK => self.netjack_rows(),
+            TAB_INTERNALS => self.internal_rows(),
+            _ => self.server_tab_rows(),
+        }
+    }
+
+    /// The Server tab: the server's state and figures, presets, the engine, jackdbus itself.
+    fn server_tab_rows(&self) -> Vec<crate::dialog::Row> {
         use crate::dialog::{Control, Row};
-        use crate::server::Value;
         let st = &self.server.status;
         let mut rows = vec![Row::header("Server")];
         let state = if !st.available {
@@ -2412,7 +2430,6 @@ impl App {
             "stopped".to_string()
         };
         rows.push(Row::info("Status", state));
-        let link = |id: &str, label: &str, text: &str| Row { id: id.into(), label: label.into(), help: String::new(), control: Control::Link(text.into()), modified: false };
         if st.started
             && let Some(sx) = &self.server.stats
         {
@@ -2435,23 +2452,20 @@ impl App {
                     });
                 }
             }
-            rows.push(link("act:reset-xruns", &format!("Server xruns: {}", sx.xruns), "reset them"));
-        }
-        if st.started {
-            rows.push(link("act:switch-master", "Switch master", "make the selected driver the running server's master, no restart"));
+            rows.push(link_row("act:reset-xruns", &format!("Server xruns: {}", sx.xruns), "reset them"));
         }
         // Presets: named configurations, applied in one click (also the sidebar's Preset menu).
         if st.available {
             rows.push(Row::header("Presets"));
             let now = self.jack_now.as_ref().and_then(|n| crate::presets::matching(&self.presets, n));
             if self.presets.is_empty() {
-                rows.push(Row::info("None yet", "set the server up below, then save it here"));
+                rows.push(Row::info("None yet", "set the server up, then save it here"));
             }
             for (name, s) in &self.presets {
                 rows.push(Row {
                     id: format!("preset:apply:{name}"),
                     label: if now == Some(name.as_str()) { format!("{name} (in place)") } else { name.clone() },
-                    help: format!("Put {name} in place: the server restarts with it when something differs, except the buffer size and the CPU wake-up latency, which change without a restart; parameters it doesn't set go back to their defaults"),
+                    help: format!("Put {name} in place: the server restarts with it when something differs, except the buffer size, the CPU wake-up latency and the bridges, which change without a restart; parameters it doesn't set go back to their defaults"),
                     control: Control::Link(crate::presets::summary(s)),
                     modified: false,
                 });
@@ -2479,69 +2493,126 @@ impl App {
             }
             return rows;
         };
-        let to_row = |p: &crate::server::Param| -> Row {
-            let id = p.path.join("/");
-            let control = match (&p.value, &p.constraint) {
-                (Value::Bool(b), _) => Control::Toggle(*b),
-                (v, Some(c)) if c.range && c.values.len() == 2 => {
-                    let n = |x: &Value| match x {
-                        Value::I32(i) => *i as i64,
-                        Value::U32(u) => *u as i64,
-                        _ => 0,
-                    };
-                    Control::Number { value: n(v), min: n(&c.values[0].0), max: n(&c.values[1].0) }
-                }
-                (v, Some(c)) => Control::Choice {
-                    value: v.show(),
-                    options: c
-                        .values
-                        .iter()
-                        .map(|(val, label)| {
-                            let shown = if c.fake || label == &val.show() || label.is_empty() {
-                                if label.is_empty() { val.show() } else { label.clone() }
-                            } else {
-                                format!("{} — {label}", val.show())
-                            };
-                            (val.show(), shown)
-                        })
-                        .collect(),
-                    editable: !c.strict,
-                },
-                (Value::U32(u), None) if p.name == "rate" => Control::Choice {
-                    value: u.to_string(),
-                    options: [22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000].iter().map(|r| (r.to_string(), format!("{r} Hz"))).collect(),
-                    editable: true,
-                },
-                (Value::U32(u), None) if p.name == "period" => Control::Choice {
-                    value: u.to_string(),
-                    options: [16, 32, 64, 128, 256, 512, 1024, 2048, 4096].iter().map(|r| (r.to_string(), format!("{r} frames"))).collect(),
-                    editable: true,
-                },
-                (Value::U32(u), None) => Control::Number { value: *u as i64, min: 0, max: u32::MAX as i64 },
-                (Value::I32(i), None) => Control::Number { value: *i as i64, min: i32::MIN as i64, max: i32::MAX as i64 },
-                (v, None) => Control::Text(v.show()),
-            };
-            let label = if p.short.is_empty() { p.name.clone() } else { p.short.clone() };
-            let about = if p.long.is_empty() { p.short.clone() } else { p.long.clone() };
-            let default = p.default.show();
-            let help = if default.is_empty() { about } else { format!("{about} (default: {default})") };
-            Row { id, label, help, control, modified: p.is_set }
-        };
-        rows.push(Row::header(format!("Master driver: {}", cfg.driver)));
+        rows.push(Row::header("Engine"));
+        // The driver is the Master tab's, the slaves and bridges have their own tabs
+        rows.extend(cfg.engine.iter().filter(|p| !matches!(p.name.as_str(), "driver" | "slave-drivers" | "bridges")).map(param_row));
+        rows.push(Row::header("Service"));
+        rows.push(link_row("act:exit", "Quit jackdbus", "stops the server; the session bus starts jackdbus again when asked"));
+        rows
+    }
+
+    /// The Master tab: the driver the server runs on, and its parameters.
+    fn master_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::{Control, Row};
+        let Some(cfg) = &self.server.config else { return vec![Row::info("Settings", "loading…")] };
+        let mut rows = vec![Row::header(format!("Master driver: {}", cfg.driver))];
         rows.push(Row {
             id: "engine/driver".into(),
             label: "Driver".into(),
-            help: "The backend jackd drives: alsa for sound cards, dummy for none, net/netone for network audio…".into(),
-            control: Control::Choice { value: cfg.driver.clone(), options: cfg.drivers.iter().map(|d| (d.clone(), d.clone())).collect(), editable: false },
+            help: "The backend the server runs on: alsa for a sound card, dummy for none, net/netone for a netjack master's audio…".into(),
+            control: Control::Choice { value: cfg.driver.clone(), options: master_drivers(cfg).map(|d| (d.clone(), d.clone())).collect(), editable: false },
             modified: false,
         });
-        rows.extend(cfg.driver_params.iter().map(to_row));
-        rows.push(Row::header("Engine"));
-        rows.extend(cfg.engine.iter().filter(|p| p.name != "driver" && p.name != "slave-drivers").map(to_row));
-        // Slave drivers: any other driver can run beside the master (alsarawmidi for MIDI,
-        // a second card…): added live while the server runs.
-        rows.push(Row::header("Slave drivers"));
-        for d in cfg.drivers.iter().filter(|d| **d != cfg.driver) {
+        if self.server.status.started {
+            rows.push(link_row("act:switch-master", "Switch master", "make the selected driver the running server's master, no restart"));
+        }
+        rows.extend(cfg.driver_params.iter().map(param_row));
+        rows
+    }
+
+    /// The Bridges tab: every sound card but the master's, each with a switch (jack2dbus-nspa).
+    fn bridge_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::bridges::{Spec, DEFAULT_NPERIODS, DEFAULT_PERIOD};
+        use crate::dialog::{Control, Row};
+        let Some(cfg) = &self.server.config else { return vec![Row::info("Settings", "loading…")] };
+        let mut rows = Vec::new();
+        let Some(param) = cfg.engine.iter().find(|p| p.name == "bridges") else {
+            rows.push(Row::header("Sound card bridges"));
+            rows.push(Row::info("Not available", "this jackdbus has no sound card bridges (jack2dbus-nspa has them)"));
+            return rows;
+        };
+        let specs = crate::bridges::specs(&param.value.show());
+        let started = self.server.status.started;
+        let live: &[crate::server::Bridge] = self.server.stats.as_ref().and_then(|s| s.bridges.as_deref()).unwrap_or(&[]);
+        let bridge_of = |spec: &str| live.iter().find(|b| b.spec == spec);
+        let master_card = (cfg.driver == "alsa")
+            .then(|| cfg.driver_params.iter().find(|p| p.name == "device").and_then(|p| alsa_card(&p.value.show())))
+            .flatten();
+        let mut shown = Vec::new();
+        rows.push(Row::header("Sound cards"));
+        for card in crate::bridges::cards() {
+            let label = if card.name.is_empty() { card.id.clone() } else { format!("{} — {}", card.id, card.name) };
+            if master_card.as_deref().is_some_and(|m| m == card.id.to_lowercase() || m == card.index.to_string()) {
+                rows.push(Row { id: String::new(), label, help: "The master driver's card: the server's clock".into(), control: Control::Info("the master (Master tab)".into()), modified: false });
+                continue;
+            }
+            let spec = specs.iter().find(|s| Spec::parse(s).is_card(&card));
+            rows.push(Row {
+                id: format!("bridge:card:{}", card.id),
+                label,
+                help: format!("Bridge {}: its ports join the graph as {}:capture_N / {}:playback_N, resampled to the master's clock (the desktop's sound server lets go of the card)", card.id, card.id, card.id),
+                control: Control::Toggle(spec.is_some()),
+                modified: false,
+            });
+            let Some(spec) = spec else { continue };
+            shown.push(spec.clone());
+            let sp = Spec::parse(spec);
+            rows.push(Row {
+                id: String::new(),
+                label: "      state".into(),
+                help: "Locking, then locked: channels capture/playback, the delay each way (as the ports report it) and the card's clock against the master's".into(),
+                control: Control::Info(crate::bridges::state(bridge_of(spec), started, self.stats.sample_rate)),
+                modified: false,
+            });
+            let period = sp.period.unwrap_or(DEFAULT_PERIOD);
+            rows.push(Row {
+                id: format!("bridge:period:{}", card.id),
+                label: "      card period".into(),
+                help: format!("The card's own period (default {DEFAULT_PERIOD} frames): shorter is less delay, longer is safer on a busy USB bus"),
+                control: Control::Choice { value: period.to_string(), options: [32u32, 64, 128, 256, 512, 1024].iter().map(|p| (p.to_string(), format!("{p} frames"))).collect(), editable: false },
+                modified: period != DEFAULT_PERIOD,
+            });
+            let nperiods = sp.nperiods.unwrap_or(DEFAULT_NPERIODS);
+            rows.push(Row {
+                id: format!("bridge:nperiods:{}", card.id),
+                label: "      card periods".into(),
+                help: format!("Periods in the card's buffer (default {DEFAULT_NPERIODS}); a USB card that only plays may want 3"),
+                control: Control::Number { value: nperiods as i64, min: 2, max: 8 },
+                modified: nperiods != DEFAULT_NPERIODS,
+            });
+            let wake = sp.wake.clone().unwrap_or_else(|| "auto".into());
+            rows.push(Row {
+                id: format!("bridge:wake:{}", card.id),
+                label: "      wake-ups".into(),
+                help: "How the card's thread wakes: auto (a timer on cards whose interrupts come late, as Intel HDA; the interrupt on USB), timer, or irq".into(),
+                control: Control::Choice { value: wake.clone(), options: ["auto", "timer", "irq"].iter().map(|w| (w.to_string(), w.to_string())).collect(), editable: false },
+                modified: wake != "auto",
+            });
+        }
+        // Listed but not among the cards: unplugged ones, other devices of a card
+        let others: Vec<&String> = specs.iter().filter(|s| !shown.contains(s)).collect();
+        if !others.is_empty() {
+            rows.push(Row::header("Also listed"));
+            for spec in others {
+                rows.push(Row {
+                    id: format!("bridge:spec:{spec}"),
+                    label: spec.clone(),
+                    help: "Bridged whenever its card is there; × removes it from the list".into(),
+                    control: Control::LinkRemove(crate::bridges::state(bridge_of(spec), started, self.stats.sample_rate)),
+                    modified: false,
+                });
+            }
+        }
+        rows
+    }
+
+    /// The Slaves & MIDI tab: drivers that run beside the master (alsarawmidi for MIDI, a card
+    /// in hardware sync with the master's).
+    fn slave_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::{Control, Row};
+        let Some(cfg) = &self.server.config else { return vec![Row::info("Settings", "loading…")] };
+        let mut rows = vec![Row::header("Slave drivers")];
+        for d in master_drivers(cfg).filter(|d| **d != cfg.driver) {
             rows.push(Row {
                 id: format!("slave:{d}"),
                 label: d.clone(),
@@ -2552,32 +2623,117 @@ impl App {
         }
         for (name, ps) in &cfg.slave_params {
             rows.push(Row::header(format!("Slave driver: {name}")));
-            rows.extend(ps.iter().map(to_row));
+            rows.extend(ps.iter().map(param_row));
         }
-        // Internal clients jackdbus can load into the server (netmanager, audioadapter…).
-        rows.push(Row::header("Internal clients"));
-        if cfg.internals.is_empty() {
-            rows.push(Row::info("None", "jackdbus offers no internal clients"));
+        rows
+    }
+
+    /// The Netjack tab: this server as a netjack master (netmanager), remote audio through a
+    /// netadapter, and this machine as a netjack slave (the net driver as its master).
+    fn netjack_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::Row;
+        let Some(cfg) = &self.server.config else { return vec![Row::info("Settings", "loading…")] };
+        let mut rows = Vec::new();
+        for (name, header) in [("netmanager", "This server as a netjack master"), ("netadapter", "A remote server's audio, resampled (netadapter)")] {
+            if cfg.internals.iter().any(|i| i == name) {
+                rows.push(Row::header(header));
+                rows.push(self.internal_row(name));
+                if let Some(ps) = cfg.internal_params.get(name) {
+                    rows.extend(ps.iter().map(param_row));
+                }
+            }
         }
-        for i in &cfg.internals {
-            rows.push(Row {
-                id: format!("internal:{i}"),
-                label: i.clone(),
-                help: "Load this internal client into the running server (jackdbus can't tell which are loaded; this shows what was loaded from here)".into(),
-                control: Control::Toggle(self.server.internals_loaded.contains(i)),
-                modified: false,
-            });
+        let nets: Vec<&String> = cfg.drivers.iter().filter(|d| *d == "net" || *d == "netone").collect();
+        if !nets.is_empty() {
+            rows.push(Row::header("This machine as a netjack slave"));
+            for d in nets {
+                if cfg.driver == *d {
+                    rows.push(Row::info(d.clone(), "the master driver now (its parameters on the Master tab)"));
+                } else {
+                    rows.push(crate::dialog::Row {
+                        id: format!("act:use-driver:{d}"),
+                        label: format!("Use {d} as the master driver"),
+                        help: "This machine's audio then comes from a netjack master on the network: at the next start, or at once with Switch master (Master tab)".into(),
+                        control: crate::dialog::Control::Link("audio from a netjack master".into()),
+                        modified: false,
+                    });
+                }
+            }
+        }
+        if rows.is_empty() {
+            rows.push(Row::info("Netjack", "this jackdbus offers no netjack drivers or internal clients"));
+        }
+        rows
+    }
+
+    /// The Internals tab: the other internal clients jackdbus can load into the server.
+    fn internal_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::Row;
+        let Some(cfg) = &self.server.config else { return vec![Row::info("Settings", "loading…")] };
+        let mut rows = vec![Row::header("Internal clients")];
+        let list: Vec<&String> = cfg.internals.iter().filter(|i| *i != "netmanager" && *i != "netadapter").collect();
+        if list.is_empty() {
+            rows.push(Row::info("None", "jackdbus offers no other internal clients"));
+        }
+        for i in &list {
+            rows.push(self.internal_row(i));
         }
         for (name, ps) in &cfg.internal_params {
-            if ps.is_empty() {
+            if ps.is_empty() || !list.contains(&name) {
                 continue;
             }
             rows.push(Row::header(format!("Internal client: {name}")));
-            rows.extend(ps.iter().map(to_row));
+            rows.extend(ps.iter().map(param_row));
         }
-        rows.push(Row::header("Service"));
-        rows.push(link("act:exit", "Quit jackdbus", "stops the server; the session bus starts jackdbus again when asked"));
         rows
+    }
+
+    fn internal_row(&self, name: &str) -> crate::dialog::Row {
+        let help = match name {
+            "audioadapter" => "A card on its own clock, resampled into the graph (the Bridges tab does this better: live, per card, hotplug)".to_string(),
+            "netmanager" => "Let netjack slaves on the network join this server".to_string(),
+            "netadapter" => "A netjack master's audio here, resampled (no network clock sync)".to_string(),
+            _ => "Load this internal client into the running server".to_string(),
+        };
+        crate::dialog::Row {
+            id: format!("internal:{name}"),
+            label: name.to_string(),
+            help: format!("{help} (jackdbus can't tell which are loaded; this shows what was loaded from here)"),
+            control: crate::dialog::Control::Toggle(self.server.internals_loaded.contains(name)),
+            modified: false,
+        }
+    }
+
+    /// A Bridges tab row: a card's switch (`bridge:card:ID`), one of its options
+    /// (`bridge:period|nperiods|wake:ID`, None: back to the default), a listed bridge removed
+    /// (`bridge:spec:SPEC`).
+    fn bridge_event(&mut self, id: &str, value: Option<&str>) {
+        use crate::bridges::Spec;
+        use crate::server::{Cmd, Value};
+        let list = self.server.config.as_ref().and_then(|c| c.engine.iter().find(|p| p.name == "bridges")).map(|p| p.value.show()).unwrap_or_default();
+        let specs = crate::bridges::specs(&list);
+        let Some((what, key)) = id.strip_prefix("bridge:").and_then(|r| r.split_once(':')) else { return };
+        match (what, value) {
+            ("card", Some(v)) => self.server.run(if v == "on" { Cmd::AddBridge(key.to_string()) } else { Cmd::RemoveBridge(key.to_string()) }),
+            ("spec", Some("remove")) => self.server.run(Cmd::RemoveBridge(key.to_string())),
+            ("period" | "nperiods" | "wake", v) => {
+                let Some(card) = crate::bridges::cards().into_iter().find(|c| c.id == key) else { return };
+                let Some(i) = specs.iter().position(|s| Spec::parse(s).is_card(&card)) else { return };
+                let mut sp = Spec::parse(&specs[i]);
+                match what {
+                    "period" => sp.period = v.and_then(|v| v.parse().ok()),
+                    "nperiods" => sp.nperiods = v.and_then(|v| v.parse().ok()),
+                    _ => sp.wake = v.map(str::to_string),
+                }
+                let mut next = specs.clone();
+                next[i] = sp.to_spec();
+                if next != specs {
+                    // jackdbus replaces the bridge (the card opened again with its new options)
+                    self.server.run(Cmd::Set(vec!["engine".into(), "bridges".into()], Value::Str(next.join(" "))));
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn dialog_event(&mut self, ev: crate::dialog::Event) {
@@ -2609,6 +2765,12 @@ impl App {
                         Err(e) => self.say(format!("Could not save the presets: {e}"), true),
                     }
                 }
+            }
+            (Kind::Server, Event::Set(id, v)) if id.starts_with("bridge:") => self.bridge_event(&id, Some(&v)),
+            (Kind::Server, Event::Reset(id)) if id.starts_with("bridge:") => self.bridge_event(&id, None),
+            (Kind::Server, Event::Set(id, _)) if id.starts_with("act:use-driver:") => {
+                let d = id.trim_start_matches("act:use-driver:").to_string();
+                self.server.run(crate::server::Cmd::Set(vec!["engine".into(), "driver".into()], crate::server::Value::Str(d)));
             }
             (Kind::Server, Event::Set(id, text)) if id.starts_with("slave:") || id.starts_with("internal:") || id.starts_with("act:") => {
                 use crate::server::Cmd;
@@ -2920,6 +3082,96 @@ pub fn kind_from(s: &str) -> PortKind {
         "VIDEO" => PortKind::Video,
         _ => PortKind::Audio,
     }
+}
+
+/// The settings page's tabs: the JACK server's (through jackdbus), then PipeWire's.
+const JACK_TABS: [&str; 6] = ["Server", "Master", "Bridges", "Slaves & MIDI", "Netjack", "Internals"];
+const TAB_MASTER: usize = 1;
+const TAB_BRIDGES: usize = 2;
+const TAB_SLAVES: usize = 3;
+const TAB_NETJACK: usize = 4;
+const TAB_INTERNALS: usize = 5;
+const TAB_PIPEWIRE: usize = 6;
+
+/// What each JACK tab's footer says.
+fn tab_note(tab: usize) -> &'static str {
+    match tab {
+        TAB_BRIDGES => "Bridges change at once while the server runs; jackdbus keeps the list.",
+        TAB_SLAVES => "Slave drivers are added and removed at once while the server runs.",
+        TAB_NETJACK | TAB_INTERNALS => "Internal clients load into the running server; their parameters apply when loaded.",
+        _ => "Driver and engine settings apply when the server (re)starts; jackdbus keeps them.",
+    }
+}
+
+/// What a JACK tab is about, above its rows.
+fn tab_message(tab: usize) -> &'static str {
+    match tab {
+        TAB_BRIDGES => "Sound cards on their own clocks, joined to the graph as the master's card is: each resampled to the master's clock, no word clock needed. A card switched on is bridged now and whenever the server starts; unplugged, its ports stay, silent, until it is back.",
+        TAB_SLAVES => "Drivers run in the master's own cycle: alsarawmidi for MIDI ports, or a second card clocked by the master's (word clock). A card on its own clock is a bridge.",
+        TAB_NETJACK => "Audio over the network: other machines joining this server (netmanager), or this machine joining another's (the net driver as master).",
+        _ => "",
+    }
+}
+
+/// The drivers that can be a master or a slave (the bridge driver is neither: the Bridges tab).
+fn master_drivers(cfg: &crate::server::Config) -> impl Iterator<Item = &String> {
+    cfg.drivers.iter().filter(|d| *d != "bridge")
+}
+
+fn link_row(id: &str, label: &str, text: &str) -> crate::dialog::Row {
+    crate::dialog::Row { id: id.into(), label: label.into(), help: String::new(), control: crate::dialog::Control::Link(text.into()), modified: false }
+}
+
+/// A jackdbus parameter as a row: a switch, a number, a list or a text, with its help.
+fn param_row(p: &crate::server::Param) -> crate::dialog::Row {
+    use crate::dialog::{Control, Row};
+    use crate::server::Value;
+    let id = p.path.join("/");
+    let control = match (&p.value, &p.constraint) {
+        (Value::Bool(b), _) => Control::Toggle(*b),
+        (v, Some(c)) if c.range && c.values.len() == 2 => {
+            let n = |x: &Value| match x {
+                Value::I32(i) => *i as i64,
+                Value::U32(u) => *u as i64,
+                _ => 0,
+            };
+            Control::Number { value: n(v), min: n(&c.values[0].0), max: n(&c.values[1].0) }
+        }
+        (v, Some(c)) => Control::Choice {
+            value: v.show(),
+            options: c
+                .values
+                .iter()
+                .map(|(val, label)| {
+                    let shown = if c.fake || label == &val.show() || label.is_empty() {
+                        if label.is_empty() { val.show() } else { label.clone() }
+                    } else {
+                        format!("{} — {label}", val.show())
+                    };
+                    (val.show(), shown)
+                })
+                .collect(),
+            editable: !c.strict,
+        },
+        (Value::U32(u), None) if p.name == "rate" => Control::Choice {
+            value: u.to_string(),
+            options: [22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000].iter().map(|r| (r.to_string(), format!("{r} Hz"))).collect(),
+            editable: true,
+        },
+        (Value::U32(u), None) if p.name == "period" => Control::Choice {
+            value: u.to_string(),
+            options: [16, 32, 64, 128, 256, 512, 1024, 2048, 4096].iter().map(|r| (r.to_string(), format!("{r} frames"))).collect(),
+            editable: true,
+        },
+        (Value::U32(u), None) => Control::Number { value: *u as i64, min: 0, max: u32::MAX as i64 },
+        (Value::I32(i), None) => Control::Number { value: *i as i64, min: i32::MIN as i64, max: i32::MAX as i64 },
+        (v, None) => Control::Text(v.show()),
+    };
+    let label = if p.short.is_empty() { p.name.clone() } else { p.short.clone() };
+    let about = if p.long.is_empty() { p.short.clone() } else { p.long.clone() };
+    let default = p.default.show();
+    let help = if default.is_empty() { about } else { format!("{about} (default: {default})") };
+    Row { id, label, help, control, modified: p.is_set }
 }
 
 /// The card an ALSA device name points at, lower case: "hw:PCH,0" and "plughw:CARD=PCH,DEV=0"

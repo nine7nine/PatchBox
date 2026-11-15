@@ -5,6 +5,7 @@
 //! notification thread wakes it with one SDL user event at a time (coalesced).
 
 mod app;
+mod bridges;
 mod canvas;
 mod csd;
 mod dialog;

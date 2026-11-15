@@ -33,6 +33,8 @@ cat > "$script" <<'EOF'
 wait 2500
 click bar:settings
 wait 2000
+click dlg:tab:Master
+wait 800
 click dlg:choice:Driver
 wait 500
 click menu:alsa
