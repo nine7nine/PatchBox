@@ -12,6 +12,15 @@ pub struct Card {
     /// ALSA's id ("U44", "PCH"): what bridges name the card by.
     pub id: String,
     pub name: String,
+    /// The kernel driver ("USB-Audio", "HDA-Intel", "Loopback": snd-aloop's virtual card).
+    pub driver: String,
+}
+
+impl Card {
+    /// A card with no hardware behind it (snd-aloop's).
+    pub fn is_virtual(&self) -> bool {
+        self.driver == "Loopback"
+    }
 }
 
 /// The sound cards there now.
@@ -27,8 +36,8 @@ fn parse_cards(text: &str) -> Vec<Card> {
             let index = index.parse().ok()?;
             let rest = rest.trim_start().strip_prefix('[')?;
             let (id, rest) = rest.split_once(']')?;
-            let name = rest.split_once(" - ").map(|(_, n)| n.trim()).unwrap_or("").to_string();
-            Some(Card { index, id: id.trim().to_string(), name })
+            let (driver, name) = rest.trim_start_matches(':').split_once(" - ").unwrap_or((rest, ""));
+            Some(Card { index, id: id.trim().to_string(), name: name.trim().to_string(), driver: driver.trim().to_string() })
         })
         .collect()
 }
@@ -195,8 +204,11 @@ mod tests {
         let t = " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xa1210000 irq 151\n 1 [U44            ]: USB-Audio - U-44\n                      ZOOM Corporation U-44 at usb-0000:00:14.0-2, high speed\n";
         let c = parse_cards(t);
         assert_eq!(c.len(), 2);
-        assert_eq!(c[1], Card { index: 1, id: "U44".into(), name: "U-44".into() });
+        assert_eq!(c[1], Card { index: 1, id: "U44".into(), name: "U-44".into(), driver: "USB-Audio".into() });
         assert_eq!(c[0].name, "HDA Intel PCH");
+        assert_eq!(c[0].driver, "HDA-Intel");
+        let l = parse_cards(" 2 [Loopback       ]: Loopback - Loopback\n                      Loopback 1\n");
+        assert!(l[0].is_virtual() && !c[1].is_virtual());
     }
 
     #[test]
@@ -216,7 +228,7 @@ mod tests {
 
     #[test]
     fn spec_cards() {
-        let card = Card { index: 1, id: "U44".into(), name: String::new() };
+        let card = Card { index: 1, id: "U44".into(), name: String::new(), driver: String::new() };
         for s in ["U44", "hw:U44", "hw:U44,0", "hw:u44,0/64", "plughw:CARD=U44,DEV=0", "hw:1"] {
             assert!(Spec::parse(s).is_card(&card), "{s}");
         }

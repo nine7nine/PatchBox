@@ -35,7 +35,7 @@ wait 1500
 click dlg:tab:Devices
 wait 1500
 shot HOME/.cache/patchbox-work/bridges-1-tab.png
-click dlg:Loopback+—+Loopback
+click dlg:Loopback+—+a+virtual+card+(snd-aloop)
 wait 9000
 shot HOME/.cache/patchbox-work/bridges-2-on.png
 click dlg:choice:++++++card+period
@@ -43,10 +43,10 @@ wait 600
 click menu:64+frames
 wait 9000
 shot HOME/.cache/patchbox-work/bridges-3-period.png
-click dlg:Loopback+—+Loopback
+click dlg:Loopback+—+a+virtual+card+(snd-aloop)
 wait 2500
 shot HOME/.cache/patchbox-work/bridges-3b-off-kept.png
-click dlg:Loopback+—+Loopback
+click dlg:Loopback+—+a+virtual+card+(snd-aloop)
 wait 9000
 shot HOME/.cache/patchbox-work/bridges-3c-on-again.png
 click dlg:tab:Server

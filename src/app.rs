@@ -2553,7 +2553,11 @@ impl App {
         let kept = crate::bridges::remembered();
         rows.push(Row::header("Sound cards, bridged (their own clocks)"));
         for card in crate::bridges::cards() {
-            let label = if card.name.is_empty() { card.id.clone() } else { format!("{} — {}", card.id, card.name) };
+            let label = match (card.name.is_empty(), card.is_virtual()) {
+                (_, true) => format!("{} — a virtual card (snd-aloop)", card.id),
+                (true, false) => card.id.clone(),
+                (false, false) => format!("{} — {}", card.id, card.name),
+            };
             if master_card.as_deref().is_some_and(|m| m == card.id.to_lowercase() || m == card.index.to_string()) {
                 rows.push(Row { id: String::new(), label, help: "The master driver's card: the server's clock".into(), control: Control::Info("the master (Master tab)".into()), modified: false });
                 continue;
@@ -2644,7 +2648,7 @@ impl App {
                 "firewire" => ("a FireWire card, clocked by the master's", "A FireWire (FFADO) device in the master's cycle, on the master's clock"),
                 "net" => ("netjack", "A netjack connection run in this cycle"),
                 "netone" => ("netjack (NetJack1)", "A NetJack1 connection run in this cycle"),
-                "loopback" => ("ports looped back", "Ports whose output comes back as input a cycle later"),
+                "loopback" => ("JACK's own looped-back ports, not a card", "JACK's loopback driver: ports whose output comes back as input a cycle later; no sound card (snd-aloop's virtual card is among the bridged cards above)"),
                 "proxy" => ("another server's ports", "Another JACK server's ports in this server"),
                 "dummy" => ("silent ports", "Ports with no hardware behind them"),
                 _ => ("", "Run this driver as a slave of the master driver"),
