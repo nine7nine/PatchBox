@@ -1,7 +1,7 @@
 #!/bin/sh
 # The toolbar's DMA LATENCY tile, end to end: a JackBus jackdbus (the build given by
 # JACK2_BUILD) on the harness's private bus. Its menu offers levels from this machine's idle
-# states (sysfs cpuidle); the first real one (the lowest latency that lets CPUs idle) is picked,
+# states (sysfs cpuidle); the first real one (its row reads "N µs · ≤ C…") is picked,
 # then off again. Only jackdbus's cpu-dma-latency is set: while the test server runs it holds
 # that PM QoS request (if it may open /dev/cpu_dma_latency), and releases it when set off.
 #
@@ -35,7 +35,7 @@ shot HOME/.cache/patchbox-work/cpuwake-1-off.png
 click bar:CpuWake
 wait 800
 shot HOME/.cache/patchbox-work/cpuwake-2-menu.png
-click menu:lowest+latency
+click menu:≤
 wait 2500
 shot HOME/.cache/patchbox-work/cpuwake-3-set.png
 move bar:Buffer

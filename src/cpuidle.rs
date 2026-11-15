@@ -75,17 +75,15 @@ pub fn short(name: &str) -> &str {
 /// then up to each state in turn (the limit: that state's latency), then no limit. The deepest
 /// state has no level of its own: no limit allows it.
 pub fn levels(states: &[State]) -> Vec<Level> {
-    let mut v = vec![Level { usec: 0, label: "0 µs · performance: no idle states, the CPUs poll (most power and heat)".into() }];
-    for (i, s) in states.iter().enumerate().take(states.len().saturating_sub(1)) {
+    let mut v = vec![Level { usec: 0, label: "0 µs · performance".into() }];
+    for s in states.iter().take(states.len().saturating_sub(1)) {
         let usec = i32::try_from(s.latency).unwrap_or(i32::MAX);
         if v.iter().any(|l| l.usec == usec) {
             continue;
         }
-        let lighter = if i == 0 { "lowest latency that lets CPUs idle" } else { "balanced" };
-        v.push(Level { usec, label: format!("{} µs · idle up to {} ({lighter})", s.latency, short(&s.name)) });
+        v.push(Level { usec, label: format!("{} µs · ≤ {}", s.latency, short(&s.name)) });
     }
-    let deepest = states.last().map(|s| format!(", up to {}", short(&s.name))).unwrap_or_default();
-    v.push(Level { usec: -1, label: format!("off · power saving: every idle state{deepest}") });
+    v.push(Level { usec: -1, label: "off · power saving".into() });
     v
 }
 
@@ -133,9 +131,10 @@ mod tests {
         let s = st(&[("C1_ACPI", 1), ("C2_ACPI", 253), ("C3_ACPI", 1048)]);
         let l = levels(&s);
         assert_eq!(l.iter().map(|l| l.usec).collect::<Vec<_>>(), [0, 1, 253, -1]);
-        assert_eq!(l[1].label, "1 µs · idle up to C1 (lowest latency that lets CPUs idle)");
-        assert_eq!(l[2].label, "253 µs · idle up to C2 (balanced)");
-        assert!(l[3].label.contains("up to C3"));
+        assert_eq!(l[0].label, "0 µs · performance");
+        assert_eq!(l[1].label, "1 µs · ≤ C1");
+        assert_eq!(l[2].label, "253 µs · ≤ C2");
+        assert_eq!(l[3].label, "off · power saving");
         // no cpuidle (a VM, idle=poll): only the two ends
         assert_eq!(levels(&[]).iter().map(|l| l.usec).collect::<Vec<_>>(), [0, -1]);
     }

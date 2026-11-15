@@ -106,11 +106,10 @@ impl UiState {
         let mut levels = crate::cpuidle::levels(&states);
         if !levels.iter().any(|l| l.usec == current) {
             let at = levels.iter().position(|l| l.usec < 0 || l.usec > current).unwrap_or(levels.len());
-            let label = format!("{current} µs · idle {} (set elsewhere)", crate::cpuidle::allows(&states, current));
+            let label = format!("{current} µs · {}", crate::cpuidle::allows(&states, current));
             levels.insert(at, crate::cpuidle::Level { usec: current, label });
         }
-        let mut items = vec![MenuItem::new("cpu-dma-latency while the server runs:", Action::SetCpuWake(current)).enabled(false)];
-        items.extend(levels.into_iter().map(|l| MenuItem::new(l.label, Action::SetCpuWake(l.usec)).checked(l.usec == current)));
+        let items = levels.into_iter().map(|l| MenuItem::new(l.label, Action::SetCpuWake(l.usec)).checked(l.usec == current)).collect();
         self.open_menu([under.x, under.bottom() + 2.0], items);
     }
 
@@ -600,8 +599,6 @@ impl App {
         let tile_w = |g: &Gfx, labels: &[&str]| labels.iter().map(|l| g.measure(Face::Regular, spx, l)).fold(0.0f32, f32::max).max(30.0 * s) + 18.0 * s;
         let bgap = 4.0 * s;
         let group_w = |n: usize, w: f32| n as f32 * w + (n as f32 - 1.0) * bgap + 8.0 * s;
-        // A readout tile: a value over a caption.
-        let read_w = |g: &Gfx, v: &str, c: &str| g.measure(Face::Regular, px, v).max(g.measure(Face::Regular, spx, c)) + 20.0 * s;
 
         // Widths first, so groups drop out right to left of priority when the window is narrow.
         let sess_tw = tile_w(g, &["New", "Open", "Save"]);
@@ -615,25 +612,27 @@ impl App {
         let views_w = group_w(2, view_tw);
         let ms = st.buffer_size as f32 * 1000.0 / st.sample_rate.max(1) as f32;
         let (rate_v, rate_c) = if connected {
-            (format!("{} Hz", st.sample_rate), if st.freewheel { "FREEWHEEL".to_string() } else { format!("{ms:.1} ms") })
+            (format!("{} kHz", f64::from(st.sample_rate) / 1000.0), if st.freewheel { "FREEWHEEL".to_string() } else { format!("{ms:.1} ms") })
         } else {
             ("offline".to_string(), "JACK".to_string())
         };
         let bs = if connected { format!("{} ▼", st.buffer_size) } else { "– ▼".into() };
         let xs = st.xruns.to_string();
         let dsp = if connected { format!("{:.1} %", st.dsp) } else { "–".into() };
-        let rate_w = read_w(g, &rate_v, &rate_c);
-        let buf_w = read_w(g, &bs, "BUFFER");
-        let xr_w = read_w(g, "0000", "XRUNS");
-        let dsp_w = read_w(g, "100.0 %", "DSP LOAD").max(84.0 * s);
+        // The JACK readouts are segments of one LCD: each only as wide as its text, plus a little.
+        let seg_w = |g: &Gfx, v: &str, c: &str| g.measure(Face::Regular, px, v).max(g.measure(Face::Regular, spx, c)) + 12.0 * s;
+        let rate_w = seg_w(g, &rate_v, &rate_c);
+        let buf_w = seg_w(g, &bs, "BUFFER");
+        let xr_w = seg_w(g, "0000", "XRUNS");
+        let dsp_w = seg_w(g, "100.0 %", "DSP").max(60.0 * s);
         // JackBus's CPU wake-up latency limit, left of the rate (dropped with it when narrow)
         let cpu = self.server.status.cpu_dma_latency;
         let cpu_v = match cpu {
             Some(n) if n >= 0 => format!("{n} µs ▼"),
             _ => "off ▼".to_string(),
         };
-        let cpu_w = if cpu.is_some() { read_w(g, &cpu_v, "DMA LATENCY").max(read_w(g, "1000 µs ▼", "")) + bgap } else { 0.0 };
-        let jack_core = buf_w + xr_w + dsp_w + 2.0 * bgap + 8.0 * s;
+        let cpu_w = if cpu.is_some() { seg_w(g, &cpu_v, "DMA") } else { 0.0 };
+        let jack_core = buf_w + xr_w + dsp_w + 6.0 * s;
         let gap = 8.0 * s;
         let avail = bar.w - 2.0 * pad;
         // What fits, dropped in this order as the window narrows: the session's buttons, the
@@ -646,7 +645,7 @@ impl App {
                 (s[1], views_w),
                 (s[5], trans_btns + if s[2] { 6.0 * self.scale + lcd_w } else { 0.0 }),
                 (s[4], kinds_w),
-                (true, jack_core + if s[3] { rate_w + bgap + cpu_w } else { 0.0 }),
+                (true, jack_core + if s[3] { rate_w + cpu_w } else { 0.0 }),
             ];
             let shown: Vec<f32> = parts.iter().filter(|(on, _)| *on).map(|(_, w)| *w).collect();
             shown.iter().sum::<f32>() + gap * (shown.len().saturating_sub(1)) as f32
@@ -659,7 +658,7 @@ impl App {
         }
         let [show_sess, show_views, show_lcd, show_rate, show_kinds, show_trans] = show;
         let trans_w = trans_btns + if show_lcd { 6.0 * s + lcd_w } else { 0.0 };
-        let jack_w = jack_core + if show_rate { rate_w + bgap + cpu_w } else { 0.0 };
+        let jack_w = jack_core + if show_rate { rate_w + cpu_w } else { 0.0 };
 
         let mut x = bar.x + pad;
         // Session.
@@ -761,61 +760,63 @@ impl App {
             let mr = Rect::new(bx + view_tw + bgap, by, view_tw, bh);
             self.tile(g, mr, "Matrix", Icon::Matrix, TINT_TEAL, None, matrices, !matrices, Action::SetStyle(true, vertical));
         }
-        // JACK, right-aligned: rate and latency, buffer size, xruns, DSP load.
+        // JACK, right-aligned, as one LCD: the DMA latency limit (JackBus), rate and latency,
+        // buffer size, xruns, DSP load, with thin dividers between them. The DMA latency, buffer
+        // and xruns segments are clickable: their text brightens under the pointer.
         {
             let r = Rect::new(bar.right() - pad - jack_w, gy, jack_w, gh);
             self.group(g, r);
-            let mut rx = r.right() - 4.0 * s;
-            let dr = Rect::new(rx - dsp_w, by, dsp_w, bh);
-            lcd_face(g, dr, s, None);
-            // The load as a level along the bottom: the face stays the LCD's, like the time's.
-            if connected {
-                let frac = (st.dsp / 100.0).clamp(0.0, 1.0);
-                let col = if st.dsp < 50.0 { OK } else if st.dsp < 80.0 { WARN } else { BAD };
-                let track = Rect::new(dr.x + 6.0 * s, dr.bottom() - 5.0 * s, dr.w - 12.0 * s, (2.0 * s).max(1.0));
+            lcd_face(g, Rect::new(r.x + 3.0 * s, by, r.w - 6.0 * s, bh), s, None);
+            let divider = |g: &mut Gfx, x: f32| g.rect(Rect::new(x.round(), by + 6.0 * s, s.max(1.0), bh - 12.0 * s), alpha(PANEL_LINE, 0.9));
+            // A level along a segment's bottom (the DSP load; xruns while there are any).
+            let level = |g: &mut Gfx, r: Rect, frac: f32, col: crate::gfx::Color| {
+                let track = Rect::new(r.x + 6.0 * s, r.bottom() - 5.0 * s, r.w - 12.0 * s, (2.0 * s).max(1.0));
                 g.rect(track, alpha(PANEL_LINE, 0.8));
                 if frac > 0.0 {
                     g.rect(Rect::new(track.x, track.y, (track.w * frac).max(s), track.h), alpha(col, 0.85));
                 }
+            };
+            let mut x = r.x + 3.0 * s;
+            if show_rate {
+                if cpu.is_some() {
+                    // dim while the server is stopped: no request is held then
+                    let cr = Rect::new(x, by, cpu_w, bh);
+                    let hov = self.hovered(&cr);
+                    let col = if !self.server.status.started { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT };
+                    readout(g, cr, s, &cpu_v, "DMA", col);
+                    self.add_hit(cr, Action::CpuWakeMenu(cr));
+                    x += cpu_w;
+                    divider(g, x);
+                }
+                let rr = Rect::new(x, by, rate_w, bh);
+                let col = if connected { if st.freewheel { WARN } else { LCD_TEXT } } else { BAD };
+                readout(g, rr, s, &rate_v, &rate_c, col);
+                x += rate_w;
+                divider(g, x);
             }
-            readout(g, dr, s, &dsp, "DSP LOAD", if connected { LCD_TEXT } else { TEXT_DIM });
-            rx -= dsp_w + bgap;
-            // Buffer and xruns are clickable but wear the same LCD face as their neighbours, edge
-            // included (no outline under the pointer; their text brightens). Xruns' edge is red
-            // while there are any.
-            let xr = Rect::new(rx - xr_w, by, xr_w, bh);
-            let hov = self.hovered(&xr);
-            let edge = (st.xruns > 0).then(|| alpha(BAD, 0.55));
-            lcd_face(g, xr, s, edge);
-            readout(g, xr, s, &xs, "XRUNS", if st.xruns > 0 { crate::gfx::mix(BAD, TEXT_BRIGHT, 0.2) } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
-            self.add_hit(xr, Action::ResetXruns);
-            rx -= xr_w + bgap;
-            let br = Rect::new(rx - buf_w, by, buf_w, bh);
+            let br = Rect::new(x, by, buf_w, bh);
             let hov = connected && self.hovered(&br);
-            lcd_face(g, br, s, None);
             readout(g, br, s, &bs, "BUFFER", if !connected { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
             if connected {
                 self.add_hit(br, Action::BufferMenu(br));
             }
-            rx -= buf_w + bgap;
-            if !show_rate {
-                return;
+            x += buf_w;
+            divider(g, x);
+            let xr = Rect::new(x, by, xr_w, bh);
+            let hov = self.hovered(&xr);
+            if st.xruns > 0 {
+                level(g, xr, 1.0, BAD);
             }
-            let rr = Rect::new(rx - rate_w, by, rate_w, bh);
-            lcd_face(g, rr, s, None);
-            let col = if connected { if st.freewheel { WARN } else { LCD_TEXT } } else { BAD };
-            readout(g, rr, s, &rate_v, &rate_c, col);
-            rx -= rate_w + bgap;
-            if cpu.is_some() {
-                // dim while the server is stopped: no request is held then
-                let w = cpu_w - bgap;
-                let cr = Rect::new(rx - w, by, w, bh);
-                let hov = self.hovered(&cr);
-                lcd_face(g, cr, s, None);
-                let col = if !self.server.status.started { TEXT_DIM } else if hov { TEXT_BRIGHT } else { LCD_TEXT };
-                readout(g, cr, s, &cpu_v, "DMA LATENCY", col);
-                self.add_hit(cr, Action::CpuWakeMenu(cr));
+            readout(g, xr, s, &xs, "XRUNS", if st.xruns > 0 { crate::gfx::mix(BAD, TEXT_BRIGHT, 0.2) } else if hov { TEXT_BRIGHT } else { LCD_TEXT });
+            self.add_hit(xr, Action::ResetXruns);
+            x += xr_w;
+            divider(g, x);
+            let dr = Rect::new(x, by, dsp_w, bh);
+            if connected {
+                let col = if st.dsp < 50.0 { OK } else if st.dsp < 80.0 { WARN } else { BAD };
+                level(g, dr, (st.dsp / 100.0).clamp(0.0, 1.0), col);
             }
+            readout(g, dr, s, &dsp, "DSP", if connected { LCD_TEXT } else { TEXT_DIM });
         }
     }
 
@@ -1080,12 +1081,8 @@ impl App {
             Action::BufferMenu(_) => "Buffer size (frames): click to change it".into(),
             Action::CpuWakeMenu(_) => {
                 let n = self.server.status.cpu_dma_latency.unwrap_or(-1);
-                let held = if self.server.status.started { "" } else { " (held while the server runs)" };
-                format!(
-                    "cpu-dma-latency: {}{held}. Idle CPUs stay out of states slower to wake than this: idle now {}. Lower wakes faster and costs power. Click to change it",
-                    if n < 0 { "off".to_string() } else { format!("{n} µs") },
-                    crate::cpuidle::allows(crate::cpuidle::cached(), n)
-                )
+                let v = if n < 0 { "off".to_string() } else { format!("{n} µs") };
+                format!("CPU DMA latency: {v} (idle {}). Lower: faster wake-ups, more power", crate::cpuidle::allows(crate::cpuidle::cached(), n))
             }
             Action::PresetMenu(_) => "Switch the JACK server to a saved preset".into(),
             Action::CenterNode(_) => "Find it in the graph; right-click for its menu".into(),
