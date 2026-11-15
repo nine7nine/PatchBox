@@ -83,7 +83,7 @@ patchbox-ctl connect SRC DST | disconnect SRC DST | graph | state | watch | quit
 
 ## JACK server
 
-PatchBox is built for jack2dbus-nspa: the server is jackdbus's. The sidebar's JACK · jackdbus
+PatchBox is built for JackBus: the server is jackdbus's. The sidebar's JACK · jackdbus
 section starts, stops and restarts it, and Settings (a toggle) edits the driver and engine
 parameters jackdbus offers, with their constraints and descriptions. A session can remember
 them (☰ session menu) and puts them back when it opens. Presets (qjackctl's) name a whole
@@ -91,7 +91,7 @@ configuration, the driver and every parameter set away from its default: the sid
 "Preset ▼" switches between them in one click (the server restarts only when something differs
 other than the buffer size and the CPU wake-up latency, which change on the running server)
 and the settings page saves and deletes them (`~/.config/patchbox/jack-presets.json`). With
-jack2dbus-nspa the ALSA device list follows sound cards plugged in or removed: jackdbus reads it
+JackBus the ALSA device list follows sound cards plugged in or removed: jackdbus reads it
 again and says so, and the page shows the new list. PatchBox never starts jackd itself; with
 a plain jackd the patchbay and transport work, server control doesn't. The transport is in the
 toolbar (Space: play/pause).
@@ -101,7 +101,7 @@ toolbar (Space: play/pause).
 Settings has a second tab, PipeWire, read from `pw-dump --monitor` and written with
 `pw-metadata` / `pw-cli`. It adapts to what runs:
 
-- **On top of JACK** (jack2dbus-nspa with module-jackdbus-detect, or module-jack-tunnel): the
+- **On top of JACK** (JackBus with module-jackdbus-detect, or module-jack-tunnel): the
   bridge drives PipeWire's graph, so its clock follows JACK's and is shown, not edited; the
   bridge's nodes and ports, and the file that configures the module (its arguments apply when
   PipeWire restarts).

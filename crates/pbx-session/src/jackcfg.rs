@@ -68,7 +68,7 @@ pub fn connect() -> Option<Connection> {
 }
 
 /// Before a client's process is stopped: take its JACK clients out of the graph
-/// (org.jackaudio.JackPatchbay.DetachProcess, jack2dbus-nspa), so that its departure costs the
+/// (org.jackaudio.JackPatchbay.DetachProcess, JackBus), so that its departure costs the
 /// graph nothing, whatever its libjack and even if it is killed in the middle of its process
 /// callback. Returns how many clients were taken out; None if jackdbus is not running (never
 /// started just for this), its server is stopped, or it has no such method (another JACK2): the
@@ -149,15 +149,15 @@ fn changed<'a>(a: &'a BTreeMap<String, String>, b: &'a BTreeMap<String, String>)
 
 /// Whether a running server takes these parameters as they are: the buffer size (its period,
 /// org.jackaudio.JackControl.SetBufferSize) with the ALSA and dummy drivers, jackdbus' own log
-/// settings (jack2dbus-nspa, read at each line), and the CPU wake-up latency it holds
-/// (jack2dbus-nspa: applied when set; checked, since an older jackdbus only stores it).
+/// settings (JackBus, read at each line), and the CPU wake-up latency it holds
+/// (JackBus: applied when set; checked, since an older jackdbus only stores it).
 /// Anything else needs a restart.
 fn live(driver: &str, changed: &BTreeSet<&str>) -> bool {
     !changed.is_empty()
         && changed.iter().all(|k| match *k {
             "driver/period" => matches!(driver, "alsa" | "dummy"),
             "engine/log-level" | "engine/log-max-size" | "engine/cpu-dma-latency" => true,
-            // jack2dbus-nspa applies its list of sound card bridges at once
+            // JackBus applies its list of sound card bridges at once
             "engine/bridges" => true,
             _ => false,
         })

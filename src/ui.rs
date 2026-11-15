@@ -831,7 +831,7 @@ impl App {
         } else {
             (BAD, "stopped".to_string())
         };
-        // The server is jackdbus's (jack2dbus-nspa): start, stop and settings go through it.
+        // The server is jackdbus's (JackBus): start, stop and settings go through it.
         let head = "JACK · jackdbus";
         let hw = g.measure(Face::Bold, px, head);
         g.text(Face::Bold, px, r.x + pad, y, TEXT_BRIGHT, head);

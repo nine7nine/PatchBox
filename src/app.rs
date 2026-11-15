@@ -2531,7 +2531,7 @@ impl App {
         rows
     }
 
-    /// The Bridges tab: every sound card but the master's, each with a switch (jack2dbus-nspa).
+    /// The Bridges tab: every sound card but the master's, each with a switch (JackBus).
     fn bridge_rows(&self) -> Vec<crate::dialog::Row> {
         use crate::bridges::{Spec, DEFAULT_NPERIODS, DEFAULT_PERIOD};
         use crate::dialog::{Control, Row};
@@ -2539,7 +2539,7 @@ impl App {
         let mut rows = Vec::new();
         let Some(param) = cfg.engine.iter().find(|p| p.name == "bridges") else {
             rows.push(Row::header("Sound card bridges"));
-            rows.push(Row::info("Not available", "this jackdbus has no sound card bridges (jack2dbus-nspa has them)"));
+            rows.push(Row::info("Not available", "this jackdbus has no sound card bridges (JackBus has them)"));
             return rows;
         };
         let specs = crate::bridges::specs(&param.value.show());

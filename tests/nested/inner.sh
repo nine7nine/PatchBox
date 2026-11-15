@@ -33,7 +33,7 @@ if [ -n "${PB_PIPEWIRE:-}" ]; then
   export PIPEWIRE_RUNTIME_DIR="$L/pw-run"
   rm -rf "$PIPEWIRE_RUNTIME_DIR"; mkdir -p "$PIPEWIRE_RUNTIME_DIR"
   # PB_PIPEWIRE=bridge: PipeWire on top of the JACK server above (module-jack-tunnel), as with
-  # jack2dbus-nspa + module-jackdbus-detect; anything else: PipeWire alone.
+  # JackBus + module-jackdbus-detect; anything else: PipeWire alone.
   conf=pw-test.conf; [ "$PB_PIPEWIRE" = bridge ] && conf=pw-bridge.conf
   env HOME="$L/pw-home" pipewire -c "$(dirname "$0")/$conf" > "$L/pipewire.log" 2>&1 &
   for i in $(seq 50); do [ -S "$PIPEWIRE_RUNTIME_DIR/pipewire-0" ] && break; sleep 0.1; done

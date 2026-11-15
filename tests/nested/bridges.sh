@@ -1,5 +1,5 @@
 #!/bin/sh
-# Sound card bridges from the settings page, end to end: a jack2dbus-nspa jackdbus (the build
+# Sound card bridges from the settings page, end to end: a JackBus jackdbus (the build
 # given by JACK2_BUILD) on the harness's private bus, and the Bridges tab. The snd-aloop card is
 # bridged with its switch, its card period changed, then the other tabs shown; nothing plays on
 # a real card and the desktop's bus and settings are never touched.

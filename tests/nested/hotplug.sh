@@ -1,6 +1,6 @@
 #!/bin/sh
 # Sound card hotplug, end to end: a jackdbus that sends Configure.ConstraintsChanged
-# (jack2dbus-nspa, a build given by JACK2_BUILD) and the window's JACK settings page. A real card
+# (JackBus, a build given by JACK2_BUILD) and the window's JACK settings page. A real card
 # is "unplugged" and plugged back inside the test namespace (PB_SND_FAKE / PB_SND_UNPLUG: its
 # /dev/snd links come and go); nothing touches the hardware or the desktop.
 #

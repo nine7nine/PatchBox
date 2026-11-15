@@ -6,14 +6,14 @@ PipeWire's clock and devices through PipeWire's own tools, and runs sessions of 
 programs. Rust, SDL3 (vendored, static, Wayland only) and a GL renderer of its own, with no
 toolkit.
 
-PatchBox is built alongside [jack2dbus-nspa](https://github.com/nine7nine/jack2dbus-nspa), a JACK2
+PatchBox is built alongside [JackBus](https://github.com/nine7nine/JackBus), a JACK2
 fork for real-time work, and uses what it adds: an application's clients leave the graph before
 the application is stopped, and the buffer size and CPU wake-up latency change without restarting
 the server. It doesn't need it:
 
 | The set-up | What PatchBox does there |
 |---|---|
-| jack2dbus-nspa's jackdbus, with or without PipeWire on top | everything: JACK's graph, server control, sessions; with PipeWire bridged, its graph (opened from its JACK client) and its settings tab too |
+| JackBus's jackdbus, with or without PipeWire on top | everything: JACK's graph, server control, sessions; with PipeWire bridged, its graph (opened from its JACK client) and its settings tab too |
 | PipeWire alone (pipewire-jack) | the patchbay (PipeWire's nodes through its JACK API), sessions, PipeWire's settings; no jackdbus page |
 | another jackdbus | the same, except that a client is stopped without leaving the graph first, and a setting that can't change live restarts the server |
 | a plain jackd | the patchbay, sessions and transport; no server control |
@@ -57,7 +57,7 @@ its own.
 
 - Linux with a Wayland compositor.
 - libjack: JACK2's, or PipeWire's (pipewire-jack). jackdbus for JACK server control, ideally
-  [jack2dbus-nspa](https://github.com/nine7nine/jack2dbus-nspa).
+  [JackBus](https://github.com/nine7nine/JackBus).
 - Optional: PipeWire and WirePlumber (PipeWire's graph and tab), git (session snapshots), xdg-utils.
 - To build: Rust (edition 2024), CMake, pkgconf, wayland, libxkbcommon, EGL (mesa), dbus; librsvg
   for the package's icons.

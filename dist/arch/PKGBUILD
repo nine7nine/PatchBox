@@ -1,6 +1,6 @@
 # PatchBox: a patchbay for JACK and PipeWire, jackdbus server control and an NSM session manager,
 # in Rust with a static, Wayland-only, patched SDL3 (docs/MANUAL.md).
-# Built for jack2dbus-nspa; the PipeWire graph and settings use PipeWire's tools when present.
+# Built for JackBus; the PipeWire graph and settings use PipeWire's tools when present.
 #
 # Builds the committed state of a local clone (this repository by default):
 #   cd dist/arch && makepkg
@@ -26,7 +26,7 @@ depends=(
 # SDL3 carries the Wayland protocol files it uses (wayland-scanner, from wayland, builds them).
 makedepends=(cargo cmake dbus git librsvg mesa pkgconf wayland libxkbcommon)
 optdepends=(
-  'jack2dbus-nspa: the JACK server PatchBox is built for (jackdbus control, settings, presets)'
+  'jackbus: the JACK server PatchBox is built for (jackdbus control, settings, presets, sound card bridges)'
   'pipewire: the PipeWire graph and settings tab (pw-dump, pw-link, pw-metadata, pw-cli)'
   'wireplumber: default devices and session manager settings on the PipeWire tab'
   'git: session snapshots'

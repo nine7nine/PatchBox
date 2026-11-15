@@ -1,6 +1,6 @@
 //! The JACK server itself, through jackdbus (org.jackaudio.service): start, stop, restart, and
 //! its settings (engine, driver and the driver's parameters) — qjackctl's job. Never by spawning
-//! jackd: the server it's made for is jackdbus (jack2dbus-nspa), often with PipeWire on top.
+//! jackd: the server it's made for is jackdbus (JackBus), often with PipeWire on top.
 //!
 //! D-Bus calls can take seconds (StartServer opens the device), so a worker thread owns the
 //! connection; the GUI sends it commands and gets replies through the main loop's waker.
@@ -121,12 +121,12 @@ pub struct Stats {
     pub latency_ms: f64,
     pub xruns: u32,
     pub realtime: bool,
-    /// The sound card bridges (jack2dbus-nspa's GetBridges); None: this jackdbus has none.
+    /// The sound card bridges (JackBus's GetBridges); None: this jackdbus has none.
     pub bridges: Option<Vec<Bridge>>,
 }
 
 /// A sound card bridge as jackdbus reports it: a card on its own clock, resampled into the
-/// graph (jack2dbus-nspa).
+/// graph (JackBus).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Bridge {
     /// As listed in the engine's "bridges": device[/period[/nperiods]][@wake].
@@ -192,7 +192,7 @@ pub struct Status {
 
 pub enum Cmd {
     Refresh,
-    /// jackdbus re-read a parameter's list of values (jack2dbus-nspa: a sound card came or went).
+    /// jackdbus re-read a parameter's list of values (JackBus: a sound card came or went).
     ConstraintsChanged,
     Start,
     Stop,
@@ -510,7 +510,7 @@ fn stats(c: &Connection) -> Option<Stats> {
 
 /// jackdbus's signals, so changes made elsewhere show at once: JackControl's ServerStarted /
 /// ServerStopped (jack_control, another program) trigger a refresh, and Configure's
-/// ConstraintsChanged (jack2dbus-nspa: a sound card came or went) re-reads the device lists.
+/// ConstraintsChanged (JackBus: a sound card came or went) re-reads the device lists.
 /// One thread, two match rules: the patchbay's frequent signals are not delivered here.
 fn watch_signals(tx: Sender<Cmd>) {
     let Ok(c) = Connection::session() else { return };

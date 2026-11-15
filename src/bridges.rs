@@ -1,4 +1,4 @@
-//! Sound card bridges (jack2dbus-nspa): a card on its own clock, joined to the JACK graph with
+//! Sound card bridges (JackBus): a card on its own clock, joined to the JACK graph with
 //! adaptive resampling. jackdbus keeps the list in its engine parameter "bridges" (specs as
 //! `device[/period[/nperiods]][@wake]`, separated by spaces) and reports each bridge's state
 //! (GetBridges); the settings page's Bridges tab shows every sound card with a switch.
