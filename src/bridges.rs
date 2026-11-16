@@ -23,9 +23,33 @@ impl Card {
     }
 }
 
-/// The sound cards there now.
+/// The sound cards there now that have audio: a card with MIDI only (a USB keyboard or
+/// controller) has no PCM device, nothing to bridge; its MIDI ports come from a MIDI slave
+/// driver.
 pub fn cards() -> Vec<Card> {
-    std::fs::read_to_string("/proc/asound/cards").map(|t| parse_cards(&t)).unwrap_or_default()
+    std::fs::read_to_string("/proc/asound/cards")
+        .map(|t| parse_cards(&t))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| card_has_pcm(c.index))
+        .collect()
+}
+
+/// Whether /proc/asound/cardN lists a PCM device (pcm0p, pcm3c, ...); a card it can't read
+/// is kept.
+fn card_has_pcm(index: u32) -> bool {
+    match std::fs::read_dir(format!("/proc/asound/card{index}")) {
+        Ok(dir) => has_pcm_entry(dir.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned())),
+        Err(_) => true,
+    }
+}
+
+fn has_pcm_entry(names: impl Iterator<Item = String>) -> bool {
+    names.into_iter().any(|n| {
+        n.strip_prefix("pcm")
+            .and_then(|r| r.strip_suffix('p').or_else(|| r.strip_suffix('c')))
+            .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 /// " 1 [U44            ]: USB-Audio - U-44" (and a second line, the long name)
@@ -209,6 +233,16 @@ mod tests {
         assert_eq!(c[0].driver, "HDA-Intel");
         let l = parse_cards(" 2 [Loopback       ]: Loopback - Loopback\n                      Loopback 1\n");
         assert!(l[0].is_virtual() && !c[1].is_virtual());
+    }
+
+    #[test]
+    fn midi_only_cards() {
+        let names = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter();
+        // a USB keyboard: MIDI only, nothing to bridge
+        assert!(!has_pcm_entry(names(&["id", "midi0", "usbbus", "usbid", "usbmixer"])));
+        assert!(has_pcm_entry(names(&["id", "pcm0c", "pcm0p", "pcm3p"])));
+        assert!(has_pcm_entry(names(&["id", "pcm1c"])));
+        assert!(!has_pcm_entry(names(&["pcmp", "pcm0x", "codec#0"])));
     }
 
     #[test]
