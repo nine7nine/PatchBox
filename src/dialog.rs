@@ -87,6 +87,9 @@ pub enum Kind {
     Views,
     /// PipeWire's settings (the settings page's second tab).
     PipeWire,
+    /// JackBus's shims: PipeWire, PulseAudio and ALSA applications on JackBus (the settings
+    /// page's last tab).
+    Shims,
     /// The event log and jackdbus's log.
     Log,
     /// The name for a JACK preset.
@@ -344,7 +347,7 @@ impl Dialog {
 
     /// Pages (settings, lists) fill the canvas; prompts are a card over it.
     pub fn is_page(&self) -> bool {
-        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Log | Kind::Rules | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views | Kind::Templates)
+        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Shims | Kind::Log | Kind::Rules | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views | Kind::Templates)
     }
 
     /// Draw over `area` (the canvas): a page fills it, a prompt is a card in its middle. The

@@ -1846,7 +1846,7 @@ impl App {
             Action::ServerStart => self.server.run(crate::server::Cmd::Start),
             Action::ServerStop => self.server.run(crate::server::Cmd::Stop),
             Action::ServerRestart => self.server.run(crate::server::Cmd::Restart),
-            Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire)) => self.dialog = None,
+            Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire | crate::dialog::Kind::Shims)) => self.dialog = None,
             Action::ServerSettings => {
                 // Without jackdbus the PipeWire tab is the one that matters (pure PipeWire).
                 let tab = if self.server.status.available { self.settings_tab } else { TAB_PIPEWIRE };
@@ -2105,9 +2105,15 @@ impl App {
     /// The settings page, on one of the JACK tabs (jackdbus) or PipeWire's.
     pub fn open_settings(&mut self, tab: usize) {
         use crate::dialog::{Dialog, Kind};
-        self.settings_tab = tab.min(TAB_PIPEWIRE);
+        self.settings_tab = tab.min(TAB_SHIMS);
         let tab = self.settings_tab;
-        let mut d = if tab < TAB_PIPEWIRE {
+        let mut d = if tab == TAB_SHIMS {
+            let mut d = Dialog::new(Kind::Shims, "Settings");
+            d.set_rows(self.shims_rows());
+            d.note = "PipeWire, PulseAudio and ALSA applications straight to JackBus.".into();
+            d.buttons = vec!["Close".into()];
+            d
+        } else if tab < TAB_PIPEWIRE {
             self.server.send(crate::server::Cmd::LoadConfig);
             if self.server.status.started {
                 self.server.send(crate::server::Cmd::Stats);
@@ -2131,9 +2137,84 @@ impl App {
             d.buttons = vec!["Close".into()];
             d
         };
-        d.tabs = JACK_TABS.iter().map(|t| t.to_string()).chain(["PipeWire".to_string()]).collect();
+        d.tabs = JACK_TABS.iter().map(|t| t.to_string()).chain(["PipeWire".to_string(), "Shims".to_string()]).collect();
         d.tab = tab;
         self.dialog = Some(d);
+    }
+
+    /// The Shims tab: JackBus's shims (PipeWire, PulseAudio and ALSA applications straight to
+    /// JackBus), their settings, and the per-user switches.
+    fn shims_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::{Control, Row};
+        let inst = crate::compat::installed();
+        let yes = |b: bool| if b { "installed" } else { "not installed" };
+        let row = |id: &str, label: &str, help: String, control: Control| Row { id: id.into(), label: label.into(), help, control, modified: false };
+        let mut rows = vec![Row::header("Shims")];
+        rows.push(row("", "PipeWire applications", "One application: jackbus-pw <program>. Its streams and filters become one JACK client, in the cycle".into(), Control::Info(format!("jackbus-pw · {}", yes(inst.pw)))));
+        rows.push(row("", "PulseAudio applications", "One application: jackbus-pa <program>; all of them: the switch below. Firefox, Chrome, mpv, games".into(), Control::Info(format!("jackbus-pa · {}", yes(inst.pa)))));
+        rows.push(row("", "ALSA applications", "One application: its device \"jackbus\" (aplay -D jackbus); all of them: the switch below".into(), Control::Info(format!("the \"jackbus\" device · {}", yes(inst.alsa)))));
+
+        rows.push(Row::header("Settings (all three shims)"));
+        let conf = crate::compat::conf_path().map(|p| p.display().to_string()).unwrap_or_default();
+        rows.push(row(
+            "compat:resample",
+            "Resample a stream at another rate",
+            format!("A stream at JackBus's rate goes as it is (the direct route); one at another rate is resampled, or refused when off ({conf})"),
+            Control::Toggle(crate::compat::get("resample")),
+        ));
+        rows.push(row(
+            "compat:autoconnect",
+            "Connect new streams",
+            format!("A new stream's ports go to the default device (system playback or capture); off: left unconnected for you or a session to route ({conf})"),
+            Control::Toggle(crate::compat::get("autoconnect")),
+        ));
+
+        rows.push(Row::header("For this user"));
+        let alsa = crate::compat::alsa_path().map(|p| p.display().to_string()).unwrap_or_default();
+        rows.push(row(
+            "compat:alsa-default",
+            "ALSA's default device is JackBus",
+            format!("Every ALSA application's \"default\" device: JackBus while it runs, PipeWire (or the card) while it doesn't; from the application's next start ({alsa})"),
+            Control::Toggle(crate::compat::alsa_default()),
+        ));
+        let env = crate::compat::pulse_env_path().map(|p| p.display().to_string()).unwrap_or_default();
+        rows.push(row(
+            "compat:pulse-login",
+            "PulseAudio applications on JackBus",
+            format!("From the next login: a PulseAudio application (browsers, players, Teams) started while JackBus runs uses JackBus, one started while it doesn't uses PipeWire ({env})"),
+            Control::Toggle(crate::compat::pulse_at_login()),
+        ));
+        rows
+    }
+
+    fn shims_set(&mut self, id: &str, v: &str) {
+        let on = v == "on";
+        let res = match id {
+            "compat:resample" => crate::compat::set("resample", on),
+            "compat:autoconnect" => crate::compat::set("autoconnect", on),
+            "compat:alsa-default" => crate::compat::set_alsa_default(on),
+            "compat:pulse-login" => crate::compat::set_pulse_at_login(on),
+            _ => return,
+        };
+        match res {
+            Ok(()) => {
+                let what = match id {
+                    "compat:pulse-login" if on => "PulseAudio applications: JackBus (while it runs) from the next login",
+                    "compat:pulse-login" => "PulseAudio applications: PipeWire again from the next login",
+                    "compat:alsa-default" if on => "ALSA's default device: JackBus (while it runs)",
+                    "compat:alsa-default" => "ALSA's default device: as the system has it",
+                    _ => "Saved",
+                };
+                self.say(what, false);
+            }
+            Err(e) => self.say(format!("{id}: {e}"), true),
+        }
+        if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Shims) {
+            let rows = self.shims_rows();
+            if let Some(d) = &mut self.dialog {
+                d.set_rows(rows);
+            }
+        }
     }
 
     fn refresh_pw_page(&mut self) {
@@ -2893,7 +2974,9 @@ impl App {
                     None => self.say(format!("\"{text}\" is not a valid value for {id}"), true),
                 }
             }
-            (Kind::Server | Kind::PipeWire, Event::Tab(t)) => self.open_settings(t),
+            (Kind::Server | Kind::PipeWire | Kind::Shims, Event::Tab(t)) => self.open_settings(t),
+            (Kind::Shims, Event::Set(id, v)) => self.shims_set(&id, &v),
+            (Kind::Shims, Event::Button(_)) => self.dialog = None,
             (Kind::Log, Event::Tab(t)) => self.open_log(t),
             (Kind::Rules, Event::Set(id, v)) => {
                 if let Some(k) = id.strip_prefix("rule:del:").and_then(|k| k.parse::<usize>().ok()) {
@@ -3170,6 +3253,7 @@ const TAB_DEVICES: usize = 2;
 const TAB_NETJACK: usize = 3;
 const TAB_INTERNALS: usize = 4;
 const TAB_PIPEWIRE: usize = 5;
+const TAB_SHIMS: usize = 6;
 
 /// What each JACK tab's footer says.
 fn tab_note(tab: usize) -> &'static str {
