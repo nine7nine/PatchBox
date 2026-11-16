@@ -1,5 +1,6 @@
 //! PipeWire's configuration files, for the settings page: where the JACK bridge is configured,
-//! and a drop-in of ours that keeps the clock defaults across restarts.
+//! a drop-in of ours that keeps the clock defaults across restarts, and one that turns the JACK
+//! bridge off (PipeWire leaves audio to JackBus).
 //!
 //! PipeWire reads `pipewire.conf` from the first of ~/.config/pipewire, /etc/pipewire and
 //! /usr/share/pipewire that has one, then the `pipewire.conf.d/*.conf` drop-ins of all three
@@ -48,6 +49,37 @@ pub fn bridge_conf(module: &str) -> Option<PathBuf> {
     }
     let main = dirs().into_iter().map(|d| d.join("pipewire.conf")).find(|p| p.is_file())?;
     std::fs::read_to_string(&main).is_ok_and(|t| loads(&t, module)).then_some(main)
+}
+
+/// Our drop-in that leaves audio to JackBus: PipeWire's JACK bridge, module-jackdbus-detect, is
+/// loaded only while `module.jackdbus-detect` is true (as PipeWire's own pipewire.conf has it);
+/// this sets it false. While JackBus runs, PipeWire then has no audio work (JackBus has the
+/// cards; the shims take PulseAudio and ALSA applications); while it doesn't, PipeWire plays on
+/// the cards as before. Applies when PipeWire restarts.
+pub fn no_bridge_dropin() -> Option<PathBuf> {
+    Some(user_dir()?.join("pipewire.conf.d").join("60-patchbox-no-jack-bridge.conf"))
+}
+
+pub fn no_bridge() -> bool {
+    no_bridge_dropin().is_some_and(|p| p.exists())
+}
+
+pub fn set_no_bridge(on: bool) -> Result<(), String> {
+    let p = no_bridge_dropin().ok_or("no configuration directory")?;
+    if !on {
+        return match std::fs::remove_file(&p) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    }
+    let body = "# Written by PatchBox (settings page, Shims tab): PipeWire leaves audio to JackBus.\n\
+                # Its JACK bridge (module-jackdbus-detect) is not loaded: while JackBus runs, PipeWire has\n\
+                # no audio work; while it doesn't, PipeWire plays on the sound cards as before.\n\
+                context.properties = {\n    module.jackdbus-detect = false\n}\n";
+    let dir = p.parent().ok_or("bad path")?;
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("conf.tmp");
+    std::fs::write(&tmp, body).and_then(|_| std::fs::rename(&tmp, &p)).map_err(|e| e.to_string())
 }
 
 /// Our drop-in for the clock defaults.

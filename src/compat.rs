@@ -1,7 +1,8 @@
 //! JackBus's shims: applications that speak PipeWire (jackbus-pw), PulseAudio (jackbus-pa) or
 //! ALSA (the "jackbus" PCM) going straight to JackBus. Their shared settings
 //! (~/.config/jackbus/compat.conf), and two per-user switches, ALSA's default device and
-//! PulseAudio applications: on JackBus while it runs, on PipeWire while it doesn't.
+//! PulseAudio applications ("pulse" in the same file): on JackBus while it runs, on PipeWire
+//! while it doesn't.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -43,10 +44,15 @@ fn file_value(text: &str, key: &str) -> Option<bool> {
     found
 }
 
-/// A setting as the layers see it: the user's file, else the system's, else on.
-pub fn get(key: &str) -> bool {
+/// A setting as the layers see it: the user's file, else the system's, else `def`.
+pub fn get_or(key: &str, def: bool) -> bool {
     let user = conf_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| file_value(&t, key));
-    user.or_else(|| std::fs::read_to_string(SYSTEM_CONF).ok().and_then(|t| file_value(&t, key))).unwrap_or(true)
+    user.or_else(|| std::fs::read_to_string(SYSTEM_CONF).ok().and_then(|t| file_value(&t, key))).unwrap_or(def)
+}
+
+/// resample and autoconnect: on unless set.
+pub fn get(key: &str) -> bool {
+    get_or(key, true)
 }
 
 /// Set a key in the user's file, keeping its other lines.
@@ -159,28 +165,38 @@ pub fn set_alsa_default(on: bool) -> io::Result<()> {
     write_file(&path, &text)
 }
 
-// PulseAudio applications: the session's environment (systemd's environment.d) puts
-// jackbus-pa's libpulse first for every application started after the next login. It sends
-// an application to JackBus when JackBus runs as it starts, else to PulseAudio's own libpulse
-// (PipeWire's server).
-const PULSE_ENV: &str = "LD_LIBRARY_PATH=/usr/lib/jackbus-pa${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\n";
+// PulseAudio applications: the jackbus package puts jackbus-pa's libpulse on the dynamic
+// linker's path (/etc/ld.so.conf.d), so every program loading libpulse gets it, whatever
+// library path its launcher gives it. It reads "pulse" from the settings file as each program
+// starts: off (the default), PulseAudio's own libpulse as before; on, JackBus while it runs and
+// PipeWire while it doesn't. The first version used an environment.d file instead (a library
+// path, which some launchers replace): it is removed.
 
 pub fn pulse_env_path() -> Option<PathBuf> {
     Some(config_home()?.join("environment.d/60-jackbus-pa.conf"))
 }
 
-pub fn pulse_at_login() -> bool {
-    pulse_env_path().is_some_and(|p| p.exists())
+pub fn pulse_on() -> bool {
+    get_or("pulse", false)
 }
 
-pub fn set_pulse_at_login(on: bool) -> io::Result<()> {
-    let path = pulse_env_path().ok_or_else(|| io::Error::other("no home directory"))?;
-    if on {
-        write_file(&path, &format!("# PatchBox: PulseAudio applications on JackBus (jackbus-pa)\n{PULSE_ENV}"))
-    } else {
-        match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
+pub fn set_pulse(on: bool) -> io::Result<()> {
+    set("pulse", on)?;
+    remove_old_pulse_env()
+}
+
+fn remove_old_pulse_env() -> io::Result<()> {
+    match pulse_env_path().map(std::fs::remove_file) {
+        Some(Err(e)) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// From the first version: a switch that was on (its environment.d file) is the setting now.
+pub fn migrate() {
+    if pulse_env_path().is_some_and(|p| p.exists()) {
+        if let Err(e) = set("pulse", true).and_then(|_| remove_old_pulse_env()) {
+            eprintln!("[patchbox] PulseAudio applications on JackBus: {e}");
         }
     }
 }

@@ -84,6 +84,8 @@ fn main() {
     let wake_type = unsafe { sdl3::sys::events::SDL_RegisterEvents(1) };
     WAKE_TYPE.store(wake_type, Ordering::Relaxed);
 
+    // the PulseAudio switch's first version (an environment.d file) becomes the setting
+    compat::migrate();
     let mut app = App::new(Arc::new(wake));
 
     let msaa = !matches!(std::env::var("PATCHBOX_MSAA").as_deref(), Ok("0"));

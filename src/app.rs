@@ -2177,30 +2177,58 @@ impl App {
             format!("Every ALSA application's \"default\" device: JackBus while it runs, PipeWire (or the card) while it doesn't; from the application's next start ({alsa})"),
             Control::Toggle(crate::compat::alsa_default()),
         ));
-        let env = crate::compat::pulse_env_path().map(|p| p.display().to_string()).unwrap_or_default();
         rows.push(row(
-            "compat:pulse-login",
+            "compat:pulse",
             "PulseAudio applications on JackBus",
-            format!("From the next login: a PulseAudio application (browsers, players, Teams) started while JackBus runs uses JackBus, one started while it doesn't uses PipeWire ({env})"),
-            Control::Toggle(crate::compat::pulse_at_login()),
+            format!("A PulseAudio application (browsers, players, Teams) started while JackBus runs uses JackBus, one started while it doesn't uses PipeWire; from each application's next start (pulse in {conf})"),
+            Control::Toggle(crate::compat::pulse_on()),
+        ));
+        let dropin = crate::pwconf::no_bridge_dropin().map(|p| p.display().to_string()).unwrap_or_default();
+        rows.push(row(
+            "compat:pw-no-bridge",
+            "PipeWire leaves audio to JackBus",
+            format!("PipeWire's JACK bridge off: while JackBus runs, PipeWire has no audio work (applications only PipeWire plays, as Flatpaks, are silent then); while it doesn't, PipeWire plays as before; video and screen sharing are untouched. Applies when PipeWire restarts ({dropin})"),
+            Control::Toggle(crate::pwconf::no_bridge()),
+        ));
+        rows.push(row(
+            "act:restart-pw",
+            "Restart PipeWire",
+            "To apply the switch above now (a screen share in progress stops)".into(),
+            Control::Link("restart".into()),
         ));
         rows
     }
 
     fn shims_set(&mut self, id: &str, v: &str) {
+        if id == "act:restart-pw" {
+            self.restart_pipewire();
+            return;
+        }
         let on = v == "on";
+        if id == "compat:pw-no-bridge" {
+            match crate::pwconf::set_no_bridge(on) {
+                Ok(()) if on => self.say("PipeWire leaves audio to JackBus once restarted", false),
+                Ok(()) => self.say("PipeWire's JACK bridge back once restarted", false),
+                Err(e) => self.say(format!("PipeWire's drop-in: {e}"), true),
+            }
+            let rows = self.shims_rows();
+            if let Some(d) = &mut self.dialog {
+                d.set_rows(rows);
+            }
+            return;
+        }
         let res = match id {
             "compat:resample" => crate::compat::set("resample", on),
             "compat:autoconnect" => crate::compat::set("autoconnect", on),
             "compat:alsa-default" => crate::compat::set_alsa_default(on),
-            "compat:pulse-login" => crate::compat::set_pulse_at_login(on),
+            "compat:pulse" => crate::compat::set_pulse(on),
             _ => return,
         };
         match res {
             Ok(()) => {
                 let what = match id {
-                    "compat:pulse-login" if on => "PulseAudio applications: JackBus (while it runs) from the next login",
-                    "compat:pulse-login" => "PulseAudio applications: PipeWire again from the next login",
+                    "compat:pulse" if on => "PulseAudio applications: JackBus (while it runs), from their next start",
+                    "compat:pulse" => "PulseAudio applications: PipeWire, from their next start",
                     "compat:alsa-default" if on => "ALSA's default device: JackBus (while it runs)",
                     "compat:alsa-default" => "ALSA's default device: as the system has it",
                     _ => "Saved",
@@ -2421,6 +2449,11 @@ impl App {
     }
 
     /// A change on the PipeWire tab.
+    fn restart_pipewire(&mut self) {
+        self.say("Restarting PipeWire…", false);
+        let _ = std::process::Command::new("systemctl").args(["--user", "restart", "pipewire.service"]).stdin(std::process::Stdio::null()).spawn();
+    }
+
     fn pw_set(&mut self, id: &str, v: &str) {
         let Some(st) = self.pw_state.clone() else { return };
         if let Some(path) = id.strip_prefix("act:open:") {
@@ -2428,8 +2461,7 @@ impl App {
             return;
         }
         if id == "act:restart-pw" {
-            self.say("Restarting PipeWire…", false);
-            let _ = std::process::Command::new("systemctl").args(["--user", "restart", "pipewire.service"]).stdin(std::process::Stdio::null()).spawn();
+            self.restart_pipewire();
             return;
         }
         if id == "act:keep-clock" {
