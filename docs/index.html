@@ -404,16 +404,17 @@ td code, li code, p code { font-size: 0.92em; }
     <li><a href="#s7">jackdbus: the server, mapped</a></li>
     <li><a href="#s8">JACK, PipeWire, or both</a></li>
     <li><a href="#s9">PipeWire's graph and settings</a></li>
-    <li><a href="#s10">patchboxd: the session daemon</a></li>
-    <li><a href="#s11">A session's life</a></li>
-    <li><a href="#s12">On disk</a></li>
-    <li><a href="#s13">Connection memory and rules</a></li>
-    <li><a href="#s14">The window</a></li>
-    <li><a href="#s15">Footprint, measured</a></li>
-    <li><a href="#s16">Validation</a></li>
-    <li><a href="#s17">Packaging and deployment</a></li>
-    <li><a href="#s18">Open items</a></li>
-    <li><a href="#s19">Source map</a></li>
+    <li><a href="#s10">Applications on JackBus: the Shims tab</a></li>
+    <li><a href="#s11">patchboxd: the session daemon</a></li>
+    <li><a href="#s12">A session's life</a></li>
+    <li><a href="#s13">On disk</a></li>
+    <li><a href="#s14">Connection memory and rules</a></li>
+    <li><a href="#s15">The window</a></li>
+    <li><a href="#s16">Footprint, measured</a></li>
+    <li><a href="#s17">Validation</a></li>
+    <li><a href="#s18">Packaging and deployment</a></li>
+    <li><a href="#s19">Open items</a></li>
+    <li><a href="#s20">Source map</a></li>
   </ol>
 </nav>
 <main class="content">
@@ -444,9 +445,9 @@ td code, li code, p code { font-size: 0.92em; }
     <li><b>1 / s</b><span>wake-ups at idle · 0 frames</span></li>
     <li><b>6.07 MB</b><span>patchbox, stripped · patchboxd 2.64 MB</span></li>
     <li><b>~20 MB</b><span>heap and stacks, running</span></li>
-    <li><b>46 + 6 + 12</b><span>isolated checks: sessions · JACK settings · the window (cameras, sound cards) · + 42 unit tests</span></li>
+    <li><b>46 + 6 + 15</b><span>isolated checks: sessions · JACK settings · the window (cameras, sound cards, the DMA readout) · + 48 unit tests</span></li>
     <li><b>ASan · TSan</b><span>no errors · daemon, CLI, clients, GUI threads</span></li>
-    <li><b>86</b><span>commits · 18.8k lines of Rust</span></li>
+    <li><b>95</b><span>commits · 19.5k lines of Rust</span></li>
   </ul>
 </header>
 
@@ -455,10 +456,11 @@ td code, li code, p code { font-size: 0.92em; }
       <tr><th style="border-left:3px solid transparent">Area</th><th>Separate programs</th><th>PatchBox</th></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Toolkit</td><td>a program per job (Qt or GTK): a server panel, a patchbay, a session manager, a PipeWire graph</td><td>one Rust program on a static, Wayland-only SDL3 (no D-Bus, no GLX), its own GL renderer, client-side decorations</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Patchbay</td><td>boxes and wires (Patchage, Catia, RaySession's), matrices (PatchMatrix), lists (qjackctl)</td><td>ports on blocks (left-to-right or top-to-bottom), connection matrices, AUDIO / MIDI / CV / OSC tabs, per-view layouts, port groups, a block per Ardour track, find, rubber band, undo</td></tr>
-      <tr><td style="border-left:3px solid #8b8ff5">Server control</td><td>a setup dialog (qjackctl, Cadence): a jackd command line or jackdbus</td><td>jackdbus only, mapped in full from its own parameter tree, in tabs: master and slave drivers, internals, engine, presets, live stats and signals; the buffer size and the CPU wake-up latency limit changed without a restart; with JackBus, other sound cards bridged with a switch</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Server control</td><td>a setup dialog (qjackctl, Cadence): a jackd command line or jackdbus</td><td>jackdbus only, mapped in full from its own parameter tree, in tabs: master and slave drivers, internals, engine, presets, live stats and signals; the buffer size and the CPU wake-up latency limit changed without a restart, both from the toolbar too, the limit in levels read from the CPU's own idle states; with JackBus, other sound cards bridged with a switch</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Sessions</td><td>nsmd and its front ends, RaySession's daemon · NSM · each with its own format</td><td>patchboxd (Rust, one poll loop) · NSM API 1.1 · its own TOML format · snapshots, templates, scripts, switch, per-session JACK settings, client templates and hooks; a client taken out of the graph before it is stopped</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Connections that persist</td><td>a patch client per session (jackpatch, RaySession's); global patchbay rules (qjackctl)</td><td>both: RaySession's restore rules per session, and global rules (with <code>*</code>) kept by patchboxd, session or not</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">PipeWire</td><td>separate tools (qpwgraph, Helvum, pavucontrol)</td><td>PipeWire's own graph opened from its JACK client, never mixed in; with pipewire-jack, PipeWire's nodes are the patchbay's; a settings tab that adapts to how PipeWire runs</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Desktop applications</td><td>PipeWire's PulseAudio server and pipewire-alsa, reaching JACK through PipeWire's bridge</td><td>with JackBus's shims, a Shims tab: PulseAudio, ALSA and PipeWire applications straight to JackBus, each a JACK client of its own; PipeWire's JACK bridge switched off, so PipeWire has no audio work while JackBus runs</td></tr>
       <tr style="background:rgba(251,191,36,0.05)"><td style="border-left:3px solid #fbbf24">JACK and NSM interfaces</td><td>libjack · jackdbus D-Bus · NSM 1.1 over OSC</td><td>the same: any JACK server (jackdbus, jackd, PipeWire's pipewire-jack), any NSM client, unchanged</td></tr>
       <tr style="background:rgba(251,191,36,0.05)"><td style="border-left:3px solid #fbbf24">Audio path</td><td>not involved</td><td>not involved: no process callback, no RT thread, no port of its own in the graph</td></tr>
     </table>
@@ -829,7 +831,8 @@ td code, li code, p code { font-size: 0.92em; }
       live in PipeWire's graph and reach JACK through the "PipeWire" client's Sink and Source. PatchBox shows that graph
       only when asked &mdash; opened from the PipeWire client &mdash; and talks to PipeWire through its own tools
       (<code>pw-dump</code>, <code>pw-link</code>, <code>pw-metadata</code>, <code>pw-cli</code>), never mixing the two
-      graphs (section 8).
+      graphs (section 8). With JackBus's shims the desktop's applications can skip PipeWire altogether: each becomes a
+      JACK client of its own, and PatchBox's part is the settings they read (section 10).
     </p>
   </div>
 </section>
@@ -1062,13 +1065,13 @@ td code, li code, p code { font-size: 0.92em; }
         <tr><td><code>jackdbus-signal</code></td><td>Waits for jackdbus's ServerStarted / ServerStopped and asks the worker to refresh (name cut to 15 bytes)</td><td>always</td></tr>
         <tr><td><code>patchboxd-link</code></td><td>Reads the daemon's JSON lines (replies, pushed state, log lines), queues them, wakes the main loop</td><td>while linked</td></tr>
         <tr><td><code>pw-dump</code></td><td>Reads <code>pw-dump --monitor</code>'s JSON stream into objects, a graph and the settings state</td><td>while a PipeWire view is open</td></tr>
-        <tr><td><code>async-io</code>, <code>blocking-1/2</code>, <code>zbus::Connectio</code> ×2</td><td>zbus's runtime under its blocking API (section 18: a candidate for removal)</td><td>always</td></tr>
+        <tr><td><code>async-io</code>, <code>blocking-1/2</code>, <code>zbus::Connectio</code> ×2</td><td>zbus's runtime under its blocking API (section 19: a candidate for removal)</td><td>always</td></tr>
         <tr><td><code>traceq0</code>, <code>disk$0</code>, <code>gdrv0</code>, <code>sh0</code></td><td>Mesa's driver threads (shader cache, compiler, trace queue)</td><td>always</td></tr>
         <tr><td><code>patchbox</code></td><td>One more unnamed helper thread</td><td>always</td></tr>
         <tr><td rowspan="3"><b>patchboxd</b></td><td><code>patchboxd</code></td><td>The poll loop: control socket, NSM UDP, signalfd, eventfd; operations; connection memory and rules</td><td>while needed</td></tr>
         <tr><td><code>patchboxd</code></td><td>libjack's notification thread: queue and <code>eventfd</code> write</td><td>while connected to JACK</td></tr>
         <tr><td>(a short-lived thread)</td><td>A session's JACK settings applied through jackdbus (in place, or stop, set, start: up to seconds), what was done over a channel</td><td>during an open</td></tr>
-        <tr class="compat"><td><b>children</b></td><td colspan="2">Session clients (with <code>NSM_URL</code>), <code>git</code> for snapshots, <code>sh</code> for hook scripts; <code>pw-dump</code>, <code>pw-link</code>, <code>pw-metadata</code>, <code>pw-cli</code> from the window</td><td>as started</td></tr>
+        <tr class="compat"><td><b>children</b></td><td colspan="2">Session clients (with <code>NSM_URL</code>), <code>git</code> for snapshots, <code>sh</code> for hook scripts; <code>pw-dump</code>, <code>pw-link</code>, <code>pw-metadata</code>, <code>pw-cli</code> and <code>systemctl --user restart pipewire.service</code> from the window</td><td>as started</td></tr>
       </tbody>
     </table>
   </div>
@@ -1895,10 +1898,12 @@ td code, li code, p code { font-size: 0.92em; }
   <p class="sub">
     PatchBox never spawns <code>jackd</code>. The server is jackdbus, and the settings page is built from jackdbus's
     own parameter tree, so every driver, every engine parameter and every internal client shows with its type, range,
-    default and description. What is PatchBox's own is the arrangement: tabs for the server (state, presets, engine,
-    jackdbus itself), the master driver, Devices (bridged sound cards and slave drivers), Netjack and the other internal
-    clients, then PipeWire's. Each tab says what it is about above its rows and what applies when in its footer. One
-    worker thread owns the D-Bus connection, because a <code>StartServer</code> that opens a device can take seconds.
+    default and description. What is PatchBox's own is the arrangement, what a typical user changes first in front:
+    Server (state, presets, engine, jackdbus itself), Master (the master driver), Devices (bridged sound cards and
+    slave drivers), then two tabs that aren't jackdbus's &mdash; Shims (section 10) and PipeWire (section 9) &mdash;
+    and last, the least used, Internals and Netjack (the internal clients). Each tab says what it is about above its
+    rows and what applies when in its footer. One worker thread owns the D-Bus connection, because a
+    <code>StartServer</code> that opens a device can take seconds.
   </p>
   <div class="figure" id="fig-dbus">
     <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 900" role="img" aria-label="The JACK settings tabs mapped onto jackdbus's D-Bus interface">
@@ -1910,7 +1915,7 @@ td code, li code, p code { font-size: 0.92em; }
         <path id="d-5" d="M380,356 C400,356 400,382 420,382"/>
         <path id="d-6" d="M380,460 C400,460 400,448 420,448"/>
         <path id="d-7" d="M380,553 C400,553 400,514 420,514"/>
-        <path id="d-8" d="M380,620 C400,620 400,580 420,580"/>
+        <path id="d-8" d="M380,656 C400,656 400,580 420,580"/>
         <path id="d-c" d="M780,118 C800,118 800,150 820,150"/>
         <path id="d-k" d="M780,448 C800,448 800,470 820,470"/>
         <path id="d-s" d="M856,556 L802,556 L802,709 L782,709"/>
@@ -1921,13 +1926,14 @@ td code, li code, p code { font-size: 0.92em; }
 
       <!-- column A: a mock of the page, a band per tab -->
       <rect x="20" y="52" width="360" height="676" rx="14" fill="#18181a" stroke="#343438"/>
-      <g style="font: 600 10px ui-monospace, Menlo, Consolas, monospace">
-        <rect x="32.0" y="62" width="45.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="36.5" y="77" fill="#8a8a8a">Server</text>
-        <rect x="80.0" y="62" width="45.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="84.5" y="77" fill="#8a8a8a">Master</text>
-        <rect x="128.0" y="62" width="51.0" height="22" rx="6" fill="#24412f" stroke="#60a474"/><text x="132.5" y="77" fill="#e1e1e1">Devices</text>
-        <rect x="182.0" y="62" width="51.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="186.5" y="77" fill="#8a8a8a">Netjack</text>
-        <rect x="236.0" y="62" width="63.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="240.5" y="77" fill="#8a8a8a">Internals</text>
-        <rect x="302.0" y="62" width="57.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="306.5" y="77" fill="#8a8a8a">PipeWire</text>
+      <g style="font: 600 9px ui-monospace, Menlo, Consolas, monospace">
+        <rect x="32.0" y="62" width="40.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="35.5" y="77" fill="#8a8a8a">Server</text>
+        <rect x="75.0" y="62" width="40.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="78.5" y="77" fill="#8a8a8a">Master</text>
+        <rect x="118.0" y="62" width="45.0" height="22" rx="6" fill="#24412f" stroke="#60a474"/><text x="121.5" y="77" fill="#e1e1e1">Devices</text>
+        <rect x="166.0" y="62" width="34.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="169.5" y="77" fill="#8a8a8a">Shims</text>
+        <rect x="203.0" y="62" width="51.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="206.5" y="77" fill="#8a8a8a">PipeWire</text>
+        <rect x="257.0" y="62" width="56.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="260.5" y="77" fill="#8a8a8a">Internals</text>
+        <rect x="316.0" y="62" width="45.0" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="319.5" y="77" fill="#8a8a8a">Netjack</text>
       </g>
       <line x1="32" y1="94" x2="368" y2="94" stroke="#343438"/>
       <g style="font: 600 12px ui-monospace, Menlo, Consolas, monospace">
@@ -1953,10 +1959,10 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="40" y="535" fill="#8a8a8a" style="font-size:10.5px">SLAVE DRIVERS (IN THE MASTER'S CYCLE)</text>
         <text x="40" y="557" fill="#afafaf">☐ alsarawmidi · MIDI ports</text>
         <line x1="36" y1="571" x2="364" y2="571" stroke="#343438"/>
-        <rect x="32" y="585" width="155" height="21" rx="6" fill="rgba(96,164,116,0.14)" stroke="#60a474" stroke-opacity="0.55"/><text x="39" y="600" fill="#60a474">NETJACK · INTERNALS</text><text x="195" y="600" fill="#6e6e6e" style="font-size:10.5px"></text>
-        <text x="40" y="624" fill="#afafaf">☐ netmanager   ☐ audioadapter</text>
-        <line x1="36" y1="638" x2="364" y2="638" stroke="#343438"/>
-        <text x="40" y="662" fill="#6e6e6e" style="font-size:10.5px">PIPEWIRE: its own tab (section 9)</text>
+        <text x="40" y="592" fill="#6e6e6e" style="font-size:10.5px">SHIMS · PIPEWIRE: not jackdbus's (sections 10, 9)</text>
+        <line x1="36" y1="606" x2="364" y2="606" stroke="#343438"/>
+        <rect x="32" y="618" width="155" height="21" rx="6" fill="rgba(96,164,116,0.14)" stroke="#60a474" stroke-opacity="0.55"/><text x="39" y="633" fill="#60a474">INTERNALS · NETJACK</text>
+        <text x="40" y="660" fill="#afafaf">☐ audioadapter   ☐ netmanager</text>
       </g>
       <text x="36" y="746" class="t-tiny">AMBER: SET, NOT DEFAULT · ✦ JACKBUS'S</text>
 
@@ -2007,7 +2013,7 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="434" y="659" class="t-sub">→ StartServer · StopServer · Exit</text>
       </g>
       <rect x="420" y="690" width="360" height="38" rx="10" fill="rgba(45,212,191,0.08)" stroke="#2dd4bf" stroke-dasharray="4 3"/>
-      <text x="600" y="714" text-anchor="middle" class="t-sub">after every command: IsStarted → Reply::Status</text>
+      <text x="600" y="714" text-anchor="middle" class="t-sub" style="font-size:11.5px">after every command: IsStarted · cpu-dma-latency ✦ → Status</text>
 
       <!-- column C: jackdbus -->
       <rect x="820" y="52" width="360" height="676" rx="16" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.6"/>
@@ -2104,7 +2110,8 @@ td code, li code, p code { font-size: 0.92em; }
       <b>Live, where jackdbus allows it.</b> The master driver can be switched on a running server
       (<code>SwitchMaster</code>, no restart), and the buffer size changes live: through libjack from this page,
       through <code>SetBufferSize</code> for presets and sessions. With JackBus, jackdbus's log settings, the
-      CPU wake-up latency limit and the sound card bridges take effect on the running server too. Slave drivers are the exception: jackdbus takes
+      CPU wake-up latency limit (the Server tab's <code>cpu-dma-latency</code> row and the toolbar's DMA readout, below)
+      and the sound card bridges take effect on the running server too. Slave drivers are the exception: jackdbus takes
       them only while stopped, so PatchBox stops, changes and starts again and says so. Internal clients load and unload
       live; jackdbus can't say which are loaded, so the page remembers the ones it loaded.
     </p>
@@ -2217,8 +2224,12 @@ td code, li code, p code { font-size: 0.92em; }
       <span class="l-ntf">replies, read back</span>
     </div>
     <p class="caption">
-      <b>Which cards.</b> Every card in <code>/proc/asound/cards</code>: the master's, marked as the master, and every
-      other with a switch; the list follows cards plugged in or removed (jackdbus's <code>ConstraintsChanged</code>).
+      <b>Which cards.</b> Every card in <code>/proc/asound/cards</code> that has audio: the master's, marked as the
+      master, and every other with a switch; the list follows cards plugged in or removed (jackdbus's
+      <code>ConstraintsChanged</code>). A card with MIDI only &mdash; a USB keyboard or controller, whose
+      <code>/proc/asound/card<i>N</i></code> lists <code>midi0</code> and no <code>pcm<i>N</i>p</code> or
+      <code>pcm<i>N</i>c</code> &mdash; has nothing to bridge and isn't listed; its MIDI ports come from a MIDI slave
+      driver, below. A card whose entry can't be read is listed.
       A card reads by its id and name (<code>U44 — U-44</code>); snd-aloop's reads "a virtual card". A listed bridge whose card isn't there
       stays, waiting for it, with a × to drop it. A jackdbus without bridges says so on the tab.
     </p>
@@ -2365,11 +2376,157 @@ td code, li code, p code { font-size: 0.92em; }
       <p class="role">"Remember JACK settings": restored before the clients start</p>
       <ul>
         <li>Saved in <code>session.toml</code> as <code>[jack] remember, driver, params</code>, read at each save.</li>
-        <li>On open, the <code>Jack</code> step runs <code>apply</code> on a short-lived thread (30 s deadline): equal to what runs, nothing happens (a stopped server is started); if only the buffer size, the log settings or the CPU wake-up latency limit differ, they change on the running server; otherwise stop, set the driver, set every parameter, reset the ones the session doesn't set, start.</li>
+        <li>On open, the <code>Jack</code> step runs <code>apply</code> on a short-lived thread (30 s deadline): equal to what runs, nothing happens (a stopped server is started); if only the buffer size, the log settings, the CPU wake-up latency limit or the sound card bridges differ, they change on the running server; otherwise stop, set the driver, set every parameter, reset the ones the session doesn't set, start.</li>
         <li>RaySession does this with shell scripts around <code>jack_control</code>; here it is the Configure interface directly.</li>
       </ul>
       <div class="chips"><span class="chip">Step::Jack</span><span class="chip">SetJackMemory</span><span class="chip">Applied::Live</span><span class="chip">30 s</span></div>
     </div>
+  </div>
+
+  <h3 class="minor">The toolbar's DMA readout: the limit in the CPU's own levels</h3>
+  <p>
+    The same limit has a place on the toolbar, the first readout of the JACK LCD (section 15), shown when jackdbus has
+    the <code>cpu-dma-latency</code> engine parameter. A number of microseconds means little on its own: what a limit
+    does depends on the idle states of the CPU it runs on. So the readout's menu doesn't offer round numbers; it reads
+    the CPU's idle states and offers the limits that each allow one more of them, from performance to power saving.
+  </p>
+  <div class="figure" id="fig-cpuwake">
+    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 400" role="img" aria-label="The DMA readout: the CPU's idle states read from sysfs, turned into levels, set in jackdbus and held by JackBus">
+      <defs>
+        <marker id="mk-cw-g" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#8a90b8"/></marker>
+        <marker id="mk-cw-v" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#8b8ff5"/></marker>
+        <marker id="mk-cw-d" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#4ade80"/></marker>
+        <marker id="mk-cw-o" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#fb923c"/></marker>
+      </defs>
+      <text x="20" y="38" class="t-band">SYSFS · CPUIDLE</text>
+      <text x="310" y="38" class="t-band">THE LEVELS</text>
+      <text x="600" y="38" class="t-band">THE TOOLBAR</text>
+      <text x="910" y="38" class="t-band">JACKDBUS · JACKBUS</text>
+
+      <!-- the kernel's idle states -->
+      <g>
+        <title>Every CPU's idle states, as the kernel publishes them (intel_idle, acpi_idle, AMD's): read when the menu opens, never written</title>
+        <rect x="20" y="56" width="250" height="270" rx="14" fill="url(#g-box)" stroke="#4ade80" stroke-width="1.4"/>
+        <text x="36" y="82" class="t-title">cpuidle</text>
+        <text x="104" y="82" class="t-sub">the kernel's, per CPU</text>
+        <text x="36" y="104" class="t-mono" style="font-size:10.5px">cpu&lt;N&gt;/cpuidle/state&lt;K&gt;/</text>
+        <text x="36" y="122" class="t-sub">name · latency (µs) · disable</text>
+        <text x="36" y="150" class="t-tiny">STATE</text>
+        <text x="180" y="150" text-anchor="end" class="t-tiny">P-CORES</text>
+        <text x="252" y="150" text-anchor="end" class="t-tiny">E-CORES</text>
+        <g class="t-mono" style="font-size:11px">
+          <text x="36" y="172" style="fill:#7f86b8">POLL</text><text x="180" y="172" text-anchor="end" style="fill:#7f86b8">0</text><text x="252" y="172" text-anchor="end" style="fill:#7f86b8">0</text>
+          <text x="36" y="192">C1</text><text x="180" y="192" text-anchor="end">1</text><text x="252" y="192" text-anchor="end">1</text>
+          <text x="36" y="212">C1E</text><text x="180" y="212" text-anchor="end">10</text><text x="252" y="212" text-anchor="end">10</text>
+          <text x="36" y="232">C6</text><text x="180" y="232" text-anchor="end">133</text><text x="252" y="232" text-anchor="end" style="fill:#fbbf24">170</text>
+          <text x="36" y="252">C10</text><text x="180" y="252" text-anchor="end">890</text><text x="252" y="252" text-anchor="end">890</text>
+        </g>
+        <text x="36" y="286" class="t-tiny">A HYBRID CPU: ITS CORES DIFFER</text>
+        <text x="36" y="306" class="t-tiny">READ, NEVER WRITTEN</text>
+      </g>
+
+      <!-- cpuidle.rs -->
+      <g>
+        <title>cpuidle.rs: one state per name at the largest latency any CPU gives, POLL and states disabled everywhere left out, then a level per state but the deepest</title>
+        <rect x="310" y="56" width="250" height="270" rx="14" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.4"/>
+        <text x="326" y="82" class="t-title">collate · levels</text>
+        <text x="326" y="106" class="t-sub">a state per name, at the largest</text>
+        <text x="326" y="124" class="t-sub">latency any CPU gives for it;</text>
+        <text x="326" y="142" class="t-sub">POLL, and states disabled on</text>
+        <text x="326" y="160" class="t-sub">every CPU, left out</text>
+        <text x="326" y="188" class="t-mono" style="font-size:11px">C1 1 · C1E 10 · C6 170 · C10 890</text>
+        <text x="326" y="216" class="t-sub">a level per state but the deepest:</text>
+        <text x="326" y="234" class="t-sub">its latency, the smallest limit</text>
+        <text x="326" y="252" class="t-sub">that still allows it</text>
+        <text x="326" y="282" class="t-sub">no cpuidle (a VM, idle=poll):</text>
+        <text x="326" y="300" class="t-sub">only 0 µs and off</text>
+      </g>
+
+      <!-- the toolbar -->
+      <g>
+        <title>The DMA readout and its menu: the value in µs (off when none), dim while the server is stopped; the menu's rows are a value and a word or two</title>
+        <rect x="600" y="56" width="270" height="270" rx="14" fill="#131416" stroke="#343438"/>
+        <rect x="612" y="68" width="246" height="46" rx="6" fill="#08090a" stroke="#343438"/>
+        <g style="font: 600 12px ui-monospace, Menlo, Consolas, monospace" text-anchor="middle">
+          <text x="648" y="88" fill="#e1e1e1">1 µs ▼</text><text x="648" y="105" style="font-size:9.5px" fill="#60a474">DMA</text>
+          <text x="712" y="88" fill="#70ccda">48 kHz</text><text x="712" y="105" style="font-size:9.5px" fill="#60a474">1.3 ms</text>
+          <text x="772" y="88" fill="#70ccda">64 ▼</text><text x="772" y="105" style="font-size:9.5px" fill="#60a474">BUF</text>
+          <text x="827" y="88" fill="#70ccda">0</text><text x="827" y="105" style="font-size:9.5px" fill="#60a474">XRUNS</text>
+        </g>
+        <rect x="616" y="120" width="176" height="112" rx="6" fill="#1c1d20" stroke="#343438"/>
+        <rect x="619" y="147" width="170" height="19" rx="4" fill="#24412f"/>
+        <g style="font: 600 11px ui-monospace, Menlo, Consolas, monospace">
+          <text x="640" y="140" fill="#afafaf">0 µs · performance</text>
+          <text x="626" y="160" fill="#97ff47">✓</text><text x="640" y="160" fill="#e1e1e1">1 µs · ≤ C1</text>
+          <text x="640" y="180" fill="#afafaf">10 µs · ≤ C1E</text>
+          <text x="640" y="200" fill="#afafaf">170 µs · ≤ C6</text>
+          <text x="640" y="220" fill="#afafaf">off · power saving</text>
+        </g>
+        <rect x="616" y="244" width="246" height="42" rx="6" fill="#232427" stroke="#3d4683"/>
+        <g style="font: 500 10.5px ui-monospace, Menlo, Consolas, monospace" fill="#cfd3ff">
+          <text x="626" y="261">CPU DMA latency: 1 µs (idle ≤ C1).</text>
+          <text x="626" y="278">Lower: faster wake-ups, more power</text>
+        </g>
+        <text x="616" y="312" class="t-tiny">THE TOOLTIP · DIM WHILE STOPPED</text>
+      </g>
+
+      <!-- jackdbus, JackBus -->
+      <g>
+        <title>jackdbus's engine parameter: a level is set, off resets it; JackBus applies it to the running server at once</title>
+        <rect x="910" y="56" width="270" height="270" rx="14" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.6"/>
+        <text x="926" y="82" class="t-title">jackdbus</text>
+        <text x="926" y="104" class="t-mono" style="font-size:11px">engine/cpu-dma-latency ✦</text>
+        <rect x="926" y="118" width="238" height="66" rx="10" fill="rgba(251,191,36,0.07)" stroke="#8a6a1c"/>
+        <text x="940" y="138" class="t-sub">a level → SetParameterValue (µs)</text>
+        <text x="940" y="156" class="t-sub">off → ResetParameterValue:</text>
+        <text x="940" y="174" class="t-sub">no value kept in conf.xml</text>
+        <rect x="926" y="194" width="238" height="106" rx="10" fill="rgba(244,114,182,0.06)" stroke="#f472b6"/>
+        <text x="940" y="216" class="t-title" style="font-size:13px">the running server</text>
+        <text x="940" y="236" class="t-sub">a PM QoS request on</text>
+        <text x="940" y="254" class="t-mono" style="font-size:11px">/dev/cpu_dma_latency</text>
+        <text x="940" y="272" class="t-ok" style="font-size:12px">held at once, no restart</text>
+        <text x="940" y="288" class="t-sub">released when off, or stopped</text>
+        <text x="926" y="317" class="t-tiny">✦ JACKBUS'S PARAMETER</text>
+      </g>
+
+      <!-- flows -->
+      <path id="cw-read" d="M270,190 L304,190" class="flow dl" marker-end="url(#mk-cw-g)"/>
+      <path id="cw-lvl" d="M560,180 L610,180" class="flow ctrl" marker-end="url(#mk-cw-v)"/>
+      <path id="cw-set" d="M792,160 C850,160 850,150 904,150" class="flow desk" marker-end="url(#mk-cw-d)"/>
+      <path id="cw-back" d="M1045,326 L1045,350 L735,350 L735,332" class="flow ntf slow" marker-end="url(#mk-cw-o)"/>
+      <circle r="3.6" class="pkt ntf" style="fill:#c7cbe6"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath xlink:href="#cw-read"/></animateMotion></circle>
+      <circle r="4" class="pkt req"><animateMotion dur="1.4s" begin="-0.5s" repeatCount="indefinite"><mpath xlink:href="#cw-lvl"/></animateMotion></circle>
+      <circle r="4" class="pkt desk"><animateMotion dur="1.6s" repeatCount="indefinite"><mpath xlink:href="#cw-set"/></animateMotion></circle>
+      <circle r="4" class="pkt ntf"><animateMotion dur="3s" repeatCount="indefinite"><mpath xlink:href="#cw-back"/></animateMotion></circle>
+      <text x="1180" y="374" text-anchor="end" class="t-lane" fill="#fb923c">after every command: IsStarted · GetParameterValue(engine/cpu-dma-latency) → the readout</text>
+      <text x="20" y="374" class="t-tiny">THE STATES SHOWN: AN EXAMPLE</text>
+    </svg>
+    <div class="legend">
+      <span class="l-spawn">read from sysfs</span>
+      <span class="l-req">PatchBox's own</span>
+      <span class="l-desk">D-Bus method calls</span>
+      <span class="l-ntf">read back</span>
+    </div>
+    <p class="caption">
+      <b>Levels the CPU has.</b> Deep idle states save power and take time to wake from; a limit of L µs keeps every
+      CPU out of the states that take longer than L. So the only limits that change anything are the states' own
+      wake-up latencies, and the menu offers exactly those, read from sysfs (intel_idle, acpi_idle, AMD's), never assumed:
+      <b>0 µs · performance</b> (no idle state: the CPUs poll, the most power and heat), then each state but the
+      deepest at its own latency (<code>1 µs · ≤ C1</code>; names from ACPI tables lose their <code>_ACPI</code>), then
+      <b>off · power saving</b> (no limit: every state). A state's latency is the largest any CPU gives, because a hybrid
+      CPU's cores differ and the limit has to allow the state on all of them; states disabled on every CPU are left
+      out. Without cpuidle (a VM, <code>idle=poll</code>) only the two ends are offered. A value set elsewhere (the
+      Server tab, a preset, <code>jack_control</code>) shows as a row of its own, with what it allows.
+    </p>
+    <p class="caption">
+      <b>One parameter, applied at once.</b> A row sets jackdbus's <code>engine/cpu-dma-latency</code>; off resets it,
+      so jackdbus keeps no value for it. JackBus applies it to the running server at once and holds the request while
+      the server runs. PatchBox writes nothing in cpuidle and holds no request of its own. The readout shows the value
+      in µs (<code>off</code> when there is none), is dim while the server is stopped (no request is held then), and isn't
+      there at all with a jackdbus that has no such parameter; the tooltip says what the value allows
+      (<code>idle ≤ C1</code>, <code>POLL</code>, <code>any</code>). The readout is as wide as the largest level the menu
+      offers (at least <code>100 µs ▼</code>), so a new value never moves the toolbar.
+    </p>
   </div>
 </section>
 
@@ -2380,10 +2537,11 @@ td code, li code, p code { font-size: 0.92em; }
     PatchBox follows how the audio stack is set up rather than assuming one. Its JACK client talks to whatever
     <code>libjack.so</code> reaches, and its jackdbus side to whatever owns <code>org.jackaudio.service</code>. Its
     PipeWire side reads <code>pw-dump</code> and works out from PipeWire's own objects whether PipeWire runs on top of JACK,
-    serves as the JACK server, or runs beside it. The figure shows the three set-ups and what each page shows in them.
+    serves as the JACK server, or runs beside it. The figure shows the set-ups and what each page shows in them; the
+    fourth is JackBus with its shims, where PipeWire leaves audio to JackBus altogether (section 10).
   </p>
   <div class="figure" data-pager id="fig-configs">
-    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 600" role="img" aria-label="Three audio set-ups">
+    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 600" role="img" aria-label="Four audio set-ups">
       <defs>
         <path id="k1-a1" d="M300,124 L300,200"/>
         <path id="k1-a2" d="M690,124 L690,200"/>
@@ -2404,6 +2562,12 @@ td code, li code, p code { font-size: 0.92em; }
         <path id="k3-jk" d="M168,250 L230,250"/>
         <path id="k3-db" d="M168,276 C200,276 200,300 230,300"/>
         <path id="k3-pw" d="M168,302 C196,302 196,350 600,350 L640,350 L640,322"/>
+        <path id="k4-a1" d="M300,124 L300,200"/>
+        <path id="k4-a2" d="M690,124 L690,160 L460,160 L460,200"/>
+        <path id="k4-hw" d="M400,322 L400,418"/>
+        <path id="k4-jk" d="M168,250 L230,250"/>
+        <path id="k4-db" d="M168,276 C200,276 200,300 230,300"/>
+        <path id="k4-pw" d="M168,302 C196,302 196,350 600,350 L640,350 L640,322"/>
       </defs>
       <!-- shared frame -->
       <text x="230" y="44" class="t-band">PROGRAMS</text>
@@ -2536,7 +2700,7 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="888" y="394" class="t-label">SESSIONS</text>
         <text x="888" y="414" class="t-sub">JACK-side connections remembered;</text>
         <text x="888" y="432" class="t-sub">PipeWire-aware sessions: deferred</text>
-        <text x="888" y="450" class="t-sub">(section 18)</text>
+        <text x="888" y="450" class="t-sub">(section 19)</text>
       </g>
 
       <!-- ================= page 3 ================= -->
@@ -2596,6 +2760,72 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="888" y="342" class="t-sub">server control off (it has no D-Bus)</text>
       </g>
 
+      <!-- ================= page 4 ================= -->
+      <g class="pageframe" data-name="JackBus with its shims: PipeWire leaves audio to JackBus">
+        <g>
+          <rect x="230" y="60" width="300" height="64" rx="12" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.3"/>
+          <text x="246" y="86" class="t-title">Ardour · Carla · synths</text>
+          <text x="246" y="106" class="t-sub">libjack.so (jack2)</text>
+          <rect x="560" y="60" width="270" height="64" rx="12" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.3"/>
+          <text x="576" y="86" class="t-title">Firefox · players · games</text>
+          <text x="576" y="106" class="t-sub">libpulse · ALSA · PipeWire → the shims</text>
+        </g>
+        <g>
+          <title>JackBus's jackdbus owns the card and is the clock; the programs that go through the shims are JACK clients of its own, one each</title>
+          <rect x="230" y="200" width="290" height="122" rx="14" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.8"/>
+          <text x="246" y="226" class="t-title">jackdbus · JackBus</text>
+          <text x="246" y="248" class="t-sub">the JACK engine · ALSA driver</text>
+          <text x="246" y="268" class="t-ok" style="font-size:12px">the clock: rate and period</text>
+          <text x="246" y="290" class="t-sub">each desktop program: a JACK</text>
+          <text x="246" y="310" class="t-sub">client of its own, through a shim</text>
+        </g>
+        <g>
+          <title>With PatchBox's drop-in, module.jackdbus-detect is false: PipeWire loads no JACK bridge. While JackBus runs it has no audio work; while it doesn't, it plays on the cards as before</title>
+          <rect x="600" y="200" width="230" height="122" rx="14" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="6 4"/>
+          <text x="616" y="226" class="t-title">PipeWire</text>
+          <text x="616" y="248" class="t-sub">no JACK bridge (the drop-in)</text>
+          <text x="616" y="268" class="t-sub">video · screen sharing</text>
+          <text x="616" y="290" class="t-sub">no audio while JackBus runs;</text>
+          <text x="616" y="310" class="t-sub">the cards when it doesn't</text>
+        </g>
+        <text x="561" y="267" text-anchor="middle" class="t-red" style="font-size:15px">✕</text>
+        <text x="561" y="288" text-anchor="middle" class="t-tiny">NO BRIDGE</text>
+        <rect x="230" y="418" width="290" height="56" rx="12" fill="url(#g-box)" stroke="#4ade80" stroke-width="1.4"/>
+        <text x="375" y="442" text-anchor="middle" class="t-title">sound card</text>
+        <text x="375" y="461" text-anchor="middle" class="t-sub">ALSA hw · opened by jackdbus</text>
+        <use xlink:href="#k4-a1" class="flow audio"/>
+        <use xlink:href="#k4-a2" class="flow audio"/>
+        <use xlink:href="#k4-hw" class="flow audio"/>
+        <use xlink:href="#k4-jk" class="flow req"/>
+        <use xlink:href="#k4-db" class="flow desk"/>
+        <use xlink:href="#k4-pw" class="flow pw slow"/>
+        <text x="476" y="184" class="t-lane" fill="#f472b6">jackbus-pa · jackbus-alsa · jackbus-pw</text>
+        <rect x="-5" y="-4" width="10" height="8" rx="2" class="frame-sq"><animateMotion dur="1.4s" repeatCount="indefinite"><mpath xlink:href="#k4-a1"/></animateMotion></rect>
+        <rect x="-5" y="-4" width="10" height="8" rx="2" class="frame-sq"><animateMotion dur="2s" repeatCount="indefinite"><mpath xlink:href="#k4-a2"/></animateMotion></rect>
+        <rect x="-5" y="-4" width="10" height="8" rx="2" class="frame-sq"><animateMotion dur="1.4s" begin="-0.7s" repeatCount="indefinite"><mpath xlink:href="#k4-hw"/></animateMotion></rect>
+        <circle r="4" class="pkt req"><animateMotion dur="1s" repeatCount="indefinite"><mpath xlink:href="#k4-jk"/></animateMotion></circle>
+        <circle r="4" class="pkt desk"><animateMotion dur="1.2s" repeatCount="indefinite"><mpath xlink:href="#k4-db"/></animateMotion></circle>
+        <circle r="4" class="pkt pw"><animateMotion dur="2.4s" repeatCount="indefinite"><mpath xlink:href="#k4-pw"/></animateMotion></circle>
+        <rect x="870" y="60" width="310" height="414" rx="14" fill="rgba(21,25,51,0.7)" stroke="#2a3060"/>
+        <text x="888" y="88" class="t-label">CANVAS</text>
+        <text x="888" y="108" class="t-sub">JACK's graph: each such program a</text>
+        <text x="888" y="126" class="t-sub">block of its own, its ports JACK's;</text>
+        <text x="888" y="144" class="t-sub">no PipeWire block</text>
+        <text x="888" y="178" class="t-label">JACK TAB</text>
+        <text x="888" y="198" class="t-ok" style="font-size:12px">everything, as with the bridge</text>
+        <text x="888" y="232" class="t-label">SHIMS TAB</text>
+        <text x="888" y="252" class="t-sub">PulseAudio on JackBus · ALSA's</text>
+        <text x="888" y="270" class="t-sub">default device · resampling, where</text>
+        <text x="888" y="288" class="t-sub">new streams go · "PipeWire leaves</text>
+        <text x="888" y="306" class="t-sub">audio to JackBus" (section 10)</text>
+        <text x="888" y="340" class="t-label">PIPEWIRE TAB</text>
+        <text x="888" y="360" class="t-sub">beside JACK: its clock, devices,</text>
+        <text x="888" y="378" class="t-sub">profiles and WirePlumber</text>
+        <text x="888" y="412" class="t-label">SESSIONS · RULES</text>
+        <text x="888" y="432" class="t-sub">those programs' connections are</text>
+        <text x="888" y="450" class="t-sub">JACK connections, like any other</text>
+      </g>
+
       <text x="230" y="520" class="t-sub">PatchBox's links:</text>
       <g class="t-sub">
         <line x1="350" y1="516" x2="380" y2="516" class="flow req"/><text x="386" y="520">libjack</text>
@@ -2632,6 +2862,15 @@ td code, li code, p code { font-size: 0.92em; }
       Everything JACK works as with the bridge, and the PipeWire tab is the settings page of a separate server. The
       patchbay and sessions need only libjack, so a plain <code>jackd</code> works too: only the jackdbus page goes
       quiet.
+    </p>
+    <p class="caption pagecap">
+      <b>JackBus with its shims.</b> With the jackbus package's shims, the desktop's programs need no PipeWire for
+      audio: a PulseAudio program loads jackbus-pa's libpulse, an ALSA program's <code>default</code> device is
+      jackbus-alsa's, and a PipeWire program started as <code>jackbus-pw &lt;program&gt;</code> loads jackbus-pw's
+      libpipewire. Each becomes a JACK client of its own in JackBus's cycle, on the canvas like any other. With
+      "PipeWire leaves audio to JackBus" on, PipeWire loads no JACK bridge: while JackBus runs it has no audio work
+      (video and screen sharing are untouched), while it doesn't it plays on the cards as before, and the PipeWire tab
+      shows it beside JACK. The Shims tab (section 10) sets all of it up; the shims are JackBus's, not PatchBox's.
     </p>
   </div>
 </section>
@@ -2804,14 +3043,308 @@ td code, li code, p code { font-size: 0.92em; }
     <p class="caption">
       <b>What it leaves to WirePlumber.</b> PatchBox doesn't link desktop streams or keep PipeWire links in sessions.
       WirePlumber's policy does that, and a session restoring links over it would fight it (a browser would go silent
-      when its auto-link was undone). That design is written down and deferred (section 18).
+      when its auto-link was undone). That design is written down and deferred (section 19).
     </p>
   </div>
 </section>
 
-<!-- ============================================================ 10. patchboxd -->
+<!-- ============================================================ 10. the Shims tab -->
 <section id="s10">
-  <h2><span class="num">10</span>patchboxd: the session daemon</h2>
+  <h2><span class="num">10</span>Applications on JackBus: the Shims tab</h2>
+  <p class="sub">
+    JackBus's shims take programs that speak PulseAudio, ALSA or PipeWire straight to JackBus, each a JACK client of its
+    own, with no PipeWire in between: <b>jackbus-pa</b> (a libpulse), <b>jackbus-alsa</b> (an ALSA plugin, the
+    <code>jackbus</code> PCM) and <b>jackbus-pw</b> (a libpipewire-0.3, for a program started as
+    <code>jackbus-pw &lt;program&gt;</code>). They come with the jackbus package and are JackBus's, not PatchBox's, so
+    PatchBox stays out of the audio path here too. The Shims tab is where they are set up: it writes the files they
+    read, and a PipeWire drop-in that leaves audio to JackBus. A section per kind of application, then PipeWire.
+  </p>
+  <div class="figure" id="fig-shims">
+    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 760" role="img" aria-label="The Shims tab: its switches, the files they write, and who reads them">
+      <defs>
+        <marker id="mk-sh-v" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#8b8ff5"/></marker>
+        <marker id="mk-sh-a" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#fbbf24"/></marker>
+        <marker id="mk-sh-g" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#8a90b8"/></marker>
+      </defs>
+      <text x="20" y="38" class="t-band">THE SHIMS TAB</text>
+      <text x="420" y="38" class="t-band">WHAT IT WRITES</text>
+      <text x="820" y="38" class="t-band">WHO READS IT</text>
+      <text x="1180" y="38" text-anchor="end" class="t-tiny">AS EACH PROGRAM STARTS</text>
+
+      <!-- column A: a mock of the tab -->
+      <rect x="20" y="52" width="340" height="536" rx="14" fill="#18181a" stroke="#343438"/>
+      <g style="font: 600 9px ui-monospace, Menlo, Consolas, monospace">
+        <rect x="32" y="62" width="38" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="35" y="77" fill="#8a8a8a">Server</text>
+        <rect x="72" y="62" width="38" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="75" y="77" fill="#8a8a8a">Master</text>
+        <rect x="112" y="62" width="44" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="115" y="77" fill="#8a8a8a">Devices</text>
+        <rect x="158" y="62" width="33" height="22" rx="6" fill="#24412f" stroke="#60a474"/><text x="161" y="77" fill="#e1e1e1">Shims</text>
+        <rect x="193" y="62" width="49" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="196" y="77" fill="#8a8a8a">PipeWire</text>
+        <rect x="244" y="62" width="55" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="247" y="77" fill="#8a8a8a">Internals</text>
+        <rect x="301" y="62" width="44" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="304" y="77" fill="#8a8a8a">Netjack</text>
+      </g>
+      <line x1="32" y1="94" x2="348" y2="94" stroke="#343438"/>
+      <g style="font: 600 11px ui-monospace, Menlo, Consolas, monospace">
+        <text x="36" y="114" fill="#60a474">PULSEAUDIO APPLICATIONS</text>
+        <text x="36" y="134" fill="#afafaf">Shim</text><text x="344" y="134" text-anchor="end" fill="#70ccda">jackbus-pa · installed</text>
+        <text x="36" y="154" fill="#e1e1e1">Use JackBus</text>
+        <text x="36" y="174" fill="#afafaf">Resample another rate</text>
+        <text x="36" y="194" fill="#afafaf">Resampling quality</text><text x="344" y="194" text-anchor="end" fill="#70ccda">normal · 56 taps ▾</text>
+        <text x="36" y="214" fill="#afafaf">Connect new streams</text>
+        <text x="36" y="234" fill="#afafaf">Output device</text><text x="344" y="234" text-anchor="end" fill="#70ccda">U44 ▾</text>
+        <text x="36" y="254" fill="#afafaf">Input device</text><text x="344" y="254" text-anchor="end" fill="#70ccda">the first card (system) ▾</text>
+        <text x="36" y="274" fill="#afafaf">Most a stream buffers</text><text x="344" y="274" text-anchor="end" fill="#70ccda">40 ms ▾</text>
+        <line x1="36" y1="286" x2="344" y2="286" stroke="#343438"/>
+        <text x="36" y="306" fill="#60a474">ALSA APPLICATIONS</text>
+        <text x="36" y="326" fill="#afafaf">Shim</text><text x="344" y="326" text-anchor="end" fill="#70ccda">the "jackbus" device · installed</text>
+        <text x="36" y="346" fill="#e1e1e1">Default device is JackBus</text>
+        <text x="36" y="366" fill="#afafaf">While JackBus isn't running</text><text x="344" y="366" text-anchor="end" fill="#70ccda">PipeWire ▾</text>
+        <text x="36" y="386" fill="#6e6e6e" style="font-size:10.5px">+ resample · quality · connect · devices</text>
+        <line x1="36" y1="398" x2="344" y2="398" stroke="#343438"/>
+        <text x="36" y="418" fill="#60a474">PIPEWIRE APPLICATIONS</text>
+        <text x="36" y="438" fill="#afafaf">Shim</text><text x="344" y="438" text-anchor="end" fill="#70ccda">jackbus-pw &lt;program&gt; · installed</text>
+        <text x="36" y="458" fill="#6e6e6e" style="font-size:10.5px">+ resample · quality · connect · devices</text>
+        <line x1="36" y1="470" x2="344" y2="470" stroke="#343438"/>
+        <text x="36" y="490" fill="#60a474">PIPEWIRE</text>
+        <text x="36" y="510" fill="#e1e1e1">Leaves audio to JackBus</text>
+        <text x="36" y="530" fill="#afafaf">Restart PipeWire</text><text x="344" y="530" text-anchor="end" fill="#64b5f6">restart</text>
+        <line x1="36" y1="544" x2="344" y2="544" stroke="#343438"/>
+        <text x="36" y="566" fill="#6e6e6e" style="font-size:10px">PipeWire, PulseAudio and ALSA applications</text>
+        <text x="36" y="580" fill="#6e6e6e" style="font-size:10px">straight to JackBus.</text>
+        <rect x="296" y="558" width="48" height="22" rx="5" fill="url(#btn-g)" stroke="#343438"/><text x="320" y="573" text-anchor="middle" fill="#afafaf" style="font-size:10.5px">Close</text>
+      </g>
+      <!-- switches -->
+      <g>
+        <rect x="318" y="143" width="26" height="14" rx="7" fill="#2e7d4f"/><circle cx="337" cy="150" r="5" fill="#e1e1e1"/>
+        <rect x="318" y="163" width="26" height="14" rx="7" fill="#2e7d4f"/><circle cx="337" cy="170" r="5" fill="#e1e1e1"/>
+        <rect x="318" y="203" width="26" height="14" rx="7" fill="#2e7d4f"/><circle cx="337" cy="210" r="5" fill="#e1e1e1"/>
+        <rect x="318" y="335" width="26" height="14" rx="7" fill="#2e7d4f"/><circle cx="337" cy="342" r="5" fill="#e1e1e1"/>
+        <rect x="318" y="499" width="26" height="14" rx="7" fill="#2e7d4f"/><circle cx="337" cy="506" r="5" fill="#e1e1e1"/>
+      </g>
+      <!-- the rows that go to the shims' settings file: a bus at the page's edge -->
+      <path d="M346,150 L352,150 M346,170 L352,170 M346,190 L352,190 M346,210 L352,210 M346,230 L352,230 M346,250 L352,250 M346,270 L352,270 M346,362 L352,362 M346,382 L352,382 M346,454 L352,454 M352,150 L352,454" stroke="#8b8ff5" stroke-width="1.4" fill="none" stroke-opacity="0.75"/>
+
+      <!-- column B: the files -->
+      <g>
+        <title>The shims' settings file: key = value, each shim's own key ("pa.", "alsa.", "pw.") read before the shared one; PatchBox sets one key at a time and keeps the rest of the file</title>
+        <rect x="420" y="56" width="340" height="268" rx="12" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.4"/>
+        <text x="436" y="80" class="t-mono" style="font-size:11.5px">~/.config/jackbus/compat.conf</text>
+        <text x="436" y="100" class="t-sub">key = value: a shim's own key, then the shared</text>
+        <g class="t-mono" style="font-size:11px">
+          <text x="436" y="124" style="fill:#7f86b8"># JackBus's shims (…)</text>
+          <text x="436" y="142">pulse = yes</text>
+          <text x="436" y="160">pa.resample = yes</text>
+          <text x="436" y="178">pa.resample-quality = normal</text>
+          <text x="436" y="196">pa.autoconnect = yes</text>
+          <text x="436" y="214">pa.output = U44</text>
+          <text x="436" y="232">pa.max-latency = 40</text>
+          <text x="436" y="250">alsa.fallback = pipewire</text>
+          <text x="436" y="268">pw.resample = no</text>
+        </g>
+        <text x="436" y="294" class="t-tiny">OTHER LINES AND COMMENTS KEPT</text>
+        <text x="436" y="312" class="t-tiny">THEN /ETC/JACKBUS/COMPAT.CONF, THE SAME WAY</text>
+      </g>
+      <g>
+        <title>A block of PatchBox's own in the user's ALSA configuration, read after the system's, so its default wins over PipeWire's; switched off, the block goes and the user's own lines stay</title>
+        <rect x="420" y="340" width="340" height="170" rx="12" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.4"/>
+        <text x="436" y="364" class="t-mono" style="font-size:11.5px">~/.config/alsa/asoundrc</text>
+        <text x="436" y="384" class="t-sub">a block of PatchBox's, after the system's</text>
+        <g class="t-mono" style="font-size:11px">
+          <text x="436" y="406" style="fill:#7f86b8"># PatchBox: … JackBus (jackbus-alsa) - begin</text>
+          <text x="436" y="424">pcm.!default {</text>
+          <text x="462" y="442">type jackbus</text>
+          <text x="462" y="460">fallback "pipewire"</text>
+          <text x="436" y="478">}</text>
+          <text x="436" y="496" style="fill:#7f86b8"># PatchBox: … - end</text>
+        </g>
+      </g>
+      <g>
+        <title>A PipeWire drop-in: module.jackdbus-detect false, so PipeWire's JACK bridge isn't loaded; switched off, the file goes</title>
+        <rect x="420" y="526" width="340" height="110" rx="12" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.4"/>
+        <text x="436" y="548" class="t-mono" style="font-size:11px">~/.config/pipewire/pipewire.conf.d/</text>
+        <text x="436" y="564" class="t-mono" style="font-size:11px">60-patchbox-no-jack-bridge.conf</text>
+        <g class="t-mono" style="font-size:11px">
+          <text x="436" y="588">context.properties = {</text>
+          <text x="462" y="606">module.jackdbus-detect = false</text>
+          <text x="436" y="624">}</text>
+        </g>
+      </g>
+      <rect x="420" y="652" width="340" height="52" rx="12" fill="rgba(107,113,153,0.12)" stroke="#6b7199" stroke-dasharray="4 3"/>
+      <text x="436" y="674" class="t-mono" style="font-size:11px">systemctl --user restart pipewire.service</text>
+      <text x="436" y="694" class="t-sub">now, rather than at PipeWire's next start</text>
+
+      <!-- column C: the readers -->
+      <g>
+        <title>jackbus-pa: the jackbus package puts /usr/lib/jackbus-pa on the dynamic linker's path, so every program loading libpulse gets its dispatcher, which decides once, as the program starts</title>
+        <rect x="820" y="56" width="360" height="196" rx="14" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.4"/>
+        <text x="836" y="80" class="t-title">jackbus-pa</text>
+        <text x="930" y="80" class="t-sub">a libpulse of JackBus's</text>
+        <text x="836" y="102" class="t-mono" style="font-size:10.5px">/usr/lib/jackbus-pa/libpulse.so.0</text>
+        <text x="836" y="120" class="t-sub">on the dynamic linker's path: every program</text>
+        <text x="836" y="138" class="t-sub">loading libpulse gets it, and it decides once:</text>
+        <text x="836" y="162" class="t-ok" style="font-size:12px">pulse = yes, JackBus running → libjackbus-pa.so</text>
+        <text x="836" y="182" class="t-sub">otherwise → PulseAudio's own libpulse (PipeWire)</text>
+        <text x="836" y="206" class="t-mono" style="font-size:10.5px">jackbus-pa &lt;program&gt;</text>
+        <text x="968" y="206" class="t-sub">· JackBus for that one</text>
+        <text x="836" y="236" class="t-tiny">READS PULSE, PA.* AND THE SHARED KEYS</text>
+      </g>
+      <g>
+        <title>jackbus-alsa: the "jackbus" PCM; with the block above it is every ALSA program's default device: JackBus while it runs, the fallback PCM while it doesn't</title>
+        <rect x="820" y="268" width="360" height="150" rx="14" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.4"/>
+        <text x="836" y="292" class="t-title">jackbus-alsa</text>
+        <text x="950" y="292" class="t-sub">the "jackbus" PCM, a plugin</text>
+        <text x="836" y="314" class="t-mono" style="font-size:10.5px">libasound_module_pcm_jackbus.so</text>
+        <text x="836" y="336" class="t-sub">every ALSA program's "default" device:</text>
+        <text x="836" y="358" class="t-ok" style="font-size:12px">JackBus while it runs</text>
+        <text x="836" y="378" class="t-sub">while it doesn't: the fallback PCM</text>
+        <text x="836" y="404" class="t-tiny">READS ALSA.* AND THE SHARED KEYS</text>
+      </g>
+      <g>
+        <title>jackbus-pw: a libpipewire-0.3 of JackBus's, for a program started through it</title>
+        <rect x="820" y="434" width="360" height="120" rx="14" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.4"/>
+        <text x="836" y="458" class="t-title">jackbus-pw</text>
+        <text x="930" y="458" class="t-sub">a libpipewire-0.3 of JackBus's</text>
+        <text x="836" y="480" class="t-mono" style="font-size:10.5px">jackbus-pw &lt;program&gt;</text>
+        <text x="836" y="502" class="t-ok" style="font-size:12px">the program: one JACK client in JackBus's cycle</text>
+        <text x="836" y="538" class="t-tiny">READS PW.* AND THE SHARED KEYS</text>
+      </g>
+      <g>
+        <title>PipeWire reads its drop-ins as it starts: with module.jackdbus-detect false it loads no JACK bridge</title>
+        <rect x="820" y="570" width="360" height="134" rx="14" fill="url(#g-ms)" stroke="#fbbf24" stroke-width="1.4"/>
+        <text x="836" y="594" class="t-title">PipeWire</text>
+        <text x="910" y="594" class="t-sub">as it starts</text>
+        <text x="836" y="616" class="t-mono" style="font-size:10.5px">module.jackdbus-detect = false</text>
+        <text x="836" y="638" class="t-sub">its JACK bridge isn't loaded: while JackBus</text>
+        <text x="836" y="656" class="t-sub">runs, no audio work; while it doesn't, the</text>
+        <text x="836" y="674" class="t-sub">cards as before; video, screen sharing untouched</text>
+        <text x="836" y="694" class="t-tiny">FLATPAKS: SILENT WHILE JACKBUS RUNS</text>
+      </g>
+
+      <!-- writes -->
+      <path id="sh-w1" d="M352,200 L416,200" class="flow ctrl" marker-end="url(#mk-sh-v)"/>
+      <path id="sh-w2" d="M360,342 C388,342 388,424 416,424" class="flow ctrl" marker-end="url(#mk-sh-v)"/>
+      <path id="sh-w3" d="M360,362 C388,362 388,458 416,458" class="flow ctrl" marker-end="url(#mk-sh-v)"/>
+      <path id="sh-w4" d="M360,506 C388,506 388,556 416,556" class="flow ctrl" marker-end="url(#mk-sh-v)"/>
+      <path id="sh-w5" d="M360,526 C388,526 388,678 416,678" class="flow spawn" marker-end="url(#mk-sh-g)"/>
+      <!-- reads -->
+      <path id="sh-r1" d="M760,190 L790,190 L790,150 L816,150" class="flow osc slow" marker-end="url(#mk-sh-a)"/>
+      <path id="sh-r2" d="M760,190 L790,190 L790,310 L816,310" class="flow osc slow" marker-end="url(#mk-sh-a)"/>
+      <path id="sh-r3" d="M760,190 L790,190 L790,480 L816,480" class="flow osc slow" marker-end="url(#mk-sh-a)"/>
+      <path id="sh-r4" d="M760,380 L816,380" class="flow osc slow" marker-end="url(#mk-sh-a)"/>
+      <path id="sh-r5" d="M760,580 C790,580 790,616 816,616" class="flow osc slow" marker-end="url(#mk-sh-a)"/>
+      <path id="sh-r6" d="M760,678 C790,678 790,660 816,660" class="flow spawn" marker-end="url(#mk-sh-g)"/>
+      <circle r="4" class="pkt req"><animateMotion dur="1.2s" repeatCount="indefinite"><mpath xlink:href="#sh-w1"/></animateMotion></circle>
+      <circle r="4" class="pkt req"><animateMotion dur="1.6s" begin="-0.4s" repeatCount="indefinite"><mpath xlink:href="#sh-w2"/></animateMotion></circle>
+      <circle r="4" class="pkt req"><animateMotion dur="1.6s" begin="-1.1s" repeatCount="indefinite"><mpath xlink:href="#sh-w4"/></animateMotion></circle>
+      <circle r="3.6" class="pkt ntf" style="fill:#c7cbe6"><animateMotion dur="2.4s" repeatCount="indefinite"><mpath xlink:href="#sh-w5"/></animateMotion></circle>
+      <circle r="4" class="pkt osc"><animateMotion dur="2.2s" repeatCount="indefinite"><mpath xlink:href="#sh-r1"/></animateMotion></circle>
+      <circle r="4" class="pkt osc"><animateMotion dur="2.6s" begin="-0.8s" repeatCount="indefinite"><mpath xlink:href="#sh-r2"/></animateMotion></circle>
+      <circle r="4" class="pkt osc"><animateMotion dur="3s" begin="-1.6s" repeatCount="indefinite"><mpath xlink:href="#sh-r3"/></animateMotion></circle>
+      <circle r="4" class="pkt osc"><animateMotion dur="1.6s" begin="-0.3s" repeatCount="indefinite"><mpath xlink:href="#sh-r4"/></animateMotion></circle>
+      <circle r="4" class="pkt osc"><animateMotion dur="1.8s" begin="-0.9s" repeatCount="indefinite"><mpath xlink:href="#sh-r5"/></animateMotion></circle>
+      <text x="600" y="740" text-anchor="middle" class="t-tiny">EACH PROGRAM THROUGH A SHIM: A JACK CLIENT OF ITS OWN, IN JACKBUS'S GRAPH AND ON PATCHBOX'S CANVAS</text>
+    </svg>
+    <div class="legend">
+      <span class="l-req">the tab writes</span>
+      <span class="l-osc">read as a program (or PipeWire) starts</span>
+      <span class="l-spawn">systemctl --user</span>
+      <span class="l-pbx">PatchBox's files</span>
+      <span class="l-ext">JackBus's shims, PipeWire</span>
+    </div>
+    <p class="caption">
+      <b>Settings, not plumbing.</b> PatchBox writes three things and starts one command; the shims and PipeWire do the
+      rest as each program starts. Each section opens with how its shim is reached and whether it is installed. Every
+      file is written atomically (a temporary file, then a rename), and every switch undoes itself: off, the key is
+      changed, the block removed or the drop-in deleted. <b>Use JackBus</b> and ALSA's default device apply to programs
+      started afterwards (a running program stays where it is), the other settings to new streams.
+    </p>
+    <p class="caption">
+      <b>A shim's own key first.</b> In <code>compat.conf</code> each shim reads its own key (<code>pa.resample</code>)
+      before the shared one (<code>resample</code>), in the user's file and then in <code>/etc/jackbus/compat.conf</code>.
+      The tab writes the shim's own keys, one line at a time, and keeps the file's other lines and comments, so a shared
+      key written by hand still applies to a shim with none of its own. A stream at JackBus's rate takes the direct
+      route; one at another rate is resampled by JackBus's bridge resampler (low, normal or high: 32, 56 or 96 taps),
+      or refused when <b>Resample another rate</b> is off. <b>Connect new streams</b> connects a new stream's ports to
+      the output (input) device; off, they wait for the user or a session. <b>Most a stream buffers</b> caps what a
+      PulseAudio stream queues in the shim (0: what the program asks for).
+    </p>
+    <p class="caption">
+      <b>PulseAudio, decided as a program starts.</b> The jackbus package installs a small dispatcher
+      <code>libpulse.so.0</code> and puts its directory on the dynamic linker's path
+      (<code>/etc/ld.so.conf.d/jackbus-pa.conf</code>), so every program that loads libpulse gets it. It decides once:
+      with <code>pulse = yes</code> and JackBus running, JackBus's implementation; otherwise PulseAudio's own libpulse,
+      that is PipeWire's PulseAudio server, as before. <b>Use JackBus</b> is that one key, off by default; it applies
+      from each program's next start, with no new login, and reaches programs whose launchers replace the library path.
+      <code>jackbus-pa &lt;program&gt;</code> puts one program on JackBus whatever the setting.
+    </p>
+    <p class="caption">
+      <b>ALSA, the default device.</b> <b>Default device is JackBus</b> adds a marked block to the user's ALSA
+      configuration (<code>$XDG_CONFIG_HOME/alsa/asoundrc</code>), which alsa-lib reads after the system's, so its
+      <code>pcm.!default</code> wins over PipeWire's: every ALSA program's <code>default</code> is the
+      <code>jackbus</code> PCM, JackBus while it runs. <b>While JackBus isn't running</b> picks its
+      <code>fallback</code>: PipeWire's device, the sound card (<code>sysdefault</code>) or nothing (no fallback line);
+      unset, PipeWire's when pipewire-alsa is installed, else the card's. The choice is kept as
+      <code>alsa.fallback</code> and rewrites the block when it is on. Off, the block goes and the user's own lines stay;
+      a file left empty is removed.
+    </p>
+    <p class="caption">
+      <b>PipeWire leaves audio to JackBus.</b> PipeWire's own <code>pipewire.conf</code> loads its JACK bridge,
+      <code>module-jackdbus-detect</code>, only while <code>module.jackdbus-detect</code> is true; the drop-in sets it
+      false. While JackBus runs, PipeWire then has no audio work: JackBus has the cards, the shims the PulseAudio and
+      ALSA programs. While it doesn't, PipeWire plays on the cards as before. Video and screen sharing are untouched;
+      programs only PipeWire plays (Flatpaks, among others) are silent while JackBus runs. It applies when PipeWire
+      restarts: <b>Restart PipeWire</b> does that now (WirePlumber restarts with it, pipewire-pulse
+      stops and its socket starts it again for the next program, and a screen share in progress stops). Off, the drop-in goes, and the bridge is back at the next restart.
+    </p>
+    <p class="caption">
+      <b>Where new streams go.</b> The output and input device lists are JACK's own: the clients with physical audio
+      ports in JACK's graph (<code>system</code>, every bridged card). The first entry, "the first card (system)",
+      removes the key, which is the shims' default; a device chosen earlier and not there now stays selected, marked
+      "not there now". For PulseAudio programs the choice is also the default sink and source.
+    </p>
+  </div>
+
+  <div class="tablebox">
+    <table>
+      <thead><tr><th>Switch</th><th>Writes</th><th>Read by, and when</th><th>Off</th></tr></thead>
+      <tbody>
+        <tr><td>PulseAudio · Use JackBus</td><td><code>pulse = yes</code> in <code>compat.conf</code></td><td>jackbus-pa's dispatcher, as each program starts: JackBus while it runs, else PipeWire</td><td><code>pulse = no</code>: PipeWire again, from each program's next start</td></tr>
+        <tr><td>ALSA · Default device is JackBus</td><td>a marked block in <code>~/.config/alsa/asoundrc</code>: <code>pcm.!default { type jackbus fallback "…" }</code></td><td>alsa-lib, as each ALSA program opens <code>default</code></td><td>the block removed, the user's lines kept</td></tr>
+        <tr><td>ALSA · While JackBus isn't running</td><td>the block's <code>fallback</code>: <code>pipewire</code>, <code>sysdefault</code> or none; kept as <code>alsa.fallback</code></td><td>jackbus-alsa, while JackBus isn't running</td><td>&mdash;</td></tr>
+        <tr><td>Each kind · resampling, quality, connect, output, input</td><td><code>&lt;shim&gt;.resample</code> · <code>.resample-quality</code> · <code>.autoconnect</code> · <code>.output</code> · <code>.input</code> (<code>pa.</code>, <code>alsa.</code>, <code>pw.</code>)</td><td>that shim, for its next streams</td><td>defaults: yes · normal · yes · the first card</td></tr>
+        <tr><td>PulseAudio · Most a stream buffers</td><td><code>pa.max-latency</code>: ms, 10 to 160 or typed; 0 what it asks for</td><td>jackbus-pa, for its next streams</td><td><code>0</code></td></tr>
+        <tr><td>PipeWire · Leaves audio to JackBus</td><td><code>~/.config/pipewire/pipewire.conf.d/60-patchbox-no-jack-bridge.conf</code></td><td>PipeWire, as it starts</td><td>the file removed; the bridge back after a restart</td></tr>
+        <tr class="compat"><td>PipeWire · Restart PipeWire</td><td colspan="3"><code>systemctl --user restart pipewire.service</code>, the same as on the PipeWire tab: the drop-in applies now</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid2" style="margin-top:18px">
+    <div class="card">
+      <h3>Which shims are there</h3>
+      <p class="role">The jackbus package's paths, looked for each time the tab's rows are built</p>
+      <ul>
+        <li>jackbus-pw: <code>/usr/lib/jackbus-pw/libpipewire-0.3.so.0</code>.</li>
+        <li>jackbus-pa: <code>/usr/lib/jackbus-pa/libpulse.so.0</code>, the dispatcher.</li>
+        <li>jackbus-alsa: <code>libasound_module_pcm_jackbus.so</code> in <code>/usr/lib/alsa-lib</code> or <code>/usr/lib64/alsa-lib</code>.</li>
+        <li>A shim that isn't there reads "not installed"; its settings can still be set, and wait in the file.</li>
+      </ul>
+      <div class="chips"><span class="chip">compat.rs</span><span class="chip">installed()</span><span class="chip">Kind::Shims</span></div>
+    </div>
+    <div class="card engine">
+      <h3>The PulseAudio switch, first version</h3>
+      <p class="role">Converted once, at start-up</p>
+      <ul>
+        <li>The first version of <b>Use JackBus</b> wrote <code>~/.config/environment.d/60-jackbus-pa.conf</code>: <code>/usr/lib/jackbus-pa</code> first on the library path, from the next login, and lost wherever a launcher replaced the path.</li>
+        <li>At start-up, <code>compat::migrate()</code> turns that file, where it exists, into <code>pulse = yes</code> and removes it; switching the setting either way removes it too.</li>
+      </ul>
+      <div class="chips"><span class="chip">compat::migrate</span><span class="chip">main.rs</span><span class="chip">pulse</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 11. patchboxd -->
+<section id="s11">
+  <h2><span class="num">11</span>patchboxd: the session daemon</h2>
   <p class="sub">
     patchboxd is an NSM server and a little more. It runs on one thread and one <code>poll()</code>, with no async
     runtime. Everything that can take time (clients saving, starting, stopping; git; hook scripts; jackdbus) is a step
@@ -2978,9 +3511,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 11. a session's life -->
-<section id="s11">
-  <h2><span class="num">11</span>A session's life</h2>
+<!-- ============================================================ 12. a session's life -->
+<section id="s12">
+  <h2><span class="num">12</span>A session's life</h2>
   <p class="sub">
     Opening a session while another is open is the longest operation the daemon runs: it saves and leaves one session,
     then loads and enters another, keeping the clients that can carry on (NSM's <code>:switch:</code>). Every message
@@ -3178,7 +3711,8 @@ td code, li code, p code { font-size: 0.92em; }
       <b>Entering B.</b> <code>Reserve</code> kept Carla: it announced <code>:switch:</code> and B has a client with the
       same id (or the same program), so Carla only gets <code>/nsm/client/open</code> with its new path. The
       <code>Jack</code> step puts B's server settings in place if it remembers any, before any client starts: on the
-      running server when only the buffer size, the log settings or the CPU wake-up latency limit differ (Carla, still
+      running server when only the buffer size, the log settings, the CPU wake-up latency limit or the sound card
+      bridges differ (Carla, still
       running, keeps its connections), else with a restart (section 7). New clients
       are started with <code>NSM_URL</code> in their environment and <code>$SESSION_NAME</code>,
       <code>$SESSION_PATH</code>, <code>$CLIENT_ID</code>, <code>$JACK_CLIENT_NAME</code> expanded in their arguments.
@@ -3189,7 +3723,7 @@ td code, li code, p code { font-size: 0.92em; }
       <b>Loaded.</b> When every NSM client has replied (or its deadline passed), all get
       <code>session_is_loaded</code>, <code>load.sh</code> runs, and the session is open. A client that announces later
       gets <code>session_is_loaded</code> right after its open. Its JACK connections come back as its ports appear
-      (section 13).
+      (section 14).
     </p>
   </div>
 
@@ -3226,19 +3760,19 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 12. on disk -->
-<section id="s12">
-  <h2><span class="num">12</span>On disk</h2>
+<!-- ============================================================ 13. on disk -->
+<section id="s13">
+  <h2><span class="num">13</span>On disk</h2>
   <p class="sub">
     Plain files a person can read: TOML for sessions, JSON for PatchBox's own settings, a git directory for history.
     Every file PatchBox writes is replaced atomically (a temporary file, then a rename), and every log it keeps is
     capped.
   </p>
   <div class="figure" id="fig-files">
-    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 660" role="img" aria-label="PatchBox's files">
+    <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 730" role="img" aria-label="PatchBox's files">
       <text x="20" y="38" class="t-band">A SESSION FOLDER</text>
       <text x="640" y="38" class="t-band">PATCHBOX'S CONFIGURATION · AND ELSEWHERE</text>
-      <rect x="20" y="52" width="590" height="596" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
+      <rect x="20" y="52" width="590" height="658" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
       <g>
         <text x="40" y="84" class="dirt d">~/PatchBox Sessions/</text>
         <text x="40" y="108" class="dirt c">├─</text><text x="66" y="108" class="dirt d">My Song/</text>
@@ -3281,19 +3815,19 @@ td code, li code, p code { font-size: 0.92em; }
         <circle cx="322" cy="392" r="4" fill="#2dd4bf"/><circle cx="322" cy="416" r="4" fill="#2dd4bf"/>
         <circle cx="322" cy="464" r="4" fill="#f472b6"/>
       </g>
-      <rect x="40" y="494" width="550" height="140" rx="12" fill="#0d0f1e" stroke="#2a3060"/>
+      <rect x="40" y="556" width="550" height="140" rx="12" fill="#0d0f1e" stroke="#2a3060"/>
       <g class="t-mono" style="font-size:11px">
-        <text x="56" y="516" fill="#7f86b8"># session.toml</text>
-        <text x="56" y="534">version = 1 · name = "My Song" · auto_snapshot = true</text>
-        <text x="56" y="552">[[client]] id = "ardour" · exe = "ardour8" · nsm = true</text>
-        <text x="56" y="570">           name = "Ardour" · autostart = true · gui_visible = true</text>
-        <text x="56" y="588">[connections] list = [["system:capture_1", "ardour:in 1"]]</text>
-        <text x="56" y="606">              ports = [ …every port at the last save… ]</text>
-        <text x="56" y="624">[jack] remember = true · driver = "alsa" · params = { … "u:48000" }</text>
+        <text x="56" y="578" fill="#7f86b8"># session.toml</text>
+        <text x="56" y="596">version = 1 · name = "My Song" · auto_snapshot = true</text>
+        <text x="56" y="614">[[client]] id = "ardour" · exe = "ardour8" · nsm = true</text>
+        <text x="56" y="632">           name = "Ardour" · autostart = true · gui_visible = true</text>
+        <text x="56" y="650">[connections] list = [["system:capture_1", "ardour:in 1"]]</text>
+        <text x="56" y="668">              ports = [ …every port at the last save… ]</text>
+        <text x="56" y="686">[jack] remember = true · driver = "alsa" · params = { … "u:48000" }</text>
       </g>
 
       <!-- configuration -->
-      <rect x="630" y="52" width="550" height="370" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
+      <rect x="630" y="52" width="550" height="430" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
       <g>
         <text x="650" y="84" class="dirt d">~/.config/patchbox/</text>
         <text x="650" y="108" class="dirt c">├─</text><text x="676" y="108" class="dirt">layout.json</text>
@@ -3322,21 +3856,25 @@ td code, li code, p code { font-size: 0.92em; }
       <g>
         <text x="650" y="322" class="dirt">$XDG_RUNTIME_DIR/patchbox/daemon.sock</text><circle cx="1150" cy="318" r="4" fill="#2dd4bf"/>
         <text x="650" y="346" class="dirt">~/.config/pipewire/pipewire.conf.d/60-patchbox-clock.conf</text><circle cx="1150" cy="342" r="4" fill="#8b8ff5"/>
-        <text x="650" y="370" class="dirt f">~/.config/jack/conf.xml</text><text x="1140" y="370" text-anchor="end" class="t-sub" style="font-size:11.5px">jackdbus's own: the bridges too</text>
-        <text x="650" y="394" class="dirt f">~/.log/jack/jackdbus.log</text><text x="1140" y="394" text-anchor="end" class="t-sub" style="font-size:11.5px">jackdbus's, bounded (section 7)</text>
+        <text x="650" y="370" class="dirt">~/.config/pipewire/pipewire.conf.d/60-patchbox-no-jack-bridge.conf</text><circle cx="1150" cy="366" r="4" fill="#8b8ff5"/>
+        <text x="650" y="394" class="dirt">~/.config/jackbus/compat.conf</text><text x="1136" y="394" text-anchor="end" class="t-sub" style="font-size:11.5px">the shims' settings: a key at a time</text><circle cx="1150" cy="390" r="4" fill="#8b8ff5"/>
+        <text x="650" y="418" class="dirt">~/.config/alsa/asoundrc</text><text x="1136" y="418" text-anchor="end" class="t-sub" style="font-size:11.5px">the user's own; a marked block of ours</text><circle cx="1150" cy="414" r="4" fill="#8b8ff5"/>
+        <text x="650" y="442" class="dirt f">~/.config/jack/conf.xml</text><text x="1140" y="442" text-anchor="end" class="t-sub" style="font-size:11.5px">jackdbus's own: the bridges too</text>
+        <text x="650" y="466" class="dirt f">~/.log/jack/jackdbus.log</text><text x="1140" y="466" text-anchor="end" class="t-sub" style="font-size:11.5px">jackdbus's, bounded (section 7)</text>
       </g>
 
       <!-- who writes -->
-      <rect x="630" y="442" width="550" height="206" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
-      <text x="650" y="470" class="t-label">WHO WRITES IT</text>
+      <rect x="630" y="498" width="550" height="212" rx="16" fill="rgba(21,25,51,0.6)" stroke="#2a3060"/>
+      <text x="650" y="526" class="t-label">WHO WRITES IT</text>
       <g class="t-sub">
-        <circle cx="660" cy="494" r="5" fill="#8b8ff5"/><text x="674" y="498">the window: layouts 800 ms after a change; presets; card settings; the clock drop-in</text>
-        <circle cx="660" cy="520" r="5" fill="#2dd4bf"/><text x="674" y="524">patchboxd: sessions, logs, snapshots, rules, recents, templates, the socket</text>
-        <circle cx="660" cy="546" r="5" fill="#fbbf24"/><text x="674" y="550">the clients: their own files, under the path NSM gave them</text>
-        <circle cx="660" cy="572" r="5" fill="#f472b6"/><text x="674" y="576">you: hook scripts (and anything, by hand: it's all text)</text>
+        <circle cx="660" cy="546" r="5" fill="#8b8ff5"/><text x="674" y="550">the window: layouts 800 ms after a change; presets; card settings;</text>
+        <text x="674" y="568">the clock drop-in; the Shims tab's three files (gone when switched off)</text>
+        <circle cx="660" cy="590" r="5" fill="#2dd4bf"/><text x="674" y="594">patchboxd: sessions, logs, snapshots, rules, recents, templates, the socket</text>
+        <circle cx="660" cy="616" r="5" fill="#fbbf24"/><text x="674" y="620">the clients: their own files, under the path NSM gave them</text>
+        <circle cx="660" cy="642" r="5" fill="#f472b6"/><text x="674" y="646">you: hook scripts (and anything, by hand: it's all text)</text>
       </g>
-      <text x="650" y="610" class="t-tiny">TEST OVERRIDES: PATCHBOX_CONFIG_DIR · _SESSIONS · _TEMPLATES · _SOCKET</text>
-      <text x="650" y="630" class="t-tiny">EVERY LOG CAPPED · ONE OLDER COPY · NOTHING VERBOSE BY DEFAULT</text>
+      <text x="650" y="678" class="t-tiny">TEST OVERRIDES: PATCHBOX_CONFIG_DIR · _SESSIONS · _TEMPLATES · _SOCKET</text>
+      <text x="650" y="698" class="t-tiny">EVERY LOG CAPPED · ONE OLDER COPY · NOTHING VERBOSE BY DEFAULT</text>
     </svg>
     <p class="caption">
       <b>A session is a folder.</b> Its <code>session.toml</code> lists the clients (command, NSM or not, signals,
@@ -3345,12 +3883,21 @@ td code, li code, p code { font-size: 0.92em; }
       application and the client id, which is what makes a session folder portable and lets client templates rename a
       client's files. The lock file stops two daemons from opening the same session.
     </p>
+    <p class="caption">
+      <b>The rest of ~/.config, only when asked.</b> Beyond <code>~/.config/patchbox</code>, PatchBox writes in the
+      user's configuration only what the settings page is asked to: the PipeWire tab's clock drop-in ("Keep the
+      defaults") and the Shims tab's three files (section 10), which go again when their switch is turned off. The
+      drop-ins are its own files; <code>compat.conf</code> is the shims', where it changes one key and keeps every
+      other line; <code>asoundrc</code> is the user's, where it adds a block between two marker comments and leaves the
+      rest alone. At start-up it removes one more, the PulseAudio switch's first version
+      (<code>~/.config/environment.d/60-jackbus-pa.conf</code>), turned into <code>pulse = yes</code>.
+    </p>
   </div>
 </section>
 
-<!-- ============================================================ 13. connection memory and rules -->
-<section id="s13">
-  <h2><span class="num">13</span>Connection memory and rules</h2>
+<!-- ============================================================ 14. connection memory and rules -->
+<section id="s14">
+  <h2><span class="num">14</span>Connection memory and rules</h2>
   <p class="sub">
     Two kinds of connections persist, and both live in the daemon. A <b>session's connection memory</b> (RaySession's
     rules) restores what the session had, as each client's ports appear. <b>Connection rules</b> (qjackctl's persistent
@@ -3480,14 +4027,14 @@ td code, li code, p code { font-size: 0.92em; }
     <p class="caption">
       <b>Not for PipeWire's links.</b> On pure PipeWire, undoing "auto-connections on new ports" would undo WirePlumber's
       stream links and a browser would go silent. PipeWire-aware sessions need different rules and are deferred by
-      design (section 18).
+      design (section 19).
     </p>
   </div>
 </section>
 
-<!-- ============================================================ 14. the window -->
-<section id="s14">
-  <h2><span class="num">14</span>The window</h2>
+<!-- ============================================================ 15. the window -->
+<section id="s15">
+  <h2><span class="num">15</span>The window</h2>
   <p class="sub">
     One borderless GL window in Luluda's manner: a slim title bar, a row of grouped tiles (an icon over a label), a
     darker sidebar, and the canvas. Settings, rules, the event log and the session dialogs are pages drawn over the
@@ -3529,27 +4076,29 @@ td code, li code, p code { font-size: 0.92em; }
       <text x="444" y="98" text-anchor="middle" style="font: 600 13px ui-monospace, Menlo, Consolas, monospace; fill:#70ccda">00:01:23.456</text>
       <text x="444" y="115" text-anchor="middle" style="font: 500 9.5px ui-monospace, Menlo, Consolas, monospace; fill:#60a474">12|3|0480 · 120 BPM</text>
       <!-- group: kinds -->
-      <rect x="532" y="76" width="232" height="50" rx="7" fill="#0d0e10"/>
+      <rect x="532" y="76" width="222" height="50" rx="7" fill="#0d0e10"/>
       <g style="font: 600 10px ui-monospace, Menlo, Consolas, monospace" text-anchor="middle">
-        <rect x="537" y="80" width="53" height="42" rx="6" fill="url(#btn-g)" stroke="#00e676" stroke-width="1.4"/><text x="563" y="99" fill="#00e676">∿</text><text x="563" y="116" fill="#00e676">AUDIO</text>
-        <rect x="594" y="80" width="53" height="42" rx="6" fill="url(#btn-g)"/><text x="620" y="99" fill="#ffa726">♪</text><text x="620" y="116" fill="#9e9ea4">MIDI</text>
-        <rect x="651" y="80" width="53" height="42" rx="6" fill="url(#btn-g)"/><text x="677" y="99" fill="#ba68c8">⌁</text><text x="677" y="116" fill="#9e9ea4">CV</text>
-        <rect x="708" y="80" width="53" height="42" rx="6" fill="url(#btn-g)"/><text x="734" y="99" fill="#4dd0e1">◇</text><text x="734" y="116" fill="#9e9ea4">OSC</text>
+        <rect x="537" y="80" width="50" height="42" rx="6" fill="url(#btn-g)" stroke="#00e676" stroke-width="1.4"/><text x="562" y="99" fill="#00e676">∿</text><text x="562" y="116" fill="#00e676">AUDIO</text>
+        <rect x="591" y="80" width="50" height="42" rx="6" fill="url(#btn-g)"/><text x="616" y="99" fill="#ffa726">♪</text><text x="616" y="116" fill="#9e9ea4">MIDI</text>
+        <rect x="645" y="80" width="50" height="42" rx="6" fill="url(#btn-g)"/><text x="670" y="99" fill="#ba68c8">⌁</text><text x="670" y="116" fill="#9e9ea4">CV</text>
+        <rect x="699" y="80" width="50" height="42" rx="6" fill="url(#btn-g)"/><text x="724" y="99" fill="#4dd0e1">◇</text><text x="724" y="116" fill="#9e9ea4">OSC</text>
       </g>
       <!-- group: views -->
-      <rect x="772" y="76" width="118" height="50" rx="7" fill="#0d0e10"/>
+      <rect x="762" y="76" width="114" height="50" rx="7" fill="#0d0e10"/>
       <g style="font: 600 10px ui-monospace, Menlo, Consolas, monospace" text-anchor="middle">
-        <rect x="777" y="80" width="53" height="42" rx="6" fill="url(#btn-g)" stroke="#4dd0e1" stroke-width="1.4"/><text x="803" y="99" fill="#4dd0e1">⇉</text><text x="803" y="116" fill="#4dd0e1">Ports</text>
-        <rect x="834" y="80" width="53" height="42" rx="6" fill="url(#btn-g)"/><text x="860" y="99" fill="#4dd0e1">▦</text><text x="860" y="116" fill="#9e9ea4">Matrix</text>
+        <rect x="767" y="80" width="50" height="42" rx="6" fill="url(#btn-g)" stroke="#4dd0e1" stroke-width="1.4"/><text x="792" y="99" fill="#4dd0e1">⇉</text><text x="792" y="116" fill="#4dd0e1">Ports</text>
+        <rect x="821" y="80" width="50" height="42" rx="6" fill="url(#btn-g)"/><text x="846" y="99" fill="#4dd0e1">▦</text><text x="846" y="116" fill="#9e9ea4">Matrix</text>
       </g>
-      <!-- group: JACK readouts -->
-      <rect x="898" y="76" width="256" height="50" rx="7" fill="#0d0e10"/>
-      <g style="font: 600 12px ui-monospace, Menlo, Consolas, monospace" text-anchor="middle">
-        <rect x="903" y="80" width="72" height="42" rx="6" fill="#08090a"/><text x="939" y="99" fill="#70ccda">48000 Hz</text><text x="939" y="115" style="font-size:9.5px" fill="#60a474">1.3 ms</text>
-        <rect x="979" y="80" width="50" height="42" rx="6" fill="#08090a"/><text x="1004" y="99" fill="#70ccda">64</text><text x="1004" y="115" style="font-size:9.5px" fill="#60a474">BUFFER</text>
-        <rect x="1033" y="80" width="46" height="42" rx="6" fill="#08090a"/><text x="1056" y="99" fill="#70ccda">0</text><text x="1056" y="115" style="font-size:9.5px" fill="#60a474">XRUNS</text>
-        <rect x="1083" y="80" width="66" height="42" rx="6" fill="#08090a"/><text x="1116" y="99" fill="#70ccda">3.1 %</text><text x="1116" y="115" style="font-size:9.5px" fill="#60a474">DSP LOAD</text>
-        <rect x="1086" y="118" width="6" height="2" fill="#00e676"/>
+      <!-- group: JACK, one LCD: DMA (JackBus), rate and latency, BUF, XRUNS, DSP -->
+      <rect x="884" y="76" width="270" height="50" rx="7" fill="#0d0e10"/>
+      <rect x="887" y="80" width="264" height="42" rx="6" fill="#08090a" stroke="#343438"/>
+      <g style="font: 600 11px ui-monospace, Menlo, Consolas, monospace" text-anchor="middle">
+        <text x="920" y="99" fill="#70ccda">1 µs ▼</text><text x="920" y="115" style="font-size:9.5px" fill="#60a474">DMA</text>
+        <text x="981" y="99" fill="#70ccda">48 kHz</text><text x="981" y="115" style="font-size:9.5px" fill="#60a474">1.3 ms</text>
+        <text x="1036" y="99" fill="#70ccda">64 ▼</text><text x="1036" y="115" style="font-size:9.5px" fill="#60a474">BUF</text>
+        <text x="1079" y="99" fill="#70ccda">0</text><text x="1079" y="115" style="font-size:9.5px" fill="#60a474">XRUNS</text>
+        <text x="1123" y="99" fill="#70ccda">3.1 %</text><text x="1123" y="115" style="font-size:9.5px" fill="#60a474">DSP</text>
+        <rect x="1105" y="118" width="36" height="2" fill="#343438"/><rect x="1105" y="118" width="2" height="2" fill="#00e676"/>
       </g>
 
       <!-- sidebar -->
@@ -3618,13 +4167,14 @@ td code, li code, p code { font-size: 0.92em; }
       <g style="font: 600 11px ui-monospace, Menlo, Consolas, monospace">
         <text x="772" y="321" fill="#64b5f6" style="font: 700 16px system-ui, sans-serif">←</text><text x="796" y="320" fill="#e1e1e1">Settings</text><text x="1140" y="320" text-anchor="end" fill="#6e6e6e">jackdbus · started</text>
       </g>
-      <g style="font: 600 10px ui-monospace, Menlo, Consolas, monospace">
-        <rect x="770.0" y="337" width="48.0" height="20" rx="5" fill="#1b2a3a" stroke="#64b5f6" stroke-opacity="0.8"/><text x="776.0" y="351" fill="#64b5f6">Server</text>
-        <rect x="823.0" y="337" width="48.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="829.0" y="351" fill="#8a8a8a">Master</text>
-        <rect x="876.0" y="337" width="54.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="882.0" y="351" fill="#8a8a8a">Devices</text>
-        <rect x="935.0" y="337" width="54.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="941.0" y="351" fill="#8a8a8a">Netjack</text>
-        <rect x="994.0" y="337" width="66.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="1000.0" y="351" fill="#8a8a8a">Internals</text>
-        <rect x="1065.0" y="337" width="60.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="1071.0" y="351" fill="#8a8a8a">PipeWire</text>
+      <g style="font: 600 9.5px ui-monospace, Menlo, Consolas, monospace">
+        <rect x="770.0" y="337" width="42.0" height="20" rx="5" fill="#1b2a3a" stroke="#64b5f6" stroke-opacity="0.8"/><text x="774.0" y="351" fill="#64b5f6">Server</text>
+        <rect x="816.0" y="337" width="42.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="820.0" y="351" fill="#8a8a8a">Master</text>
+        <rect x="862.0" y="337" width="48.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="866.0" y="351" fill="#8a8a8a">Devices</text>
+        <rect x="914.0" y="337" width="37.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="918.0" y="351" fill="#8a8a8a">Shims</text>
+        <rect x="955.0" y="337" width="54.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="959.0" y="351" fill="#8a8a8a">PipeWire</text>
+        <rect x="1013.0" y="337" width="59.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="1017.0" y="351" fill="#8a8a8a">Internals</text>
+        <rect x="1076.0" y="337" width="48.0" height="20" rx="5" fill="#222226" stroke="#343438" stroke-opacity="0.8"/><text x="1080.0" y="351" fill="#8a8a8a">Netjack</text>
       </g>
       <g style="font: 600 11px ui-monospace, Menlo, Consolas, monospace">
         <text x="776" y="380" fill="#60a474">SERVER</text>
@@ -3652,8 +4202,8 @@ td code, li code, p code { font-size: 0.92em; }
         <circle cx="132" cy="76" r="10" fill="#fbbf24"/><text x="132" y="80" fill="#0a0c18">2</text>
         <circle cx="374" cy="76" r="10" fill="#fbbf24"/><text x="374" y="80" fill="#0a0c18">3</text>
         <circle cx="648" cy="76" r="10" fill="#fbbf24"/><text x="648" y="80" fill="#0a0c18">4</text>
-        <circle cx="831" cy="76" r="10" fill="#fbbf24"/><text x="831" y="80" fill="#0a0c18">5</text>
-        <circle cx="1026" cy="76" r="10" fill="#fbbf24"/><text x="1026" y="80" fill="#0a0c18">6</text>
+        <circle cx="819" cy="76" r="10" fill="#fbbf24"/><text x="819" y="80" fill="#0a0c18">5</text>
+        <circle cx="1019" cy="76" r="10" fill="#fbbf24"/><text x="1019" y="80" fill="#0a0c18">6</text>
         <circle cx="270" cy="152" r="10" fill="#fbbf24"/><text x="270" y="156" fill="#0a0c18">7</text>
         <circle cx="270" cy="246" r="10" fill="#fbbf24"/><text x="270" y="250" fill="#0a0c18">8</text>
         <circle cx="270" cy="402" r="10" fill="#fbbf24"/><text x="270" y="406" fill="#0a0c18">9</text>
@@ -3672,7 +4222,7 @@ td code, li code, p code { font-size: 0.92em; }
           <circle cx="50" cy="746" r="9" fill="#fbbf24"/><text x="50" y="750" fill="#0a0c18">4</text>
           <circle cx="50" cy="776" r="9" fill="#fbbf24"/><text x="50" y="780" fill="#0a0c18">5</text>
           <circle cx="50" cy="806" r="9" fill="#fbbf24"/><text x="50" y="810" fill="#0a0c18">6</text>
-          <circle cx="50" cy="846" r="9" fill="#fbbf24"/><text x="50" y="850" fill="#0a0c18">7</text>
+          <circle cx="50" cy="872" r="9" fill="#fbbf24"/><text x="50" y="876" fill="#0a0c18">7</text>
           <circle cx="620" cy="656" r="9" fill="#fbbf24"/><text x="620" y="660" fill="#0a0c18">8</text>
           <circle cx="620" cy="696" r="9" fill="#fbbf24"/><text x="620" y="700" fill="#0a0c18">9</text>
           <circle cx="620" cy="736" r="9" fill="#fbbf24"/><text x="620" y="740" fill="#0a0c18">10</text>
@@ -3685,9 +4235,10 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="68" y="720"><tspan class="t-title" style="font-size:13px">Transport.</tspan> Rewind, play, stop; the LCD shows time, bars|beats|ticks, tempo.</text>
         <text x="68" y="750"><tspan class="t-title" style="font-size:13px">Port types.</tspan> AUDIO, MIDI, CV, OSC (keys 1–4), each its own matrices.</text>
         <text x="68" y="780"><tspan class="t-title" style="font-size:13px">Views.</tspan> Ports (again: top to bottom) and Matrix.</text>
-        <text x="68" y="810"><tspan class="t-title" style="font-size:13px">JACK.</tspan> Rate and latency, BUFFER (a menu, changed live), XRUNS (click:</text>
-        <text x="68" y="828">reset · right-click: the event log), DSP LOAD with a level.</text>
-        <text x="68" y="850"><tspan class="t-title" style="font-size:13px">Server.</tspan> Status, the preset menu, Start/Stop, Restart, Settings.</text>
+        <text x="68" y="810"><tspan class="t-title" style="font-size:13px">JACK.</tspan> One LCD: DMA (with JackBus, the CPU wake-up latency limit,</text>
+        <text x="68" y="828">a menu of the CPU's own levels), the rate and latency, BUF (a menu, changed</text>
+        <text x="68" y="846">live), XRUNS (click: reset · right-click: the event log), DSP with a level.</text>
+        <text x="68" y="876"><tspan class="t-title" style="font-size:13px">Server.</tspan> Status, the preset menu, Start/Stop, Restart, Settings.</text>
         <text x="638" y="660"><tspan class="t-title" style="font-size:13px">Session panel.</tspan> Clients with status, unsaved changes (amber),</text>
         <text x="638" y="678">× removes · + Application, Executable · Removed n · ⋯ menu.</text>
         <text x="638" y="700"><tspan class="t-title" style="font-size:13px">Clients.</tspan> Every block with its port counts per type; click</text>
@@ -3700,16 +4251,26 @@ td code, li code, p code { font-size: 0.92em; }
     </svg>
     <p class="caption">
       <b>Narrow windows.</b> The toolbar measures its groups first and drops them by priority when the window is too
-      narrow: the session buttons, then the views, the time display, the rate readout (the sidebar has it), the port
-      types (they have keys), the transport. The JACK readouts stay. The interface scale (1.25 by default) multiplies the
-      desktop's own, and text is rasterised at the exact pixel size, so it stays sharp at any scale or zoom.
+      narrow: the session buttons, then the views, the time display, the rate readout with DMA beside it (the sidebar
+      has the rate), the port types (they have keys), the transport. The rest of the JACK LCD stays. The interface scale
+      (1.25 by default) multiplies the desktop's own, and text is rasterised at the exact pixel size, so it stays sharp
+      at any scale or zoom.
+    </p>
+    <p class="caption">
+      <b>One LCD for JACK.</b> The JACK readouts are segments of one LCD face, each a value over a caption: DMA (only
+      with a jackdbus that has <code>cpu-dma-latency</code>; section 7), the rate in kHz over the latency (amber
+      FREEWHEEL while freewheeling, red "offline" without a server), BUF, XRUNS and DSP. DMA, BUF and XRUNS are
+      clickable, their text brightening under the pointer; XRUNS shows a red bar along its bottom while there are any,
+      as DSP shows its load. Each segment is as wide as its widest possible text (<code>88.2 kHz</code> over
+      <code>FREEWHEEL</code>, <code>8192 ▼</code>, <code>0000</code>, <code>100.0 %</code>, and the largest level
+      DMA's menu offers), so the LCD keeps its size whatever the values and changing one never moves the toolbar.
     </p>
   </div>
 </section>
 
-<!-- ============================================================ 15. footprint -->
-<section id="s15">
-  <h2><span class="num">15</span>Footprint, measured</h2>
+<!-- ============================================================ 16. footprint -->
+<section id="s16">
+  <h2><span class="num">16</span>Footprint, measured</h2>
   <p class="sub">
     Light was a requirement, not an afterthought. These are measurements of the release build: binary sizes from the
     files, the composition from symbol sizes (unstripped), and runtime figures from <code>PATCHBOX_STATS=1</code>, which
@@ -3737,7 +4298,7 @@ td code, li code, p code { font-size: 0.92em; }
         <text x="1092" y="138" text-anchor="middle">serde 0.3</text>
         <text x="1130" y="156" text-anchor="end">fonts 0.1</text>
         <line x1="1026" y1="100" x2="1026" y2="108" stroke="#6b7199"/><line x1="1092" y1="100" x2="1092" y2="126" stroke="#6b7199"/><line x1="1130" y1="100" x2="1130" y2="144" stroke="#6b7199"/>
-        <text x="60" y="124">The largest part is zbus and its async runtime, for a few dozen jackdbus calls (section 18).</text>
+        <text x="60" y="124">The largest part is zbus and its async runtime, for a few dozen jackdbus calls (section 19).</text>
       </g>
 
       <text x="20" y="200" class="t-band">RELEASE BINARIES · BEFORE AND AFTER THE TRIM (R62)</text>
@@ -3813,9 +4374,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 16. validation -->
-<section id="s16">
-  <h2><span class="num">16</span>Validation</h2>
+<!-- ============================================================ 17. validation -->
+<section id="s17">
+  <h2><span class="num">17</span>Validation</h2>
   <p class="sub">
     No test touches the desktop's audio. The GUI runs in a nested KWin on a private session bus, inside a user, IPC,
     mount and PID namespace with its own tmpfs on <code>/dev/shm</code>, against its own JACK server. The live
@@ -3903,12 +4464,13 @@ td code, li code, p code { font-size: 0.92em; }
       <thead><tr><th>Suite</th><th>What</th><th class="num">Checks</th></tr></thead>
       <tbody>
         <tr><td><code>cargo test</code> · pbx-session</td><td>store (session files, ids, recent sessions), OSC encode/decode, rules globbing, connection memory, client logs, jackcfg typed values, which parameters changed and whether a running server takes them, the desktop Trash (.trashinfo, names kept apart)</td><td class="num">22</td></tr>
-        <tr><td><code>cargo test</code> · patchbox</td><td>the event log, layout (styles, migration), the model (pairs, tracks, names), presets, the PipeWire graph from objects, PipeWire's bridge's config file, sound cards and bridge specs, the state and kept-settings lines, the application search</td><td class="num">20</td></tr>
+        <tr><td><code>cargo test</code> · patchbox</td><td>the event log, layout (styles, migration), the model (pairs, tracks, names), presets, the PipeWire graph from objects, PipeWire's bridge's config file, sound cards and bridge specs, cards with MIDI only, the state and kept-settings lines, the application search, the CPU's idle states (collating a hybrid CPU's cores, the levels, what a limit allows), the shims' settings file and the ALSA block (added once, removed with the user's lines kept)</td><td class="num">26</td></tr>
         <tr><td>Fuzz (in <code>cargo test</code>)</td><td>deterministic randomised input to the session parser, OSC, rule globs and the jackdbus log splitter. It found a real panic: a byte-offset slice through a multibyte character in jackdbus's log</td><td class="num">4 files</td></tr>
         <tr><td><code>tests/session/run.sh</code></td><td>patchboxd end to end in the namespace: new, open, save, close, switch, duplicate, rename, snapshots and rewind, templates, scripts, plain programs and signals, NSM clients, connection memory, rules; removing clients (running or not), save-and-stop, deleting sessions and templates to a scratch Trash, restarting in place after an update</td><td class="num">46</td></tr>
         <tr><td><code>tests/session/jack-settings.sh</code></td><td>per-session JACK settings through a private jackdbus: saved, restored, unchanged when equal</td><td class="num">6</td></tr>
         <tr><td><code>tests/nested/cameras.sh</code></td><td>the window in the nested KWin, with a private JACK and a bridged PipeWire: each canvas's camera per style across style, graph and session switches, Fit, a style a graph never showed, sessions changed while on PipeWire, a restart from PipeWire, each graph's own style (34 returns)</td><td class="num">5</td></tr>
         <tr><td><code>tests/nested/bridges.sh</code></td><td>a JackBus jackdbus on the private bus and snd-aloop's card: switched on from the Devices tab, locked; its period changed, locked again; switched off and on, its settings kept and saved in jackdbus's list; every tab shown (8 screenshots)</td><td class="num">4</td></tr>
+        <tr><td><code>tests/nested/cpuwake.sh</code></td><td>the toolbar's DMA readout against a JackBus jackdbus on the private bus: its menu, levels read from the CPU's idle states; the first C-state row picked, then off: jackdbus held the request at once (or said why it couldn't), and off reset the parameter, nothing kept in its settings (5 screenshots)</td><td class="num">3</td></tr>
         <tr><td><code>tests/nested/hotplug.sh</code></td><td>a card's <code>/dev/snd</code> nodes taken away and brought back inside the namespace: jackdbus's two refreshes and the device list on the Master tab (3 screenshots)</td><td class="num">3</td></tr>
         <tr><td><code>scripts/sanitize.sh address</code></td><td>ASan + LSan, std rebuilt with <code>-Zbuild-std</code>, at <code>894a785</code>: both session suites and the camera suite pass with no memory errors (the GUI needs <code>detect_odr_violation=0</code>: SDL's stb_image and miniz tables merged identically). LSan reports one allocation when the window exits: 160 bytes, the hit-test closure the sdl3 crate's <code>set_hit_test</code> boxes for the window's life and never frees</td><td class="num">no errors</td></tr>
         <tr><td><code>scripts/sanitize.sh thread</code></td><td>TSan, the same runs: clean at <code>894a785</code>. One suppression, a lock-order report inside libdb (JACK's metadata store), third-party</td><td class="num">clean</td></tr>
@@ -3918,9 +4480,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 17. packaging -->
-<section id="s17">
-  <h2><span class="num">17</span>Packaging and deployment</h2>
+<!-- ============================================================ 18. packaging -->
+<section id="s18">
+  <h2><span class="num">18</span>Packaging and deployment</h2>
   <p class="sub">
     An Arch package, built from the committed state of the repository with the pinned SDL release. It sits beside
     JackBus: PatchBox is built for it but depends only on <code>libjack.so</code>, so any JACK2 server provides
@@ -3934,10 +4496,10 @@ td code, li code, p code { font-size: 0.92em; }
       <ul>
         <li><b>Sources</b>: this repository (<code>git+file://</code>, or <code>PATCHBOX_REPO</code> / <code>PATCHBOX_BRANCH</code>) and SDL at <code>release-3.4.18</code>, checked against the commit <code>scripts/sdl.sh</code> pins, then patched.</li>
         <li><b>depends</b>: gcc-libs, glibc, libjack.so, libglvnd, libwayland-client/cursor/egl, libxkbcommon.</li>
-        <li><b>optdepends</b>: JackBus (server control, presets), pipewire (its graph and tab), wireplumber, git (snapshots), xdg-utils.</li>
+        <li><b>optdepends</b>: jackbus (jackdbus control, settings, presets, sound card bridges; its shims are what the Shims tab sets up), pipewire (its graph and tab), wireplumber, git (snapshots), xdg-utils.</li>
         <li><b>check()</b> runs <code>cargo test --release</code>; <code>options=(!lto)</code> for the C side.</li>
       </ul>
-      <div class="chips"><span class="chip">makepkg</span><span class="chip">cargo --frozen</span><span class="chip">pkgver r73</span></div>
+      <div class="chips"><span class="chip">makepkg</span><span class="chip">cargo --frozen</span><span class="chip">pkgver r95</span></div>
     </div>
     <div class="card engine">
       <h3>What it installs</h3>
@@ -3954,15 +4516,15 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
   <ol class="timeline">
     <li><b>Build</b><span>In a clone of <code>github.com/nine7nine/PatchBox</code>, <code>cd dist/arch &amp;&amp; makepkg</code> fetches the crates (<code>--locked</code>), builds the workspace's binaries in release, runs the tests, renders the icons. makepkg rewrites <code>pkgver=</code> in the PKGBUILD; that edit isn't committed.</span></li>
-    <li><b>Install</b><span><code>makepkg -si</code>, or <code>sudo pacman -U patchbox-0.1.0.r<i>N</i>.g<i>hash</i>-1-x86_64.pkg.tar.zst</code>, next to JackBus (r104 or later for DetachProcess and the live CPU wake-up latency limit; with another jackdbus those steps fall back to a plain stop and a restart).</span></li>
+    <li><b>Install</b><span><code>makepkg -si</code>, or <code>sudo pacman -U patchbox-0.1.0.r<i>N</i>.g<i>hash</i>-1-x86_64.pkg.tar.zst</code>, next to JackBus (r104 or later for DetachProcess and the live CPU wake-up latency limit, with another jackdbus those steps fall back to a plain stop and a restart; r191 or later for the Shims tab: the shims, with the settings of their own it writes).</span></li>
     <li><b>After a jackdbus update</b><span><code>jack_control exit</code>, then any client or <code>jack_control start</code>: until then the running jackdbus is the old program.</span></li>
     <li><b>Run</b><span>From the launcher. The window finds jackdbus, connects to JACK when the server is up, and starts patchboxd if none answers (the daemon stays while the window is open, and while a session or rules need it). Optionally, <code>systemctl --user enable --now patchboxd</code> for sessions from <code>patchbox-ctl</code> without the window.</span></li>
   </ol>
 </section>
 
-<!-- ============================================================ 18. open items -->
-<section id="s18">
-  <h2><span class="num">18</span>Open items</h2>
+<!-- ============================================================ 19. open items -->
+<section id="s19">
+  <h2><span class="num">19</span>Open items</h2>
   <p class="sub">What's left, what's proposed, and what was set aside on purpose.</p>
   <div class="grid2">
     <div class="card">
@@ -4008,26 +4570,28 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 19. source map -->
-<section id="s19">
-  <h2><span class="num">19</span>Source map</h2>
-  <p class="sub">18,762 lines of Rust in three crates, 86 commits. Line counts are from <code>wc -l</code> on 15 November 2026.</p>
+<!-- ============================================================ 20. source map -->
+<section id="s20">
+  <h2><span class="num">20</span>Source map</h2>
+  <p class="sub">19,491 lines of Rust in three crates, 95 commits. Line counts are from <code>wc -l</code> on 16 November 2026.</p>
   <div class="tablebox">
     <table>
       <thead><tr><th>File</th><th>What it holds</th><th class="num">Lines</th></tr></thead>
       <tbody>
         <tr class="compat"><td colspan="3"><b>patchbox</b> · the window (src/)</td></tr>
-        <tr><td><code>main.rs</code></td><td>SDL init and hints, the GL window, the event loop, wakes, pinch, stats, test scripts and snapshots</td><td class="num">631</td></tr>
-        <tr><td><code>app.rs</code></td><td>application state and every Action: JACK, jackdbus replies, the daemon link, PipeWire, pages (settings, rules, log), timers</td><td class="num">3,262</td></tr>
+        <tr><td><code>main.rs</code></td><td>SDL init and hints, the GL window, the event loop, wakes, pinch, stats, test scripts and snapshots; the PulseAudio switch's first version converted at start-up</td><td class="num">635</td></tr>
+        <tr><td><code>app.rs</code></td><td>application state and every Action: JACK, jackdbus replies, the daemon link, PipeWire, pages (settings and their tabs, the Shims tab's rows, rules, log), timers</td><td class="num">3,468</td></tr>
         <tr><td><code>canvas.rs</code></td><td>the patchbay: blocks, ports, wires, matrices, hit testing, drags (move, link, rewire, paint, band), menus, tooltips</td><td class="num">1,887</td></tr>
-        <tr><td><code>ui.rs</code></td><td>the chrome: title bar, toolbar tiles and readouts, sidebar, menus, Luluda's buttons</td><td class="num">1,168</td></tr>
-        <tr><td><code>sessui.rs</code> · <code>session.rs</code></td><td>the session panel and dialogs · the link to patchboxd (start it, subscribe, requests)</td><td class="num">998 · 264</td></tr>
+        <tr><td><code>ui.rs</code></td><td>the chrome: title bar, toolbar tiles, the JACK LCD and its menus (buffer size, DMA), sidebar, menus, Luluda's buttons</td><td class="num">1,211</td></tr>
+        <tr><td><code>sessui.rs</code> · <code>session.rs</code></td><td>the session panel and dialogs · the link to patchboxd (start it, subscribe, requests)</td><td class="num">1,033 · 307</td></tr>
         <tr><td><code>gfx.rs</code> · <code>text.rs</code> · <code>theme.rs</code></td><td>the renderer (one shader, one buffer, one texture) · fonts and the glyph atlas · colours and sizes</td><td class="num">656 · 167 · 100</td></tr>
-        <tr><td><code>pw.rs</code> · <code>pwconf.rs</code></td><td>pw-dump reader, PipeWire graph and state, pw-link / pw-metadata / pw-cli · the bridge's config file, the clock drop-in</td><td class="num">569 · 85</td></tr>
-        <tr><td><code>dialog.rs</code></td><td>pages and dialogs: rows of labelled controls, immediate mode</td><td class="num">623</td></tr>
-        <tr><td><code>server.rs</code></td><td>jackdbus: the worker thread, Cmd / Reply, the parameter tree, signals, the bridges' calls and status</td><td class="num">545</td></tr>
-        <tr><td><code>bridges.rs</code></td><td>the Devices tab's cards: <code>/proc/asound/cards</code>, bridge specs (<code>device[/period[/nperiods]][@wake]</code>), state lines from <code>GetBridges</code>, the settings of cards switched off (<code>bridges-off.json</code>)</td><td class="num">277</td></tr>
-        <tr><td><code>model.rs</code> · <code>layout.rs</code></td><td>snapshot → nodes and matrices · what the canvas remembers (per style, per canvas, a camera each)</td><td class="num">390 · 320</td></tr>
+        <tr><td><code>pw.rs</code> · <code>pwconf.rs</code></td><td>pw-dump reader, PipeWire graph and state, pw-link / pw-metadata / pw-cli · the bridge's config file, the clock drop-in, the drop-in that leaves audio to JackBus</td><td class="num">569 · 117</td></tr>
+        <tr><td><code>compat.rs</code></td><td>JackBus's shims: their settings file (a shim's own key, then the shared one; one key set, the rest kept), which are installed, ALSA's default device (a marked block in the user's asoundrc), the PulseAudio switch and its first version's migration</td><td class="num">235</td></tr>
+        <tr><td><code>cpuidle.rs</code></td><td>the CPUs' idle states from sysfs, collated across cores, as the DMA menu's levels and what a limit allows</td><td class="num">158</td></tr>
+        <tr><td><code>dialog.rs</code></td><td>pages and dialogs: rows of labelled controls, immediate mode</td><td class="num">626</td></tr>
+        <tr><td><code>server.rs</code></td><td>jackdbus: the worker thread, Cmd / Reply, the parameter tree, signals, the bridges' calls and status, the cpu-dma-latency read with each status</td><td class="num">559</td></tr>
+        <tr><td><code>bridges.rs</code></td><td>the Devices tab's cards: <code>/proc/asound/cards</code>, bridge specs (<code>device[/period[/nperiods]][@wake]</code>), state lines from <code>GetBridges</code>, the settings of cards switched off (<code>bridges-off.json</code>); cards with MIDI only left out</td><td class="num">311</td></tr>
+        <tr><td><code>model.rs</code> · <code>layout.rs</code></td><td>snapshot → nodes and matrices · what the canvas remembers (per style, per canvas, a camera each)</td><td class="num">390 · 339</td></tr>
         <tr><td><code>testscript.rs</code></td><td>PATCHBOX_TEST: synthetic input, screenshots, camera fingerprints</td><td class="num">315</td></tr>
         <tr><td><code>csd.rs</code> · <code>shadow.rs</code></td><td>client-side decorations and hit test · KWin's shadow protocol on SDL's display</td><td class="num">214 · 193</td></tr>
         <tr><td><code>events.rs</code> · <code>export.rs</code> · <code>undo.rs</code> · <code>presets.rs</code></td><td>the event log · pretty-name export · undo and redo · server presets</td><td class="num">208 · 138 · 107 · 68</td></tr>
@@ -4040,7 +4604,7 @@ td code, li code, p code { font-size: 0.92em; }
         <tr><td><code>daemon/ctemplates.rs</code> · <code>patch.rs</code> · <code>snapshots.rs</code></td><td>client templates and hooks · connection memory · git snapshots</td><td class="num">153 · 144 · 106</td></tr>
         <tr><td><code>store.rs</code> · <code>proto.rs</code> · <code>osc.rs</code></td><td>session files, ids, recents · the control protocol and paths · OSC 1.0 (NSM's subset)</td><td class="num">399 · 337 · 287</td></tr>
         <tr><td><code>trash.rs</code></td><td>the desktop Trash (freedesktop spec): deleted sessions, templates and client files go there, never removed outright</td><td class="num">119</td></tr>
-        <tr><td><code>rules.rs</code> · <code>jackcfg.rs</code></td><td>connection rules and globs · JACK settings through jackdbus: read, apply in place or by restart, DetachProcess</td><td class="num">184 · 304</td></tr>
+        <tr><td><code>rules.rs</code> · <code>jackcfg.rs</code></td><td>connection rules and globs · JACK settings through jackdbus: read, apply in place or by restart, DetachProcess</td><td class="num">184 · 309</td></tr>
         <tr><td><code>bin/patchbox-ctl.rs</code> · <code>patchboxd.rs</code> · <code>pbx-fake-nsm.rs</code></td><td>the CLI · the daemon's main · a fake NSM client for tests</td><td class="num">224 · 7 · 71</td></tr>
       </tbody>
     </table>
@@ -4048,9 +4612,9 @@ td code, li code, p code { font-size: 0.92em; }
 </section>
 
 <footer>
-  PatchBox · architecture · 0.1.0 r86 (github.com/nine7nine/PatchBox) · Rust · SDL 3.4.18
-  (static, Wayland) · for JackBus 1.9.22 r150 or later · tested on Linux 7.3 PREEMPT_RT, KDE Plasma · updated
-  15 November 2026
+  PatchBox · architecture · 0.1.0 r95 (github.com/nine7nine/PatchBox) · Rust · SDL 3.4.18
+  (static, Wayland) · for JackBus 1.9.22 r150 or later (r191 for the Shims tab) · tested on Linux 7.3 PREEMPT_RT,
+  KDE Plasma · updated 16 November 2026
 </footer>
 
 </main>

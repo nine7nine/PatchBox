@@ -8,13 +8,14 @@ toolkit.
 
 PatchBox is built alongside [JackBus](https://github.com/nine7nine/JackBus), a JACK2
 fork for real-time work, and uses what it adds: other sound cards join the graph from the Devices
-tab, each with a switch (JackBus's sound card bridges, resampled in the master's cycle); an
-application's clients leave the graph before the application is stopped; and the buffer size, the
-CPU wake-up latency and the bridges change without restarting the server. It doesn't need it:
+tab, each with a switch (JackBus's sound card bridges, resampled in the master's cycle); PulseAudio,
+ALSA and PipeWire applications go straight to JackBus through its shims, set up from the Shims tab;
+an application's clients leave the graph before the application is stopped; and the buffer size,
+the CPU wake-up latency and the bridges change without restarting the server. It doesn't need it:
 
 | The set-up | What PatchBox does there |
 |---|---|
-| JackBus's jackdbus, with or without PipeWire on top | everything: JACK's graph, server control, sound card bridges, sessions; with PipeWire bridged, its graph (opened from its JACK client) and its settings tab too |
+| JackBus's jackdbus, with or without PipeWire on top | everything: JACK's graph, server control, sound card bridges, sessions; with PipeWire bridged, its graph (opened from its JACK client) and its settings tab too; with JackBus's shims, desktop applications on JackBus and PipeWire left with no audio work |
 | PipeWire alone (pipewire-jack) | the patchbay (PipeWire's nodes through its JACK API), sessions, PipeWire's settings; no jackdbus page |
 | another jackdbus | the same, except that a client is stopped without leaving the graph first, and a setting that can't change live restarts the server |
 | a plain jackd | the patchbay, sessions and transport; no server control |
@@ -53,20 +54,29 @@ its own.
   one (a browser, OBS). Templates, snapshots, client templates, per-client hooks, notes. Deleted things
   go to the desktop's Trash. `patchbox-ctl` drives it all from a shell.
 - **JACK server.** Start, stop, restart; every driver and engine parameter jackdbus offers, with
-  its constraints, in tabs (Server, Master, Devices, Netjack, Internals); presets switched in one
-  click; a session can carry the server's settings. Xruns, DSP load, the event log and jackdbus's
-  own log; transport.
+  its constraints, on the settings page (tabs Server, Master, Devices, Shims, PipeWire, Internals,
+  Netjack); presets switched in one click; a session can carry the server's settings. A toolbar
+  LCD with the rate, buffer size, xruns and DSP load, and with JackBus the CPU wake-up latency
+  limit, offered in levels read from the CPU's own idle states. The event log and jackdbus's own
+  log; transport.
 - **Sound cards** (with JackBus). The Devices tab bridges any other card with a switch: its ports
   join the graph, resampled in the master's cycle, with its period, periods and wake-ups set per
   card and its state shown live (locked, the delay each way, drift, xruns). Unplugged and back,
   it comes back by itself; switched off, it keeps its settings. Slave drivers are on the same tab.
+- **Applications on JackBus** (with JackBus's shims). The Shims tab: PulseAudio applications on
+  JackBus while it runs (PipeWire otherwise), ALSA's default device JackBus (with PipeWire or the
+  card while it isn't running), PipeWire applications through `jackbus-pw`; per kind, resampling
+  and its quality, where new streams go, connected or not. And PipeWire leaving audio to JackBus:
+  its JACK bridge off, so while JackBus runs PipeWire has no audio work, and while it doesn't,
+  PipeWire plays as before.
 
 ## Requirements
 
 - Linux with a Wayland compositor.
 - libjack: JACK2's, or PipeWire's (pipewire-jack). jackdbus for JACK server control, ideally
   [JackBus](https://github.com/nine7nine/JackBus).
-- Optional: PipeWire and WirePlumber (PipeWire's graph and tab), git (session snapshots), xdg-utils.
+- Optional: JackBus's shims (the jackbus package) for the Shims tab; PipeWire and WirePlumber
+  (PipeWire's graph and tab), git (session snapshots), xdg-utils.
 - To build: Rust (edition 2024), CMake, pkgconf, wayland, libxkbcommon, EGL (mesa), dbus; librsvg
   for the package's icons.
 
@@ -107,7 +117,8 @@ doesn't start one by itself, and reconnects when the server comes back.
   Matrix views, **Ctrl+F** finds a block or port, **F** fits the graph, **F9** shows the sidebar.
 - Drag a port onto another to connect or disconnect them; in a matrix, click or paint cells.
 - The sidebar's session section: **New**, then **+ Application** to add programs.
-- The JACK section: start and stop the server, **Settings** for its parameters and presets.
+- The JACK section: start and stop the server, **Settings** for its parameters and presets, the
+  Shims tab and PipeWire's.
 
 Every control, the session format, the settings and the test harness are described in
 [docs/MANUAL.md](docs/MANUAL.md); how it is built, in the

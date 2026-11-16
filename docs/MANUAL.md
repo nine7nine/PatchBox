@@ -11,7 +11,7 @@ puts it in the graph.
 | | |
 |---|---|
 | Title bar | window buttons, ☰ menu (views, scale, grid, undo…), the session's name |
-| Toolbar | Luluda-style tiles, an icon over a label: session (New, Open, Save; dropped first when narrow), transport (rewind, play/pause, stop, time and BBT), port type (AUDIO / MIDI / CV / OSC, keys 1–4), view (Ports, its icon showing the flow: click again to switch left-to-right and top-to-bottom (V); Matrix (M)), JACK readouts, one LCD (with JackBus, DMA: the cpu-dma-latency menu, levels read from this machine's idle states: 0 µs · performance, then ≤ each C-state, then off · power saving; dim while the server is stopped; rate in kHz and latency; BUF: the buffer size menu; xruns: click to reset, right-click for the event log; DSP load) |
+| Toolbar | Luluda-style tiles, an icon over a label: session (New, Open, Save; dropped first when narrow), transport (rewind, play/pause, stop, time and BBT), port type (AUDIO / MIDI / CV / OSC, keys 1–4), view (Ports, its icon showing the flow: click again to switch left-to-right and top-to-bottom (V); Matrix (M)), and the JACK readouts, one LCD ([below](#the-jack-lcd)): DMA (with JackBus), rate and latency, BUF, XRUNS, DSP |
 | Views | **Ports** (default): each block shows its ports of the current type, inputs left, outputs right, a wire per connection; **Matrices** (M): PatchMatrix's view, one wire per client pair through a matrix of their ports, port counts on the blocks. Both keep the AUDIO / MIDI / CV / OSC split. Each view (ports left to right, ports top to bottom, matrices) keeps its own block positions and camera, in the global layout and in each session's, so switching views never rearranges another. JACK's graph and PipeWire's each keep their own view: Matrix on PipeWire's leaves JACK's as it was |
 | Tracks | right-click a block whose ports name tracks or plugins (Ardour's `Track/port`, Carla's `Plugin:port`) → A block per track / plugin: each becomes its own block, titled after it, the client above it; the rest stay in the client's block. Right-click any of them → One block for the whole client |
 | Port groups | right-click a port → Group ports from here…: a name and how many (this port and the ones after it). A bracket joins them; dragging one connects the whole group 1:1 to the group (or the ports from) where it lands, or disconnects them all when they already are; Ctrl+drag: that port alone. A group of two is a stereo pair (Shift-painting in matrices). Kept with the layout (per session in a session) |
@@ -41,6 +41,22 @@ metadata pretty-names, else RaySession-style graceful names.
 
 The layout (positions, pinned matrices, split/hidden clients, view) is kept in
 `~/.config/patchbox/layout.json`.
+
+### The JACK LCD
+
+The JACK readouts are one LCD at the right of the toolbar, each a value over its caption:
+
+| | |
+|---|---|
+| DMA | with JackBus (a jackdbus with the `cpu-dma-latency` engine parameter; otherwise not shown): the CPU wake-up latency limit JackBus holds while the server runs, in µs, `off` when there is none; dim while the server is stopped (no limit is held then). Click for its levels, read from the computer's own CPU idle states (sysfs cpuidle), from performance to power saving: **0 µs · performance** (no idle state: the CPUs poll, the most power and heat), a row for each idle state but the deepest at its wake-up latency (`1 µs · ≤ C1`, `170 µs · ≤ C6`…: the CPUs may idle down to that state), and **off · power saving** (no limit). A value set elsewhere (the Server tab, a preset) shows as a row of its own. It applies to the running server at once, and jackdbus keeps it for the next start; off resets the parameter. The tooltip says what the value allows (`idle ≤ C1`). PatchBox writes nothing in cpuidle |
+| rate | the sample rate in kHz over the latency of one buffer; FREEWHEEL (amber) while freewheeling, `offline` (red) with no server |
+| BUF | the buffer size: click for 16 to 4096 frames, changed on the running server |
+| XRUNS | xruns since the last reset, with a red bar while there are any: click resets them, right-click opens the event log |
+| DSP | the DSP load, with a level (green; amber from 50 %, red from 80 %) |
+
+Each readout is as wide as its widest possible value, so the LCD keeps its size whatever the
+values. When the window is narrow, the rate and DMA go before the port types and the transport (the
+sidebar shows the rate); the rest of the LCD stays.
 
 ## Sessions
 
@@ -95,11 +111,13 @@ constraints and descriptions, in tabs:
 | Server | state, load, latency and xruns; presets; the engine's parameters; jackdbus itself (Quit jackdbus) |
 | Master | the master driver, Switch master (no restart), its parameters |
 | Devices | what else joins the graph: sound cards, bridged; then slave drivers |
-| Netjack | netmanager, netadapter, and the net drivers as master |
+| Shims | JackBus's shims: PulseAudio, ALSA and PipeWire applications straight to JackBus; PipeWire leaving audio to JackBus ([below](#shims)) |
+| PipeWire | PipeWire's settings ([below](#pipewire)) |
 | Internals | the other internal clients jackdbus can load |
-| PipeWire | PipeWire's settings (below) |
+| Netjack | netmanager, netadapter, and the net drivers as master |
 
-Each tab says what it is about above its rows, and what applies when in its footer. A session can remember
+The tabs most used come first; Internals and Netjack, the least used, last. Each tab says what
+it is about above its rows, and what applies when in its footer. A session can remember
 them (☰ session menu) and puts them back when it opens. Presets (qjackctl's) name a whole
 configuration, the driver and every parameter set away from its default: the sidebar's
 "Preset ▼" switches between them in one click (the server restarts only when something differs
@@ -121,7 +139,9 @@ removed (`RemoveBridge`) and the card's settings are kept (`~/.config/patchbox/b
 switched on again, it gets them back. A "kept settings" row shows them, and its × forgets them.
 A bridge whose card isn't plugged in stays listed, waiting for it, with a × to remove it. The
 list is jackdbus's `bridges` engine parameter, kept in its conf.xml; presets and sessions carry
-it, and applying it needs no restart. A jackdbus without bridges says so here.
+it, and applying it needs no restart. A jackdbus without bridges says so here. A card with MIDI
+only (a USB keyboard or controller: no PCM device in `/proc/asound/cardN`) isn't listed, having no
+audio to bridge; its MIDI ports come from a MIDI slave driver, below.
 
 **Slave drivers (in the master's cycle)**: alsarawmidi (MIDI ports), alsa (a card clocked by the
 master's: word clock, S/PDIF), firewire, net / netone, loopback (JACK's own looped-back ports, not
@@ -130,9 +150,70 @@ stopped, changed and started again, and the log says so. PatchBox never starts j
 a plain jackd the patchbay and transport work, server control doesn't. The transport is in the
 toolbar (Space: play/pause).
 
+## Shims
+
+JackBus's shims take applications that speak PulseAudio, ALSA or PipeWire straight to JackBus,
+each a JACK client of its own in JackBus's cycle, with no PipeWire in between. They come with the
+jackbus package: **jackbus-pa** (a libpulse), **jackbus-alsa** (an ALSA plugin, the `jackbus`
+device) and **jackbus-pw** (a libpipewire, for a program started as `jackbus-pw <program>`).
+Settings' Shims tab sets them up, a section per kind of application, then PipeWire. Each section's
+first row says how its shim is reached and whether it is installed; a setting made for a shim that
+isn't installed waits in the file.
+
+**PulseAudio applications**
+
+| | |
+|---|---|
+| Use JackBus | every PulseAudio application (browsers, players, video calls) started while JackBus runs uses JackBus; one started while it doesn't uses PipeWire, as before. Off by default. From each application's next start, with no new login: one already running stays where it is. Off: applications started afterwards use PipeWire again. `jackbus-pa <program>` runs one program on JackBus whatever the switch says |
+| Most a stream buffers | the most a PulseAudio stream may queue in the shim, beyond the device's latency: what it asks for (the default), 10 to 160 ms, or a number typed in. Browsers ask for 30–50 ms, players more; lower is tighter, too low drops out |
+
+**ALSA applications**
+
+| | |
+|---|---|
+| Default device is JackBus | every ALSA application's `default` device is JackBus, from the application's next start. Off: `default` is as the system has it again (PipeWire's, with pipewire-alsa) |
+| While JackBus isn't running | where `default` goes then: PipeWire, the sound card, or nothing (no sound). Until chosen: PipeWire when pipewire-alsa is installed, else the card |
+
+**PipeWire applications** go to JackBus when started as `jackbus-pw <program>`.
+
+**Each kind of application** has these, its own:
+
+| | |
+|---|---|
+| Resample another rate | on (the default): a stream at JackBus's rate goes as it is, one at another rate is resampled; off: a stream at another rate is refused (PipeWire and PulseAudio programs) or held to JackBus's rate (ALSA) |
+| Resampling quality | JackBus's bridge resampler: low (32 taps, the least CPU), normal (56, the default), high (96: the most CPU, a few frames more delay) |
+| Connect new streams | on (the default): a new stream's ports are connected to the output (input) device; off: left unconnected, for you or a session to route |
+| Output device, Input device | where new playback (recording) streams go: the first card (`system`, the default) or another JACK client with physical ports, such as a bridged card; one chosen earlier that isn't there now is marked so. For PulseAudio applications, also their default output and input |
+
+These apply to new streams.
+
+**PipeWire**
+
+| | |
+|---|---|
+| Leaves audio to JackBus | PipeWire's JACK bridge isn't loaded. While JackBus runs, PipeWire has no audio work: JackBus has the cards, the shims the PulseAudio and ALSA applications. While it doesn't, PipeWire plays as before. Video and screen sharing are untouched; applications only PipeWire plays (Flatpaks, for instance) are silent while JackBus runs. Applies when PipeWire restarts (Restart PipeWire, or the next login); off, the bridge is back at the next restart |
+| Restart PipeWire | applies the switch above now: `systemctl --user restart pipewire.service` (WirePlumber restarts with it; pipewire-pulse stops and starts again for the next program; a screen share in progress stops) |
+
+What the tab writes (under `$XDG_CONFIG_HOME` when it is set); turning a switch off takes back
+what it wrote, and nothing else is touched:
+
+- `~/.config/jackbus/compat.conf`, the shims' settings file, `key = value`: the tab writes each
+  shim's own key (`pa.resample`, `alsa.output`, `pw.autoconnect`…), `pa.max-latency`, `pulse`
+  (Use JackBus) and `alsa.fallback`, and keeps the file's other lines and comments. A shim reads
+  its own key first, then the shared one (`resample = no`, written by hand, applies to every shim
+  without a key of its own), in this file and then in `/etc/jackbus/compat.conf`.
+- `~/.config/alsa/asoundrc`: a block between two `# PatchBox: …` lines,
+  `pcm.!default { type jackbus fallback "pipewire" }` (`sysdefault` for the card, no `fallback`
+  for nothing). Your own lines stay; off removes the block, and the file if nothing else is in it.
+- `~/.config/pipewire/pipewire.conf.d/60-patchbox-no-jack-bridge.conf`:
+  `module.jackdbus-detect = false`. Off deletes it.
+
+The first version of Use JackBus wrote `~/.config/environment.d/60-jackbus-pa.conf` (a library
+path, from the next login); PatchBox turns it into `pulse = yes` when it starts, and removes it.
+
 ## PipeWire
 
-Settings' last tab, PipeWire, is read from `pw-dump --monitor` and written with
+Settings' PipeWire tab is read from `pw-dump --monitor` and written with
 `pw-metadata` / `pw-cli`. It adapts to what runs:
 
 - **On top of JACK** (JackBus with module-jackdbus-detect, or module-jack-tunnel): the
@@ -156,7 +237,9 @@ src/                 GUI: main loop (main.rs), app state and actions (app.rs), c
                      chrome and menus (ui.rs), decorations (csd.rs), KWin shadow (shadow.rs),
                      renderer (gfx.rs) and glyph atlas (text.rs), graph model (model.rs),
                      layout file (layout.rs), scripted test input (testscript.rs), jackdbus
-                     (server.rs), PipeWire's graph and settings (pw.rs, pwconf.rs)
+                     (server.rs), sound cards (bridges.rs), CPU idle states for the DMA menu
+                     (cpuidle.rs), PipeWire's graph and settings (pw.rs, pwconf.rs), JackBus's
+                     shims' settings (compat.rs)
 crates/pbx-jack/     libjack FFI, graph snapshot, events, transport; pbx-fake-clients (test tool)
 crates/pbx-session/  patchboxd (NSM server, clients, connection memory), patchbox-ctl, the
                      session format and control protocol; pbx-fake-nsm (test tool)
@@ -220,6 +303,12 @@ per view style (Ports, vertical Ports, Matrix), its own camera and block/matrix 
 style and graph switches, Fit, sessions (opened or closed while on PipeWire) and restarts (scripts
 in `tests/nested/cameras/`; every `cam =X` must equal `cam X`). It fails on the code before the fix
 it came with.
+
+With a JackBus build (`JACK2_BUILD=/path/to/jack2/build`), three more drive a JackBus jackdbus on
+the harness's private bus: `tests/nested/bridges.sh` (snd-aloop's card bridged from the Devices
+tab, its period changed, switched off and on), `tests/nested/hotplug.sh` (a card's `/dev/snd`
+nodes taken away and brought back inside the namespace) and `tests/nested/cpuwake.sh` (the DMA
+readout: a level held, then off).
 
 `tests/session/run.sh` drives patchboxd end to end (sessions, an NSM client, connection memory)
 against a private jackd in its own namespace. `PB_OLD_DAEMON=<patchboxd>` (with `PB_OLD_SETUP`)
