@@ -191,7 +191,7 @@ pub struct App {
     global_canvas: Option<Layout>,
     /// PipeWire as the settings page shows it (from the pw-dump stream).
     pub pw_state: Option<crate::pw::PwState>,
-    /// The settings page's tab last shown: the JACK tabs (JACK_TABS), then PipeWire.
+    /// The settings page's tab last shown (its id: SETTINGS_TABS).
     settings_tab: usize,
     /// JACK server presets, and the server's settings as a preset would keep them.
     pub presets: crate::presets::Presets,
@@ -2137,65 +2137,126 @@ impl App {
             d.buttons = vec!["Close".into()];
             d
         };
-        d.tabs = JACK_TABS.iter().map(|t| t.to_string()).chain(["PipeWire".to_string(), "Shims".to_string()]).collect();
-        d.tab = tab;
+        d.tabs = SETTINGS_TABS.iter().map(|(t, _)| t.to_string()).collect();
+        d.tab = SETTINGS_TABS.iter().position(|&(_, id)| id == tab).unwrap_or(0);
         self.dialog = Some(d);
     }
 
     /// The Shims tab: JackBus's shims (PipeWire, PulseAudio and ALSA applications straight to
-    /// JackBus), their settings, and the per-user switches.
+    /// JackBus), a section of settings for each kind of application, and PipeWire's own audio.
     fn shims_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::compat::{get_bool, get_str};
         use crate::dialog::{Control, Row};
         let inst = crate::compat::installed();
-        let yes = |b: bool| if b { "installed" } else { "not installed" };
-        let row = |id: &str, label: &str, help: String, control: Control| Row { id: id.into(), label: label.into(), help, control, modified: false };
-        let mut rows = vec![Row::header("Shims")];
-        rows.push(row("", "PipeWire applications", "One application: jackbus-pw <program>. Its streams and filters become one JACK client, in the cycle".into(), Control::Info(format!("jackbus-pw · {}", yes(inst.pw)))));
-        rows.push(row("", "PulseAudio applications", "One application: jackbus-pa <program>; all of them: the switch below. Firefox, Chrome, mpv, games".into(), Control::Info(format!("jackbus-pa · {}", yes(inst.pa)))));
-        rows.push(row("", "ALSA applications", "One application: its device \"jackbus\" (aplay -D jackbus); all of them: the switch below".into(), Control::Info(format!("the \"jackbus\" device · {}", yes(inst.alsa)))));
-
-        rows.push(Row::header("Settings (all three shims)"));
+        let row = |id: String, label: &str, help: String, control: Control| Row { id, label: label.into(), help, control, modified: false };
         let conf = crate::compat::conf_path().map(|p| p.display().to_string()).unwrap_or_default();
-        rows.push(row(
-            "compat:resample",
-            "Resample a stream at another rate",
-            format!("A stream at JackBus's rate goes as it is (the direct route); one at another rate is resampled, or refused when off ({conf})"),
-            Control::Toggle(crate::compat::get("resample")),
-        ));
-        rows.push(row(
-            "compat:autoconnect",
-            "Connect new streams",
-            format!("A new stream's ports go to the default device (system playback or capture); off: left unconnected for you or a session to route ({conf})"),
-            Control::Toggle(crate::compat::get("autoconnect")),
-        ));
+        // the devices: JACK clients with physical ports (system, bridged cards)
+        let devices = |playback: bool, cur: &str| {
+            let mut v: Vec<String> = Vec::new();
+            if self.source == Source::Jack {
+                for p in &self.graph.ports {
+                    if p.kind == PortKind::Audio && p.is_physical() && p.is_input() == playback && !v.contains(&p.client) {
+                        v.push(p.client.clone());
+                    }
+                }
+            }
+            let mut opts = vec![(String::new(), "the first card (system)".to_string())];
+            opts.extend(v.iter().map(|c| (c.clone(), c.clone())));
+            if !cur.is_empty() && !v.iter().any(|c| c == cur) {
+                opts.push((cur.to_string(), format!("{cur} (not there now)")));
+            }
+            opts
+        };
+        let mut rows = Vec::new();
+        for (shim, title, how, there) in [
+            ("pa", "PulseAudio applications", "jackbus-pa", inst.pa),
+            ("alsa", "ALSA applications", "the \"jackbus\" device", inst.alsa),
+            ("pw", "PipeWire applications", "jackbus-pw <program>", inst.pw),
+        ] {
+            rows.push(Row::header(title));
+            rows.push(row(String::new(), "Shim", String::new(), Control::Info(format!("{how} · {}", if there { "installed" } else { "not installed" }))));
+            match shim {
+                "pa" => rows.push(row(
+                    "compat:pulse".into(),
+                    "Use JackBus",
+                    "Every PulseAudio application (browsers, players, Teams) started while JackBus runs uses JackBus, one started while it doesn't uses PipeWire; from each application's next start".into(),
+                    Control::Toggle(crate::compat::pulse_on()),
+                )),
+                "alsa" => {
+                    let alsa = crate::compat::alsa_path().map(|p| p.display().to_string()).unwrap_or_default();
+                    rows.push(row(
+                        "compat:alsa-default".into(),
+                        "Default device is JackBus",
+                        format!("Every ALSA application's \"default\" device is JackBus; from the application's next start ({alsa})"),
+                        Control::Toggle(crate::compat::alsa_default()),
+                    ));
+                    let fb = vec![
+                        ("pipewire".to_string(), "PipeWire".to_string()),
+                        ("sysdefault".to_string(), "the sound card".to_string()),
+                        ("none".to_string(), "nothing (no sound)".to_string()),
+                    ];
+                    rows.push(row(
+                        "compat:alsa-fallback".into(),
+                        "While JackBus isn't running",
+                        "Where ALSA applications' default device goes while JackBus isn't running".into(),
+                        Control::Choice { value: crate::compat::alsa_fallback(), options: fb, editable: false },
+                    ));
+                }
+                _ => {}
+            }
+            rows.push(row(
+                format!("shim:{shim}:resample"),
+                "Resample another rate",
+                format!("A stream at JackBus's rate goes as it is (the direct route); one at another rate is resampled, or refused when off ({conf}: {shim}.resample)"),
+                Control::Toggle(get_bool(shim, "resample", true)),
+            ));
+            let q = get_str(shim, "resample-quality").unwrap_or_else(|| "normal".into());
+            rows.push(row(
+                format!("shim:{shim}:resample-quality"),
+                "Resampling quality",
+                "JackBus's bridge resampler: low 32 taps (least CPU), normal 56, high 96 (most CPU, a few frames more delay)".into(),
+                Control::Choice {
+                    value: q,
+                    options: vec![("low".into(), "low · 32 taps".into()), ("normal".into(), "normal · 56 taps".into()), ("high".into(), "high · 96 taps".into())],
+                    editable: false,
+                },
+            ));
+            rows.push(row(
+                format!("shim:{shim}:autoconnect"),
+                "Connect new streams",
+                "A new stream's ports go to the output (input) device below; off: left unconnected, for you or a session to route".into(),
+                Control::Toggle(get_bool(shim, "autoconnect", true)),
+            ));
+            for (key, label, playback) in [("output", "Output device", true), ("input", "Input device", false)] {
+                let cur = get_str(shim, key).unwrap_or_default();
+                rows.push(row(
+                    format!("shim:{shim}:{key}"),
+                    label,
+                    format!("Where new {} streams go{}", if playback { "playback" } else { "recording" }, if shim == "pa" { ", and PulseAudio's default device" } else { "" }),
+                    Control::Choice { value: cur.clone(), options: devices(playback, &cur), editable: false },
+                ));
+            }
+            if shim == "pa" {
+                let ms = get_str("pa", "max-latency").unwrap_or_else(|| "0".into());
+                let opts = [("0", "what it asks for"), ("10", "10 ms"), ("20", "20 ms"), ("40", "40 ms"), ("80", "80 ms"), ("160", "160 ms")];
+                rows.push(row(
+                    "shim:pa:max-latency".into(),
+                    "Most a stream buffers",
+                    "The most a PulseAudio stream may queue in the shim, beyond the device's latency (browsers ask for 30-50 ms, players more); lower is tighter, too low drops out".into(),
+                    Control::Choice { value: ms, options: opts.iter().map(|(v, l)| (v.to_string(), l.to_string())).collect(), editable: true },
+                ));
+            }
+        }
 
-        rows.push(Row::header("For this user"));
-        let alsa = crate::compat::alsa_path().map(|p| p.display().to_string()).unwrap_or_default();
-        rows.push(row(
-            "compat:alsa-default",
-            "ALSA's default device is JackBus",
-            format!("Every ALSA application's \"default\" device: JackBus while it runs, PipeWire (or the card) while it doesn't; from the application's next start ({alsa})"),
-            Control::Toggle(crate::compat::alsa_default()),
-        ));
-        rows.push(row(
-            "compat:pulse",
-            "PulseAudio applications on JackBus",
-            format!("A PulseAudio application (browsers, players, Teams) started while JackBus runs uses JackBus, one started while it doesn't uses PipeWire; from each application's next start (pulse in {conf})"),
-            Control::Toggle(crate::compat::pulse_on()),
-        ));
+        rows.push(Row::header("PipeWire"));
         let dropin = crate::pwconf::no_bridge_dropin().map(|p| p.display().to_string()).unwrap_or_default();
         rows.push(row(
-            "compat:pw-no-bridge",
-            "PipeWire leaves audio to JackBus",
+            "compat:pw-no-bridge".into(),
+            "Leaves audio to JackBus",
             format!("PipeWire's JACK bridge off: while JackBus runs, PipeWire has no audio work (applications only PipeWire plays, as Flatpaks, are silent then); while it doesn't, PipeWire plays as before; video and screen sharing are untouched. Applies when PipeWire restarts ({dropin})"),
             Control::Toggle(crate::pwconf::no_bridge()),
         ));
-        rows.push(row(
-            "act:restart-pw",
-            "Restart PipeWire",
-            "To apply the switch above now (a screen share in progress stops)".into(),
-            Control::Link("restart".into()),
-        ));
+        rows.push(row("act:restart-pw".into(), "Restart PipeWire", "To apply the switch above now (a screen share in progress stops)".into(), Control::Link("restart".into())));
         rows
     }
 
@@ -2205,24 +2266,26 @@ impl App {
             return;
         }
         let on = v == "on";
-        if id == "compat:pw-no-bridge" {
-            match crate::pwconf::set_no_bridge(on) {
-                Ok(()) if on => self.say("PipeWire leaves audio to JackBus once restarted", false),
-                Ok(()) => self.say("PipeWire's JACK bridge back once restarted", false),
-                Err(e) => self.say(format!("PipeWire's drop-in: {e}"), true),
+        let res = if let Some(rest) = id.strip_prefix("shim:") {
+            let (shim, key) = rest.split_once(':').unwrap_or(("", rest));
+            let value = match key {
+                "resample" | "autoconnect" => Some(if on { "yes" } else { "no" }),
+                "output" | "input" if v.is_empty() => None,
+                "max-latency" if v.trim().parse::<u32>().is_err() => {
+                    self.say(format!("\"{v}\" is not a number of ms"), true);
+                    return;
+                }
+                _ => Some(v.trim()),
+            };
+            crate::compat::set_str(&format!("{shim}.{key}"), value)
+        } else {
+            match id {
+                "compat:alsa-default" => crate::compat::set_alsa_default(on),
+                "compat:alsa-fallback" => crate::compat::set_alsa_fallback(v),
+                "compat:pulse" => crate::compat::set_pulse(on),
+                "compat:pw-no-bridge" => crate::pwconf::set_no_bridge(on).map_err(std::io::Error::other),
+                _ => return,
             }
-            let rows = self.shims_rows();
-            if let Some(d) = &mut self.dialog {
-                d.set_rows(rows);
-            }
-            return;
-        }
-        let res = match id {
-            "compat:resample" => crate::compat::set("resample", on),
-            "compat:autoconnect" => crate::compat::set("autoconnect", on),
-            "compat:alsa-default" => crate::compat::set_alsa_default(on),
-            "compat:pulse" => crate::compat::set_pulse(on),
-            _ => return,
         };
         match res {
             Ok(()) => {
@@ -2231,7 +2294,9 @@ impl App {
                     "compat:pulse" => "PulseAudio applications: PipeWire, from their next start",
                     "compat:alsa-default" if on => "ALSA's default device: JackBus (while it runs)",
                     "compat:alsa-default" => "ALSA's default device: as the system has it",
-                    _ => "Saved",
+                    "compat:pw-no-bridge" if on => "PipeWire leaves audio to JackBus once restarted",
+                    "compat:pw-no-bridge" => "PipeWire's JACK bridge back once restarted",
+                    _ => "Saved: applications' next streams use it",
                 };
                 self.say(what, false);
             }
@@ -3006,7 +3071,7 @@ impl App {
                     None => self.say(format!("\"{text}\" is not a valid value for {id}"), true),
                 }
             }
-            (Kind::Server | Kind::PipeWire | Kind::Shims, Event::Tab(t)) => self.open_settings(t),
+            (Kind::Server | Kind::PipeWire | Kind::Shims, Event::Tab(t)) => self.open_settings(SETTINGS_TABS.get(t).map_or(0, |&(_, id)| id)),
             (Kind::Shims, Event::Set(id, v)) => self.shims_set(&id, &v),
             (Kind::Shims, Event::Button(_)) => self.dialog = None,
             (Kind::Log, Event::Tab(t)) => self.open_log(t),
@@ -3277,7 +3342,17 @@ pub fn kind_from(s: &str) -> PortKind {
 }
 
 /// The settings page's tabs: the JACK server's (through jackdbus), then PipeWire's.
-const JACK_TABS: [&str; 5] = ["Server", "Master", "Devices", "Netjack", "Internals"];
+/// The settings page's tabs as shown, with their ids: what a typical user changes first, the
+/// network and internal clients last.
+const SETTINGS_TABS: [(&str, usize); 7] = [
+    ("Server", 0),
+    ("Master", TAB_MASTER),
+    ("Devices", TAB_DEVICES),
+    ("Shims", TAB_SHIMS),
+    ("PipeWire", TAB_PIPEWIRE),
+    ("Internals", TAB_INTERNALS),
+    ("Netjack", TAB_NETJACK),
+];
 const TAB_MASTER: usize = 1;
 /// Other devices joining the graph: sound cards bridged (their own clocks) and slave drivers
 /// (in the master's cycle)
