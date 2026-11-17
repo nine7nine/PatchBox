@@ -661,14 +661,18 @@ impl Dialog {
                     let live = switch.unwrap_or(true);
                     let held = self.drag.as_ref().is_some_and(|(id, _)| *id == row.id);
                     let hot = held || (self.drag.is_none() && hov(&grab));
-                    g.rrect(track, 3.0 * s, BUTTON);
-                    g.rrect_stroke(track, 3.0 * s, s.max(1.0), if hot { HILIGHT } else { LINE_SOFT });
+                    // The app's own tones: a dark groove, a muted blue fill (grey while the switch
+                    // mutes), and a knob that is one of the settings' blue buttons, lit when held.
+                    let groove = crate::gfx::mix(BTN_FACE, [0.0, 0.0, 0.0, 1.0], 0.25);
+                    g.rrect(track, 3.0 * s, groove);
+                    g.rrect_stroke(track, 3.0 * s, s.max(1.0), crate::gfx::mix(BTN_FACE, TINT_BLUE, if hot { 0.45 } else { 0.22 }));
                     let fw = (track.w * pos.clamp(0.0, 1.0)).round();
                     if fw >= 2.0 {
-                        let fill = if live { alpha(BORDER, 0.85) } else { alpha(TEXT_DIM, 0.6) };
+                        let fill = crate::gfx::mix(BTN_FACE, if live { TINT_BLUE } else { TINT_GREY }, if live { 0.5 } else { 0.3 });
                         g.rrect(Rect::new(track.x, track.y, fw, track.h), (3.0 * s).min(fw / 2.0), fill);
                     }
-                    g.circle([track.x + fw, track.cy()], 7.0 * s, if hot { HILIGHT } else if live { TEXT_BRIGHT } else { TEXT });
+                    let knob = Rect::new((track.x + fw - 6.0 * s).round(), (track.cy() - 9.0 * s).round(), (12.0 * s).round(), (18.0 * s).round());
+                    crate::ui::lbutton(g, knob, s, if live { TINT_BLUE } else { TINT_GREY }, hot && !held, held, true);
                     g.text_fit(Face::Regular, px, track.right() + 14.0 * s, rr.cy() - lh / 2.0, text_w, if live { TEXT_BRIGHT } else { TEXT_DIM }, text);
                     self.hits.push((grab, Hit::Row(i, Part::Level)));
                 }
