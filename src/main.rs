@@ -14,6 +14,7 @@ mod dialog;
 mod events;
 mod export;
 mod gfx;
+mod mixer;
 mod layout;
 mod model;
 mod presets;
@@ -263,6 +264,14 @@ fn main() {
                 Event::MouseMotion { x, y, .. } => {
                     let (px, py) = (x * density, y * density);
                     app.ui.mouse = [px, py];
+                    // A page's bar being dragged follows the pointer, wherever it goes.
+                    if let Some(d) = app.dialog.as_mut().filter(|d| d.dragging()) {
+                        if let Some(ev) = d.drag_to(px) {
+                            app.dialog_event(ev);
+                        }
+                        app.redraw = true;
+                        continue;
+                    }
                     if app.ui.menu.is_some() || (app.dialog.is_some() && app.canvas.area.contains(px, py)) {
                         app.redraw = true;
                         continue;
@@ -358,6 +367,10 @@ fn main() {
                 }
                 Event::MouseButtonUp { x, y, .. } => {
                     let (px, py) = (x * density, y * density);
+                    if let Some(d) = app.dialog.as_mut().filter(|d| d.dragging()) {
+                        d.release();
+                        app.redraw = true;
+                    }
                     if app.ui.slider.take().is_some() {
                         app.redraw = true;
                     }

@@ -901,7 +901,7 @@ impl App {
             self.button(g, Rect::new(bx, y, bw, bh), "Restart", false, Action::ServerRestart);
             bx += bw + 6.0 * s;
         }
-        let open = self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire | crate::dialog::Kind::Shims));
+        let open = self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire | crate::dialog::Kind::Shims | crate::dialog::Kind::Mixer));
         self.button(g, Rect::new(bx, y, bw, bh), "Settings", open, Action::ServerSettings);
         y += bh + 12.0 * s;
         g.rect(Rect::new(r.x + pad, y, r.w - 2.0 * pad, s.max(1.0)), PANEL_LINE);

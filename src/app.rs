@@ -193,6 +193,10 @@ pub struct App {
     pub pw_state: Option<crate::pw::PwState>,
     /// The settings page's tab last shown (its id: SETTINGS_TABS).
     settings_tab: usize,
+    /// The sound cards' mixers, open while the Mixer tab is shown, and when the list of cards
+    /// is read next (cards plugged in or out).
+    mixer: Option<crate::mixer::Mixer>,
+    mixer_scan: Instant,
     /// JACK server presets, and the server's settings as a preset would keep them.
     pub presets: crate::presets::Presets,
     pub jack_now: Option<pbx_session::jackcfg::JackSettings>,
@@ -255,6 +259,8 @@ impl App {
             global_canvas: None,
             pw_state: None,
             settings_tab: 0,
+            mixer: None,
+            mixer_scan: Instant::now(),
             presets: crate::presets::load(),
             jack_now: None,
             preset_saving: None,
@@ -534,6 +540,23 @@ impl App {
             } else {
                 at(due.min(cap));
             }
+        }
+        // The Mixer tab: the cards' changes (made anywhere) read every 100 ms, the list of cards
+        // every second; the mixers closed with the tab.
+        if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Mixer) {
+            if let Some(m) = &mut self.mixer {
+                let mut changed = m.poll();
+                if now >= self.mixer_scan {
+                    changed |= m.rescan(false);
+                    self.mixer_scan = now + Duration::from_secs(1);
+                }
+                if changed {
+                    self.refresh_mixer_page();
+                }
+            }
+            at(now + Duration::from_millis(100));
+        } else if self.mixer.is_some() {
+            self.mixer = None;
         }
         if let Some(c) = &self.jack {
             if now >= self.dsp_at {
@@ -1846,7 +1869,7 @@ impl App {
             Action::ServerStart => self.server.run(crate::server::Cmd::Start),
             Action::ServerStop => self.server.run(crate::server::Cmd::Stop),
             Action::ServerRestart => self.server.run(crate::server::Cmd::Restart),
-            Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire | crate::dialog::Kind::Shims)) => self.dialog = None,
+            Action::ServerSettings if self.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialog::Kind::Server | crate::dialog::Kind::PipeWire | crate::dialog::Kind::Shims | crate::dialog::Kind::Mixer)) => self.dialog = None,
             Action::ServerSettings => {
                 // Without jackdbus the PipeWire tab is the one that matters (pure PipeWire).
                 let tab = if self.server.status.available { self.settings_tab } else { TAB_PIPEWIRE };
@@ -2105,9 +2128,20 @@ impl App {
     /// The settings page, on one of the JACK tabs (jackdbus) or PipeWire's.
     pub fn open_settings(&mut self, tab: usize) {
         use crate::dialog::{Dialog, Kind};
-        self.settings_tab = tab.min(TAB_SHIMS);
+        self.settings_tab = if tab <= TAB_MIXER { tab } else { 0 };
         let tab = self.settings_tab;
-        let mut d = if tab == TAB_SHIMS {
+        let mut d = if tab == TAB_MIXER {
+            if self.mixer.is_none() {
+                self.mixer = Some(crate::mixer::Mixer::open());
+                self.mixer_scan = Instant::now() + Duration::from_secs(1);
+            }
+            let mut d = Dialog::new(Kind::Mixer, "Settings");
+            d.message = "Each sound card's own controls, as alsamixer shows them: the levels the card plays and records at, in its hardware, before and after the graph. A change made elsewhere (alsamixer, the desktop's volume control) shows here at once.".into();
+            d.set_rows(self.mixer_rows());
+            d.note = "Changes apply at once; the card keeps them (alsactl saves them at shutdown).".into();
+            d.buttons = vec!["Close".into()];
+            d
+        } else if tab == TAB_SHIMS {
             let mut d = Dialog::new(Kind::Shims, "Settings");
             d.set_rows(self.shims_rows());
             d.note = "PipeWire, PulseAudio and ALSA applications straight to JackBus.".into();
@@ -2307,6 +2341,70 @@ impl App {
             if let Some(d) = &mut self.dialog {
                 d.set_rows(rows);
             }
+        }
+    }
+
+    /// The Mixer tab: each sound card with audio, its controls as alsamixer shows them.
+    fn mixer_rows(&self) -> Vec<crate::dialog::Row> {
+        use crate::dialog::{Control, Row};
+        use crate::mixer::Value;
+        let Some(m) = &self.mixer else { return Vec::new() };
+        let cards = m.view();
+        let mut rows = Vec::new();
+        if cards.is_empty() {
+            rows.push(Row::info("Sound cards", "none with audio"));
+        }
+        for c in cards {
+            rows.push(Row::header(format!("{} · hw:{}", c.name, c.id)));
+            match c.controls {
+                Err(e) => rows.push(Row::info("Its mixer", format!("can't be opened: {e}"))),
+                Ok(v) if v.is_empty() => rows.push(Row::info("Controls", "none")),
+                Ok(v) => {
+                    for ctl in v {
+                        let id = format!("mix:{}", ctl.key);
+                        let (help, control) = match ctl.value {
+                            Value::Level { pos, text, switch, help } => (help, Control::Level { pos, text, switch }),
+                            Value::Switch(on) => (String::new(), Control::Toggle(on)),
+                            Value::List(items, cur) => (
+                                String::new(),
+                                Control::Choice { value: cur.to_string(), options: items.into_iter().enumerate().map(|(i, n)| (i.to_string(), n)).collect(), editable: false },
+                            ),
+                        };
+                        rows.push(Row { id, label: ctl.label, help, control, modified: false });
+                    }
+                }
+            }
+        }
+        rows
+    }
+
+    fn mixer_set(&mut self, id: &str, v: &str) {
+        let (Some(key), Some(m)) = (id.strip_prefix("mix:"), self.mixer.as_mut()) else { return };
+        let ok = if let Some(p) = v.strip_prefix("level:") {
+            p.parse::<f64>().is_ok_and(|p| m.set_level(key, p))
+        } else if let Some(on) = v.strip_prefix("switch:") {
+            m.set_switch(key, on == "on")
+        } else if v == "on" || v == "off" {
+            m.set_switch(key, v == "on")
+        } else {
+            v.parse::<u32>().is_ok_and(|i| m.set_item(key, i))
+        };
+        // Its own event brings the new value (and the poll right after reads it).
+        m.poll();
+        if !ok {
+            let name = key.splitn(4, ':').nth(3).unwrap_or(key);
+            self.say(format!("{name}: the card refused the change"), true);
+        }
+        self.refresh_mixer_page();
+    }
+
+    fn refresh_mixer_page(&mut self) {
+        if self.dialog.as_ref().is_some_and(|d| d.kind == crate::dialog::Kind::Mixer) {
+            let rows = self.mixer_rows();
+            if let Some(d) = &mut self.dialog {
+                d.set_rows(rows);
+            }
+            self.redraw = true;
         }
     }
 
@@ -3071,7 +3169,9 @@ impl App {
                     None => self.say(format!("\"{text}\" is not a valid value for {id}"), true),
                 }
             }
-            (Kind::Server | Kind::PipeWire | Kind::Shims, Event::Tab(t)) => self.open_settings(SETTINGS_TABS.get(t).map_or(0, |&(_, id)| id)),
+            (Kind::Server | Kind::PipeWire | Kind::Shims | Kind::Mixer, Event::Tab(t)) => self.open_settings(SETTINGS_TABS.get(t).map_or(0, |&(_, id)| id)),
+            (Kind::Mixer, Event::Set(id, v)) => self.mixer_set(&id, &v),
+            (Kind::Mixer, Event::Button(_)) => self.dialog = None,
             (Kind::Shims, Event::Set(id, v)) => self.shims_set(&id, &v),
             (Kind::Shims, Event::Button(_)) => self.dialog = None,
             (Kind::Log, Event::Tab(t)) => self.open_log(t),
@@ -3344,10 +3444,11 @@ pub fn kind_from(s: &str) -> PortKind {
 /// The settings page's tabs: the JACK server's (through jackdbus), then PipeWire's.
 /// The settings page's tabs as shown, with their ids: what a typical user changes first, the
 /// network and internal clients last.
-const SETTINGS_TABS: [(&str, usize); 7] = [
+const SETTINGS_TABS: [(&str, usize); 8] = [
     ("Server", 0),
     ("Master", TAB_MASTER),
     ("Devices", TAB_DEVICES),
+    ("Mixer", TAB_MIXER),
     ("Shims", TAB_SHIMS),
     ("PipeWire", TAB_PIPEWIRE),
     ("Internals", TAB_INTERNALS),
@@ -3361,6 +3462,8 @@ const TAB_NETJACK: usize = 3;
 const TAB_INTERNALS: usize = 4;
 const TAB_PIPEWIRE: usize = 5;
 const TAB_SHIMS: usize = 6;
+/// The sound cards' own mixers
+const TAB_MIXER: usize = 7;
 
 /// What each JACK tab's footer says.
 fn tab_note(tab: usize) -> &'static str {

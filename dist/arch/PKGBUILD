@@ -16,6 +16,7 @@ arch=(x86_64)
 url="https://github.com/nine7nine/PatchBox"
 license=(GPL-2.0-or-later Apache-2.0 Zlib)
 depends=(
+  alsa-lib
   gcc-libs
   glibc
   libjack.so

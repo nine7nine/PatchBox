@@ -30,6 +30,13 @@ pub enum Control {
     Link(String),
     /// A Link with a × at its right end: Event::Set(id, "remove").
     LinkRemove(String),
+    /// A volume: a bar to drag (its position, 0..1), the text after it, and before it the
+    /// control's own switch if it has one. Event::Set(id, "level:<0..1>"), ("switch:on|off").
+    Level {
+        pos: f32,
+        text: String,
+        switch: Option<bool>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +71,8 @@ pub enum Kind {
     DeleteSession,
     /// Confirm removing a running client (`tag`: its id).
     RemoveClient,
+    /// The sound cards' own mixers (the settings page's Mixer tab).
+    Mixer,
     /// Confirm deleting a removed client with its files (`tag`: its id).
     DeleteClient,
     /// Confirm stopping a client with unsaved changes (`tag`: its id).
@@ -116,6 +125,10 @@ enum Part {
     Reset,
     Link,
     Remove,
+    /// A Level's bar
+    Level,
+    /// A Level's switch
+    Switch,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -163,6 +176,8 @@ pub struct Dialog {
     content: Rect,
     content_h: f32,
     pub hover_help: Option<(String, [f32; 2])>,
+    /// A Level's bar being dragged: its row's id, and the bar
+    drag: Option<(String, Rect)>,
 }
 
 impl Dialog {
@@ -185,6 +200,7 @@ impl Dialog {
             content: Rect::default(),
             content_h: 0.0,
             hover_help: None,
+            drag: None,
         }
     }
 
@@ -234,6 +250,7 @@ impl Dialog {
             Control::Choice { value, .. } => Some(value.clone()),
             Control::Toggle(b) => Some(if *b { "on" } else { "off" }.into()),
             Control::Number { value, .. } => Some(value.to_string()),
+            Control::Level { pos, .. } => Some(pos.to_string()),
             Control::Header => None,
         }
     }
@@ -282,8 +299,38 @@ impl Dialog {
                 return out;
             }
         }
+        // A Level's bar: set where it was clicked, and follow the pointer until the button is up.
+        if let Some((r, Hit::Row(i, Part::Level))) = hit
+            && let Some(row) = self.rows.get(i)
+        {
+            self.drag = Some((row.id.clone(), r));
+            out.extend(self.drag_to(x));
+            return out;
+        }
         out.extend(self.click_hit(hit));
         out
+    }
+
+    /// A Level's bar dragged to `x`: its new position (shown at once; the owner's next rows say
+    /// where the control really went).
+    pub fn drag_to(&mut self, x: f32) -> Option<Event> {
+        let (id, r) = self.drag.clone()?;
+        let row = self.rows.iter_mut().find(|r| r.id == id)?;
+        let Control::Level { pos, .. } = &mut row.control else { return None };
+        let p = ((x - r.x) / r.w.max(1.0)).clamp(0.0, 1.0);
+        if (p - *pos).abs() < 0.0005 {
+            return None;
+        }
+        *pos = p;
+        Some(Event::Set(id, format!("level:{p:.4}")))
+    }
+
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    pub fn release(&mut self) {
+        self.drag = None;
     }
 
     fn click_hit(&mut self, hit: Option<(Rect, Hit)>) -> Option<Event> {
@@ -300,6 +347,7 @@ impl Dialog {
                     (Control::LinkRemove(_), Part::Remove) => Some(Event::Set(id, "remove".into())),
                     (Control::Link(_) | Control::LinkRemove(_), _) => Some(Event::Set(id, "activate".into())),
                     (Control::Toggle(on), _) => Some(Event::Set(id, if *on { "off" } else { "on" }.into())),
+                    (Control::Level { switch: Some(on), .. }, Part::Switch) => Some(Event::Set(id, if *on { "switch:off" } else { "switch:on" }.into())),
                     (Control::Choice { .. }, Part::Choice) => Some(Event::Options(i, r)),
                     (Control::Number { value, min, .. }, Part::Minus) => Some(Event::Set(id, (*value - 1).max(*min).to_string())),
                     (Control::Number { value, max, .. }, Part::Plus) => Some(Event::Set(id, (*value + 1).min(*max).to_string())),
@@ -336,6 +384,17 @@ impl Dialog {
             let i = self.rows.iter().position(|r| r.label == l)?;
             return self.hits.iter().find(|(_, h)| *h == Hit::Row(i, Part::Choice)).map(|(r, _)| center(r));
         }
+        // "level:<label>:<percent>": a Level's bar at that point; "switch:<label>": its switch.
+        if let Some(l) = what.strip_prefix("level:") {
+            let (l, pct) = l.rsplit_once(':')?;
+            let pct: f32 = pct.parse().ok()?;
+            let i = self.rows.iter().position(|r| r.label == l)?;
+            return self.hits.iter().find(|(_, h)| *h == Hit::Row(i, Part::Level)).map(|(r, _)| [r.x + r.w * pct / 100.0, r.cy()]);
+        }
+        if let Some(l) = what.strip_prefix("switch:") {
+            let i = self.rows.iter().position(|r| r.label == l)?;
+            return self.hits.iter().find(|(_, h)| *h == Hit::Row(i, Part::Switch)).map(|(r, _)| center(r));
+        }
         // "remove:<label>": a removable row's ×.
         if let Some(l) = what.strip_prefix("remove:") {
             let i = self.rows.iter().position(|r| r.label == l)?;
@@ -347,7 +406,7 @@ impl Dialog {
 
     /// Pages (settings, lists) fill the canvas; prompts are a card over it.
     pub fn is_page(&self) -> bool {
-        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Shims | Kind::Log | Kind::Rules | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views | Kind::Templates)
+        matches!(self.kind, Kind::Server | Kind::PipeWire | Kind::Shims | Kind::Mixer | Kind::Log | Kind::Rules | Kind::AddApp | Kind::OpenSession | Kind::Snapshots | Kind::Views | Kind::Templates)
     }
 
     /// Draw over `area` (the canvas): a page fills it, a prompt is a card in its middle. The
@@ -583,6 +642,35 @@ impl Dialog {
                         None => field(g, cr, if v.is_empty() { "—" } else { v }, hov(&cr)),
                     }
                     self.hits.push((cr, Hit::Row(i, Part::Edit)));
+                }
+                Control::Level { pos, text, switch } => {
+                    // The switch (a small toggle), the bar, its text: alsamixer's strip, lying down.
+                    let mut x0 = cr.x;
+                    if let Some(on) = switch {
+                        let tr = Rect::new(cr.x, cr.cy() - 8.0 * s, 34.0 * s, 16.0 * s);
+                        g.rrect(tr, 8.0 * s, if *on { alpha(TOGGLE, 0.55) } else { BUTTON });
+                        g.rrect_stroke(tr, 8.0 * s, s.max(1.0), if hov(&tr) { HILIGHT } else { LINE_SOFT });
+                        let kx = if *on { tr.right() - 8.0 * s } else { tr.x + 8.0 * s };
+                        g.circle([kx, tr.cy()], 5.5 * s, if *on { TEXT_BRIGHT } else { TEXT });
+                        self.hits.push((tr, Hit::Row(i, Part::Switch)));
+                        x0 = tr.right() + 14.0 * s;
+                    }
+                    let text_w = (250.0 * s).min(cr.w * 0.42);
+                    let track = Rect::new(x0, (cr.cy() - 3.0 * s).round(), (cr.right() - text_w - 14.0 * s - x0).max(40.0 * s), 6.0 * s);
+                    let grab = Rect::new(track.x, rr.y, track.w, rr.h);
+                    let live = switch.unwrap_or(true);
+                    let held = self.drag.as_ref().is_some_and(|(id, _)| *id == row.id);
+                    let hot = held || (self.drag.is_none() && hov(&grab));
+                    g.rrect(track, 3.0 * s, BUTTON);
+                    g.rrect_stroke(track, 3.0 * s, s.max(1.0), if hot { HILIGHT } else { LINE_SOFT });
+                    let fw = (track.w * pos.clamp(0.0, 1.0)).round();
+                    if fw >= 2.0 {
+                        let fill = if live { alpha(BORDER, 0.85) } else { alpha(TEXT_DIM, 0.6) };
+                        g.rrect(Rect::new(track.x, track.y, fw, track.h), (3.0 * s).min(fw / 2.0), fill);
+                    }
+                    g.circle([track.x + fw, track.cy()], 7.0 * s, if hot { HILIGHT } else if live { TEXT_BRIGHT } else { TEXT });
+                    g.text_fit(Face::Regular, px, track.right() + 14.0 * s, rr.cy() - lh / 2.0, text_w, if live { TEXT_BRIGHT } else { TEXT_DIM }, text);
+                    self.hits.push((grab, Hit::Row(i, Part::Level)));
                 }
             }
             if row.modified {
