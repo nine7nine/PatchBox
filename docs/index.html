@@ -405,16 +405,17 @@ td code, li code, p code { font-size: 0.92em; }
     <li><a href="#s8">JACK, PipeWire, or both</a></li>
     <li><a href="#s9">PipeWire's graph and settings</a></li>
     <li><a href="#s10">Applications on JackBus: the Shims tab</a></li>
-    <li><a href="#s11">patchboxd: the session daemon</a></li>
-    <li><a href="#s12">A session's life</a></li>
-    <li><a href="#s13">On disk</a></li>
-    <li><a href="#s14">Connection memory and rules</a></li>
-    <li><a href="#s15">The window</a></li>
-    <li><a href="#s16">Footprint, measured</a></li>
-    <li><a href="#s17">Validation</a></li>
-    <li><a href="#s18">Packaging and deployment</a></li>
-    <li><a href="#s19">Open items</a></li>
-    <li><a href="#s20">Source map</a></li>
+    <li><a href="#s11">The Mixer tab: each card's own controls</a></li>
+    <li><a href="#s12">patchboxd: the session daemon</a></li>
+    <li><a href="#s13">A session's life</a></li>
+    <li><a href="#s14">On disk</a></li>
+    <li><a href="#s15">Connection memory and rules</a></li>
+    <li><a href="#s16">The window</a></li>
+    <li><a href="#s17">Footprint, measured</a></li>
+    <li><a href="#s18">Validation</a></li>
+    <li><a href="#s19">Packaging and deployment</a></li>
+    <li><a href="#s20">Open items</a></li>
+    <li><a href="#s21">Source map</a></li>
   </ol>
 </nav>
 <main class="content">
@@ -445,9 +446,9 @@ td code, li code, p code { font-size: 0.92em; }
     <li><b>1 / s</b><span>wake-ups at idle · 0 frames</span></li>
     <li><b>6.07 MB</b><span>patchbox, stripped · patchboxd 2.64 MB</span></li>
     <li><b>~20 MB</b><span>heap and stacks, running</span></li>
-    <li><b>46 + 6 + 15</b><span>isolated checks: sessions · JACK settings · the window (cameras, sound cards, the DMA readout) · + 48 unit tests</span></li>
+    <li><b>46 + 6 + 20</b><span>isolated checks: sessions · JACK settings · the window (cameras, sound cards, the DMA readout, the mixer) · + 48 unit tests</span></li>
     <li><b>ASan · TSan</b><span>no errors · daemon, CLI, clients, GUI threads</span></li>
-    <li><b>95</b><span>commits · 19.5k lines of Rust</span></li>
+    <li><b>99</b><span>commits · 20.2k lines of Rust</span></li>
   </ul>
 </header>
 
@@ -461,6 +462,7 @@ td code, li code, p code { font-size: 0.92em; }
       <tr><td style="border-left:3px solid #8b8ff5">Connections that persist</td><td>a patch client per session (jackpatch, RaySession's); global patchbay rules (qjackctl)</td><td>both: RaySession's restore rules per session, and global rules (with <code>*</code>) kept by patchboxd, session or not</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">PipeWire</td><td>separate tools (qpwgraph, Helvum, pavucontrol)</td><td>PipeWire's own graph opened from its JACK client, never mixed in; with pipewire-jack, PipeWire's nodes are the patchbay's; a settings tab that adapts to how PipeWire runs</td></tr>
       <tr><td style="border-left:3px solid #8b8ff5">Desktop applications</td><td>PipeWire's PulseAudio server and pipewire-alsa, reaching JACK through PipeWire's bridge</td><td>with JackBus's shims, a Shims tab: PulseAudio, ALSA and PipeWire applications straight to JackBus, each a JACK client of its own; PipeWire's JACK bridge switched off, so PipeWire has no audio work while JackBus runs</td></tr>
+      <tr><td style="border-left:3px solid #8b8ff5">Card levels</td><td>alsamixer in a terminal; a desktop volume control for one control per card</td><td>a Mixer tab: every control of each card with audio, as alsamixer shows them, live, through alsa-lib</td></tr>
       <tr style="background:rgba(251,191,36,0.05)"><td style="border-left:3px solid #fbbf24">JACK and NSM interfaces</td><td>libjack · jackdbus D-Bus · NSM 1.1 over OSC</td><td>the same: any JACK server (jackdbus, jackd, PipeWire's pipewire-jack), any NSM client, unchanged</td></tr>
       <tr style="background:rgba(251,191,36,0.05)"><td style="border-left:3px solid #fbbf24">Audio path</td><td>not involved</td><td>not involved: no process callback, no RT thread, no port of its own in the graph</td></tr>
     </table>
@@ -1170,16 +1172,18 @@ td code, li code, p code { font-size: 0.92em; }
       </g>
       <g>
         <text x="656" y="102" class="t-sub">graph quiet</text><rect x="840" y="90" width="44" height="16" rx="4" class="bar-b"/><text x="890" y="103" class="t-num" style="font-size:11px">25 ms</text>
-        <text x="656" y="132" class="t-sub">graph cap (a burst)</text><rect x="840" y="120" width="130" height="16" rx="4" class="bar-b"/><text x="976" y="133" class="t-num" style="font-size:11px">150 ms</text>
-        <text x="656" y="162" class="t-sub">transport, rolling</text><rect x="840" y="150" width="110" height="16" rx="4" class="bar-a"/><text x="956" y="163" class="t-num" style="font-size:11px">100 ms</text>
-        <text x="656" y="192" class="t-sub">name export, new port</text><rect x="840" y="180" width="143" height="16" rx="4" class="bar-a"/><text x="989" y="193" class="t-num" style="font-size:11px">200 ms</text>
-        <text x="656" y="222" class="t-sub">layout save, after a move</text><rect x="840" y="210" width="209" height="16" rx="4" class="bar-a"/><text x="1055" y="223" class="t-num" style="font-size:11px">800 ms</text>
-        <text x="656" y="252" class="t-sub">DSP load</text><rect x="840" y="240" width="220" height="16" rx="4" class="bar-d"/><text x="1066" y="253" class="t-num" style="font-size:11px">1 s</text>
-        <text x="656" y="282" class="t-sub">transport, stopped</text><rect x="840" y="270" width="220" height="16" rx="4" class="bar-d"/><text x="1066" y="283" class="t-num" style="font-size:11px">1 s</text>
-        <text x="656" y="312" class="t-sub">server figures (its page)</text><rect x="840" y="300" width="253" height="16" rx="4" class="bar-a"/><text x="1099" y="313" class="t-num" style="font-size:11px">2 s</text>
-        <text x="656" y="342" class="t-sub">JACK not there: retry</text><rect x="840" y="330" width="253" height="16" rx="4" class="bar-c"/><text x="1099" y="343" class="t-num" style="font-size:11px">2 s</text>
-        <text x="656" y="372" class="t-sub">patchboxd link: retry</text><rect x="840" y="360" width="220" height="16" rx="4" class="bar-c"/><text x="1066" y="373" class="t-num" style="font-size:11px">1 s</text>
-        <text x="656" y="402" class="t-sub">nothing at all</text><rect x="840" y="390" width="330" height="16" rx="4" class="bar-f"/><text x="1160" y="403" text-anchor="end" class="t-num" style="font-size:11px">1 h →</text>
+        <text x="656" y="130" class="t-sub">graph cap (a burst)</text><rect x="840" y="118" width="130" height="16" rx="4" class="bar-b"/><text x="976" y="131" class="t-num" style="font-size:11px">150 ms</text>
+        <text x="656" y="158" class="t-sub">transport, rolling</text><rect x="840" y="146" width="110" height="16" rx="4" class="bar-a"/><text x="956" y="159" class="t-num" style="font-size:11px">100 ms</text>
+        <text x="656" y="186" class="t-sub">name export, new port</text><rect x="840" y="174" width="143" height="16" rx="4" class="bar-a"/><text x="989" y="187" class="t-num" style="font-size:11px">200 ms</text>
+        <text x="656" y="214" class="t-sub">layout save, after a move</text><rect x="840" y="202" width="209" height="16" rx="4" class="bar-a"/><text x="1055" y="215" class="t-num" style="font-size:11px">800 ms</text>
+        <text x="656" y="242" class="t-sub">DSP load</text><rect x="840" y="230" width="220" height="16" rx="4" class="bar-d"/><text x="1066" y="243" class="t-num" style="font-size:11px">1 s</text>
+        <text x="656" y="270" class="t-sub">transport, stopped</text><rect x="840" y="258" width="220" height="16" rx="4" class="bar-d"/><text x="1066" y="271" class="t-num" style="font-size:11px">1 s</text>
+        <text x="656" y="298" class="t-sub">server figures (its page)</text><rect x="840" y="286" width="253" height="16" rx="4" class="bar-a"/><text x="1099" y="299" class="t-num" style="font-size:11px">2 s</text>
+        <text x="656" y="326" class="t-sub">JACK not there: retry</text><rect x="840" y="314" width="253" height="16" rx="4" class="bar-c"/><text x="1099" y="327" class="t-num" style="font-size:11px">2 s</text>
+        <text x="656" y="354" class="t-sub">patchboxd link: retry</text><rect x="840" y="342" width="220" height="16" rx="4" class="bar-c"/><text x="1066" y="355" class="t-num" style="font-size:11px">1 s</text>
+        <text x="656" y="382" class="t-sub">Mixer tab: card events</text><rect x="840" y="370" width="110" height="16" rx="4" class="bar-a"/><text x="956" y="383" class="t-num" style="font-size:11px">100 ms</text>
+        <text x="656" y="410" class="t-sub">Mixer tab: card list</text><rect x="840" y="398" width="220" height="16" rx="4" class="bar-a"/><text x="1066" y="411" class="t-num" style="font-size:11px">1 s</text>
+        <text x="656" y="438" class="t-sub">nothing at all</text><rect x="840" y="426" width="330" height="16" rx="4" class="bar-f"/><text x="1160" y="439" text-anchor="end" class="t-num" style="font-size:11px">1 h →</text>
       </g>
       <g class="t-tiny">
         <rect x="656" y="486" width="12" height="10" rx="2" class="bar-b"/><text x="674" y="495">AFTER A GRAPH CHANGE</text>
@@ -1224,8 +1228,8 @@ td code, li code, p code { font-size: 0.92em; }
       <b>Deadlines, not polling.</b> <code>tick()</code> runs whatever is due and returns the earliest deadline left:
       the graph rebuild 25 ms after the last change (at most 150 ms after the first), the transport every 100 ms while it
       rolls and every second when it doesn't (a plain client gets no transport notification, and a sync callback would
-      make it a realtime client), the DSP load every second, a JACK retry every 2 s while there is no server. With no
-      deadline at all it sleeps for an hour.
+      make it a realtime client), the DSP load every second, a JACK retry every 2 s while there is no server, the Mixer tab's cards every 100 ms
+      while it is shown. With no deadline at all it sleeps for an hour.
     </p>
     <p class="caption">
       <b>The window itself.</b> Borderless, transparent and GL; the top bar is the title bar (client-side decorations,
@@ -1700,7 +1704,8 @@ td code, li code, p code { font-size: 0.92em; }
       with inputs on the left edge and outputs on the right. Hardware is split into a capture and a playback block, so
       signal reads left to right across the canvas. A wire is a bezier per connection; pulling one end off a port moves
       it, dropping it on empty canvas removes it, and every change is one undo step. No port counts clutter this view: the
-      ports are on the blocks.
+      ports are on the blocks. A block can show all its ports (its menu, or E for every block): the other types' ports
+      join it, dimmed, and a wire between two ports on screen is drawn whatever its type, in that type's colour.
     </p>
     <p class="caption pagecap">
       <b>Ports, top to bottom.</b> The same blocks turned for vertical flow (Luluda's graph): inputs along the top edge,
@@ -3342,9 +3347,166 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 11. patchboxd -->
+<!-- ============================================================ 11. the Mixer tab -->
 <section id="s11">
-  <h2><span class="num">11</span>patchboxd: the session daemon</h2>
+  <h2><span class="num">11</span>The Mixer tab: each card's own controls</h2>
+  <p class="sub">
+    A card's playback and capture levels live in its hardware mixer, before JACK sees a sample. The Mixer tab shows every
+    control of each card with audio, as alsamixer does, through alsa-lib's simple mixer: no helper program, no thread of
+    its own, nothing in the audio path. Cards with MIDI only, snd-aloop's virtual card and PipeWire are not listed.
+  </p>
+  <div class="figure" id="fig-mixer">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img" aria-label="The Mixer tab: its rows, src/mixer.rs on the main loop, and the card's mixer that others set too">
+      <text x="20" y="38" class="t-band">THE MIXER TAB</text>
+      <text x="440" y="38" class="t-band">SRC/MIXER.RS · THE MAIN THREAD</text>
+      <text x="800" y="38" class="t-band">THE CARD</text>
+
+      <!-- column A: a mock of the tab -->
+      <rect x="20" y="52" width="380" height="418" rx="14" fill="#18181a" stroke="#343438"/>
+      <g style="font: 600 9px ui-monospace, Menlo, Consolas, monospace">
+        <rect x="32" y="62" width="48" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="36" y="77" fill="#8a8a8a">Devices</text>
+        <rect x="84" y="62" width="40" height="22" rx="6" fill="#1f2a36" stroke="#64b5f6"/><text x="89" y="77" fill="#e1e1e1">Mixer</text>
+        <rect x="128" y="62" width="40" height="22" rx="6" fill="#222226" stroke="#343438"/><text x="133" y="77" fill="#8a8a8a">Shims</text>
+      </g>
+      <line x1="32" y1="94" x2="388" y2="94" stroke="#343438"/>
+      <g style="font: 600 10px ui-monospace, Menlo, Consolas, monospace">
+        <text x="36" y="114" fill="#ffa530">HDA Intel PCH · hw:PCH</text>
+        <line x1="36" y1="122" x2="388" y2="122" stroke="#5a4320"/>
+        <text x="36" y="146" fill="#afafaf">Master</text>
+        <rect x="140" y="138" width="22" height="11" rx="5.5" fill="#4f7a37"/><circle cx="156" cy="143.5" r="3.6" fill="#e1e1e1"/>
+        <rect x="170" y="141" width="120" height="5" rx="2.5" fill="#1a1b1d" stroke="#2c3a48"/><rect x="170" y="141" width="90" height="5" rx="2.5" fill="#436c8e"/><rect x="256" y="137" width="8" height="13" rx="2.5" fill="#2a3440" stroke="#5b8bb2"/>
+        <text x="298" y="146" fill="#e1e1e1">−6.75 dB · 75 %</text>
+        <text x="36" y="176" fill="#afafaf">Headphone</text>
+        <rect x="140" y="168" width="22" height="11" rx="5.5" fill="#4f7a37"/><circle cx="156" cy="173.5" r="3.6" fill="#e1e1e1"/>
+        <rect x="170" y="171" width="120" height="5" rx="2.5" fill="#436c8e"/><rect x="286" y="167" width="8" height="13" rx="2.5" fill="#2a3440" stroke="#5b8bb2"/>
+        <text x="298" y="176" fill="#e1e1e1">0.00 dB · 100 %</text>
+        <text x="36" y="206" fill="#afafaf">Speaker</text>
+        <rect x="140" y="198" width="22" height="11" rx="5.5" fill="#2d2d2d"/><circle cx="146" cy="203.5" r="3.6" fill="#afafaf"/>
+        <rect x="170" y="201" width="120" height="5" rx="2.5" fill="#1a1b1d" stroke="#2c3a48"/><rect x="166" y="197" width="8" height="13" rx="2.5" fill="#2a2b2e" stroke="#6e6e70"/>
+        <text x="298" y="206" fill="#6e6e6e">−65.25 dB · 0 %</text>
+        <text x="36" y="236" fill="#afafaf">PCM</text>
+        <rect x="170" y="231" width="120" height="5" rx="2.5" fill="#436c8e"/><rect x="286" y="227" width="8" height="13" rx="2.5" fill="#2a3440" stroke="#5b8bb2"/>
+        <text x="298" y="236" fill="#e1e1e1">0.00 dB · 100 %</text>
+        <text x="36" y="266" fill="#afafaf">Mic Boost</text>
+        <rect x="170" y="261" width="120" height="5" rx="2.5" fill="#1a1b1d" stroke="#2c3a48"/><rect x="170" y="261" width="40" height="5" rx="2.5" fill="#436c8e"/><rect x="206" y="257" width="8" height="13" rx="2.5" fill="#2a3440" stroke="#5b8bb2"/>
+        <text x="298" y="266" fill="#e1e1e1">10.00 dB · 33 %</text>
+        <text x="36" y="296" fill="#afafaf">IEC958</text>
+        <rect x="140" y="288" width="22" height="11" rx="5.5" fill="#4f7a37"/><circle cx="156" cy="293.5" r="3.6" fill="#e1e1e1"/><text x="170" y="296" fill="#afafaf">on</text>
+        <text x="36" y="326" fill="#afafaf">Capture</text>
+        <rect x="140" y="318" width="22" height="11" rx="5.5" fill="#4f7a37"/><circle cx="156" cy="323.5" r="3.6" fill="#e1e1e1"/>
+        <rect x="170" y="321" width="120" height="5" rx="2.5" fill="#1a1b1d" stroke="#2c3a48"/><rect x="170" y="321" width="47" height="5" rx="2.5" fill="#436c8e"/><rect x="213" y="317" width="8" height="13" rx="2.5" fill="#2a3440" stroke="#5b8bb2"/>
+        <text x="298" y="326" fill="#e1e1e1">0.00 dB · 39 %</text>
+        <text x="36" y="356" fill="#afafaf">Auto-Mute Mode</text>
+        <rect x="140" y="345" width="150" height="16" rx="3" fill="#2d2d2d" stroke="#2c4258"/><text x="146" y="357" fill="#e1e1e1">Disabled</text><text x="280" y="357" fill="#afafaf">▾</text>
+      </g>
+      <text x="36" y="400" class="t-tiny">A BAR: ITS SWITCH · ITS POSITION · DB AND %</text>
+      <text x="36" y="420" class="t-tiny">A SWITCH ALONE: A TOGGLE · ITEMS: A LIST</text>
+      <text x="36" y="452" class="t-sub">every control of each card, as alsamixer shows them</text>
+
+      <!-- column B -->
+      <rect x="440" y="52" width="320" height="86" rx="12" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.4"/>
+      <text x="456" y="76" class="t-chip">which cards</text>
+      <text x="456" y="96" class="t-mono" style="font-size:11px">/proc/asound/cards</text>
+      <text x="456" y="114" class="t-sub">with a PCM device; snd-aloop left out</text>
+      <text x="456" y="130" class="t-chipsub">bridges::cards(), as the Devices tab</text>
+      <rect x="440" y="150" width="320" height="86" rx="12" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.4"/>
+      <text x="456" y="174" class="t-chip">a mixer per card, while the tab is shown</text>
+      <text x="456" y="194" class="t-mono" style="font-size:11px">snd_mixer_open · attach("hw:N")</text>
+      <text x="456" y="212" class="t-mono" style="font-size:11px">selem_register · load</text>
+      <text x="456" y="228" class="t-chipsub">closed when the page is: no control device held</text>
+      <rect x="440" y="248" width="320" height="86" rx="12" fill="url(#g-box)" stroke="#8b8ff5" stroke-width="1.4"/>
+      <text x="456" y="272" class="t-chip">a change from the page</text>
+      <text x="456" y="292" class="t-sub">alsamixer's position → dB, per channel,</text>
+      <text x="456" y="310" class="t-sub">their balance kept, rounded the way it moves</text>
+      <text x="456" y="326" class="t-chipsub">set_level · set_switch · set_item</text>
+      <rect x="440" y="346" width="320" height="86" rx="12" fill="url(#g-box)" stroke="#2dd4bf" stroke-width="1.4"/>
+      <text x="456" y="370" class="t-chip">the tick, while the tab is shown</text>
+      <text x="456" y="390" class="t-sub">poll() the mixers' fds every 100 ms</text>
+      <text x="456" y="408" class="t-sub">the card list every second (hotplug)</text>
+      <text x="456" y="424" class="t-chipsub">a card's fd in error: the list read again</text>
+
+      <!-- column C -->
+      <rect x="800" y="52" width="380" height="184" rx="12" fill="rgba(244,114,182,0.06)" stroke="#f472b6"/>
+      <text x="816" y="76" class="t-chip">hw:PCH · its simple controls</text>
+      <g class="t-mono" style="font-size:11px">
+        <text x="816" y="102">Master</text><text x="930" y="102">−65.25 … 0 dB · switch</text>
+        <text x="816" y="124">Capture</text><text x="930" y="124">−17.25 … +30 dB · switch</text>
+        <text x="816" y="146">Mic Boost</text><text x="930" y="146">0 … +30 dB</text>
+        <text x="816" y="168">IEC958</text><text x="930" y="168">switch</text>
+        <text x="816" y="190">Auto-Mute Mode</text><text x="930" y="190">items</text>
+      </g>
+      <text x="816" y="222" class="t-chipsub">the card holds the values; every process sees the same</text>
+      <rect x="800" y="262" width="380" height="132" rx="12" fill="rgba(74,222,128,0.04)" stroke="#24603a"/>
+      <text x="816" y="286" class="t-chip">who else sets it</text>
+      <text x="816" y="308" class="t-sub">alsamixer · amixer</text>
+      <text x="816" y="328" class="t-sub">the desktop's volume control and keys</text>
+      <text x="816" y="348" class="t-sub">(JackBus's jackbus-pa: a device's volume is its mixer)</text>
+      <text x="816" y="368" class="t-sub">alsactl: saved at shutdown, restored at boot</text>
+      <text x="816" y="386" class="t-chipsub">each change is an event on every open mixer</text>
+
+      <path class="flow ctrl" d="M 400 290 H 440"/>
+      <path class="flow ctrl" d="M 760 290 H 780 V 150 H 800"/>
+      <path class="flow desk slow" d="M 990 394 V 420 H 760"/>
+      <path class="flow desk slow" d="M 440 390 H 420 V 330 H 400"/>
+      <text x="770" y="440" class="t-tiny">EVENTS</text>
+
+      <rect x="20" y="490" width="1160" height="56" rx="12" fill="url(#g-band)" stroke="#3a3f72"/>
+      <text x="40" y="514" class="t-label">ALSAMIXER'S SCALE</text>
+      <text x="40" y="534" class="t-sub">position = 10^((dB − max) / 60), the minimum at 0 · linear in dB for a range of 24 dB or less · raw steps where there is no dB scale · one bar per direction, its loudest channel</text>
+    </svg>
+    <p class="caption">
+      <b>Set where the server is.</b> The rows are built from the cards' controls each time something changes, and a
+      bar is dragged to the button's release, its change sent as it moves. The card holds every value: a change made in
+      alsamixer, by the desktop's volume control or by JackBus's jackbus-pa (which sets the same mixer) is an event on
+      PatchBox's open mixer, read on the next tick, and the rows follow. A card plugged in gets its rows within a second,
+      one unplugged loses them. Nothing is open while the tab isn't shown, and nothing is kept: the card keeps its state,
+      and alsactl saves it at shutdown.
+    </p>
+  </div>
+
+  <div class="tablebox">
+    <table>
+      <tr><th>An element has</th><th>Its row</th><th>A change</th></tr>
+      <tr><td>a volume (playback; capture; a "common" one as playback)</td><td>a bar: alsamixer's position, the dB value and its percentage (left / right when the channels differ), the element's own switch before it</td><td><code>snd_mixer_selem_set_*_dB</code> per channel (raw steps without a dB scale), the others in proportion to the loudest</td></tr>
+      <tr><td>a switch and no volume</td><td>a toggle</td><td><code>set_*_switch_all</code></td></tr>
+      <tr><td>enumerated items</td><td>a list</td><td><code>set_enum_item</code> on every channel</td></tr>
+      <tr><td>playback and capture</td><td>a row each, the capture one "· capture"</td><td></td></tr>
+    </table>
+  </div>
+
+  <div class="grid2" style="margin-top:18px">
+    <div class="card">
+      <h3>The bar</h3>
+      <p class="role">A control the settings pages didn't have</p>
+      <ul>
+        <li><code>Control::Level { pos, text, switch }</code>: the switch, the bar, its text. A press on the bar sets
+          it there and starts a drag; the main loop sends motion to a page being dragged before anything else, and the
+          button's release ends it.</li>
+        <li>Drawn in the app's tones: a dark groove, a muted blue fill (grey while the switch mutes), a knob that is one
+          of Luluda's blue buttons, lit while held.</li>
+        <li>A row's id is <code>mix:&lt;card&gt;:&lt;p|c|e&gt;:&lt;index&gt;:&lt;name&gt;</code>: the element is found
+          again by name and index for each change.</li>
+      </ul>
+      <div class="chips"><span class="chip">dialog.rs</span><span class="chip">Kind::Mixer</span><span class="chip">drag_to</span></div>
+    </div>
+    <div class="card engine">
+      <h3>Tested without a real card</h3>
+      <p class="role">tests/nested/mixer.sh</p>
+      <ul>
+        <li>ALSA's configuration in the test (<code>ALSA_CONFIG_PATH</code>) puts JackBus's test control plugin
+          (<code>jbtest</code>: an HDA card's Master and Capture, their values in a file) in place of every card's
+          control device: no real card is opened.</li>
+        <li>Checked: the tab lists the cards with audio; a drag sets Master to alsamixer's 50 % on both channels; its
+          switch mutes it; a change made elsewhere shows; a later drag keeps the channels' balance.</li>
+      </ul>
+      <div class="chips"><span class="chip">mixer.sh</span><span class="chip">5 checks</span><span class="chip">JACK2_BUILD</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 12. patchboxd -->
+<section id="s12">
+  <h2><span class="num">12</span>patchboxd: the session daemon</h2>
   <p class="sub">
     patchboxd is an NSM server and a little more. It runs on one thread and one <code>poll()</code>, with no async
     runtime. Everything that can take time (clients saving, starting, stopping; git; hook scripts; jackdbus) is a step
@@ -3511,9 +3673,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 12. a session's life -->
-<section id="s12">
-  <h2><span class="num">12</span>A session's life</h2>
+<!-- ============================================================ 13. a session's life -->
+<section id="s13">
+  <h2><span class="num">13</span>A session's life</h2>
   <p class="sub">
     Opening a session while another is open is the longest operation the daemon runs: it saves and leaves one session,
     then loads and enters another, keeping the clients that can carry on (NSM's <code>:switch:</code>). Every message
@@ -3760,9 +3922,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 13. on disk -->
-<section id="s13">
-  <h2><span class="num">13</span>On disk</h2>
+<!-- ============================================================ 14. on disk -->
+<section id="s14">
+  <h2><span class="num">14</span>On disk</h2>
   <p class="sub">
     Plain files a person can read: TOML for sessions, JSON for PatchBox's own settings, a git directory for history.
     Every file PatchBox writes is replaced atomically (a temporary file, then a rename), and every log it keeps is
@@ -3895,9 +4057,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 14. connection memory and rules -->
-<section id="s14">
-  <h2><span class="num">14</span>Connection memory and rules</h2>
+<!-- ============================================================ 15. connection memory and rules -->
+<section id="s15">
+  <h2><span class="num">15</span>Connection memory and rules</h2>
   <p class="sub">
     Two kinds of connections persist, and both live in the daemon. A <b>session's connection memory</b> (RaySession's
     rules) restores what the session had, as each client's ports appear. <b>Connection rules</b> (qjackctl's persistent
@@ -4032,9 +4194,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 15. the window -->
-<section id="s15">
-  <h2><span class="num">15</span>The window</h2>
+<!-- ============================================================ 16. the window -->
+<section id="s16">
+  <h2><span class="num">16</span>The window</h2>
   <p class="sub">
     One borderless GL window in Luluda's manner: a slim title bar, a row of grouped tiles (an icon over a label), a
     darker sidebar, and the canvas. Settings, rules, the event log and the session dialogs are pages drawn over the
@@ -4268,9 +4430,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 16. footprint -->
-<section id="s16">
-  <h2><span class="num">16</span>Footprint, measured</h2>
+<!-- ============================================================ 17. footprint -->
+<section id="s17">
+  <h2><span class="num">17</span>Footprint, measured</h2>
   <p class="sub">
     Light was a requirement, not an afterthought. These are measurements of the release build: binary sizes from the
     files, the composition from symbol sizes (unstripped), and runtime figures from <code>PATCHBOX_STATS=1</code>, which
@@ -4374,9 +4536,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 17. validation -->
-<section id="s17">
-  <h2><span class="num">17</span>Validation</h2>
+<!-- ============================================================ 18. validation -->
+<section id="s18">
+  <h2><span class="num">18</span>Validation</h2>
   <p class="sub">
     No test touches the desktop's audio. The GUI runs in a nested KWin on a private session bus, inside a user, IPC,
     mount and PID namespace with its own tmpfs on <code>/dev/shm</code>, against its own JACK server. The live
@@ -4472,6 +4634,7 @@ td code, li code, p code { font-size: 0.92em; }
         <tr><td><code>tests/nested/bridges.sh</code></td><td>a JackBus jackdbus on the private bus and snd-aloop's card: switched on from the Devices tab, locked; its period changed, locked again; switched off and on, its settings kept and saved in jackdbus's list; every tab shown (8 screenshots)</td><td class="num">4</td></tr>
         <tr><td><code>tests/nested/cpuwake.sh</code></td><td>the toolbar's DMA readout against a JackBus jackdbus on the private bus: its menu, levels read from the CPU's idle states; the first C-state row picked, then off: jackdbus held the request at once (or said why it couldn't), and off reset the parameter, nothing kept in its settings (5 screenshots)</td><td class="num">3</td></tr>
         <tr><td><code>tests/nested/hotplug.sh</code></td><td>a card's <code>/dev/snd</code> nodes taken away and brought back inside the namespace: jackdbus's two refreshes and the device list on the Master tab (3 screenshots)</td><td class="num">3</td></tr>
+        <tr><td><code>tests/nested/mixer.sh</code></td><td>the Mixer tab against JackBus's test control plugin in place of every card's (no real card opened): the tab, a drag to alsamixer's 50 % on both channels, the switch, a change made elsewhere, the balance kept by a later drag (4 screenshots)</td><td class="num">5</td></tr>
         <tr><td><code>scripts/sanitize.sh address</code></td><td>ASan + LSan, std rebuilt with <code>-Zbuild-std</code>, at <code>894a785</code>: both session suites and the camera suite pass with no memory errors (the GUI needs <code>detect_odr_violation=0</code>: SDL's stb_image and miniz tables merged identically). LSan reports one allocation when the window exits: 160 bytes, the hit-test closure the sdl3 crate's <code>set_hit_test</code> boxes for the window's life and never frees</td><td class="num">no errors</td></tr>
         <tr><td><code>scripts/sanitize.sh thread</code></td><td>TSan, the same runs: clean at <code>894a785</code>. One suppression, a lock-order report inside libdb (JACK's metadata store), third-party</td><td class="num">clean</td></tr>
         <tr class="compat"><td>Build</td><td colspan="2">Zero compiler warnings, by rule, in every crate and configuration.</td></tr>
@@ -4480,9 +4643,9 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 18. packaging -->
-<section id="s18">
-  <h2><span class="num">18</span>Packaging and deployment</h2>
+<!-- ============================================================ 19. packaging -->
+<section id="s19">
+  <h2><span class="num">19</span>Packaging and deployment</h2>
   <p class="sub">
     An Arch package, built from the committed state of the repository with the pinned SDL release. It sits beside
     JackBus: PatchBox is built for it but depends only on <code>libjack.so</code>, so any JACK2 server provides
@@ -4495,11 +4658,11 @@ td code, li code, p code { font-size: 0.92em; }
       <p class="role">patchbox · x86_64 · GPL-2.0-or-later, Apache-2.0 (Cousine), Zlib (SDL)</p>
       <ul>
         <li><b>Sources</b>: this repository (<code>git+file://</code>, or <code>PATCHBOX_REPO</code> / <code>PATCHBOX_BRANCH</code>) and SDL at <code>release-3.4.18</code>, checked against the commit <code>scripts/sdl.sh</code> pins, then patched.</li>
-        <li><b>depends</b>: gcc-libs, glibc, libjack.so, libglvnd, libwayland-client/cursor/egl, libxkbcommon.</li>
+        <li><b>depends</b>: alsa-lib (the Mixer tab), gcc-libs, glibc, libjack.so, libglvnd, libwayland-client/cursor/egl, libxkbcommon.</li>
         <li><b>optdepends</b>: jackbus (jackdbus control, settings, presets, sound card bridges; its shims are what the Shims tab sets up), pipewire (its graph and tab), wireplumber, git (snapshots), xdg-utils.</li>
         <li><b>check()</b> runs <code>cargo test --release</code>; <code>options=(!lto)</code> for the C side.</li>
       </ul>
-      <div class="chips"><span class="chip">makepkg</span><span class="chip">cargo --frozen</span><span class="chip">pkgver r95</span></div>
+      <div class="chips"><span class="chip">makepkg</span><span class="chip">cargo --frozen</span><span class="chip">pkgver r99</span></div>
     </div>
     <div class="card engine">
       <h3>What it installs</h3>
@@ -4522,9 +4685,9 @@ td code, li code, p code { font-size: 0.92em; }
   </ol>
 </section>
 
-<!-- ============================================================ 19. open items -->
-<section id="s19">
-  <h2><span class="num">19</span>Open items</h2>
+<!-- ============================================================ 20. open items -->
+<section id="s20">
+  <h2><span class="num">20</span>Open items</h2>
   <p class="sub">What's left, what's proposed, and what was set aside on purpose.</p>
   <div class="grid2">
     <div class="card">
@@ -4570,25 +4733,26 @@ td code, li code, p code { font-size: 0.92em; }
   </div>
 </section>
 
-<!-- ============================================================ 20. source map -->
-<section id="s20">
-  <h2><span class="num">20</span>Source map</h2>
+<!-- ============================================================ 21. source map -->
+<section id="s21">
+  <h2><span class="num">21</span>Source map</h2>
   <p class="sub">19,491 lines of Rust in three crates, 95 commits. Line counts are from <code>wc -l</code> on 16 November 2026.</p>
   <div class="tablebox">
     <table>
       <thead><tr><th>File</th><th>What it holds</th><th class="num">Lines</th></tr></thead>
       <tbody>
         <tr class="compat"><td colspan="3"><b>patchbox</b> · the window (src/)</td></tr>
-        <tr><td><code>main.rs</code></td><td>SDL init and hints, the GL window, the event loop, wakes, pinch, stats, test scripts and snapshots; the PulseAudio switch's first version converted at start-up</td><td class="num">635</td></tr>
-        <tr><td><code>app.rs</code></td><td>application state and every Action: JACK, jackdbus replies, the daemon link, PipeWire, pages (settings and their tabs, the Shims tab's rows, rules, log), timers</td><td class="num">3,468</td></tr>
-        <tr><td><code>canvas.rs</code></td><td>the patchbay: blocks, ports, wires, matrices, hit testing, drags (move, link, rewire, paint, band), menus, tooltips</td><td class="num">1,887</td></tr>
+        <tr><td><code>main.rs</code></td><td>SDL init and hints, the GL window, the event loop, wakes, pinch, stats, test scripts and snapshots; the PulseAudio switch's first version converted at start-up; a page's bar dragged</td><td class="num">648</td></tr>
+        <tr><td><code>app.rs</code></td><td>application state and every Action: JACK, jackdbus replies, the daemon link, PipeWire, pages (settings and their tabs, the Shims tab's rows, rules, log), timers; the Mixer tab's rows and changes</td><td class="num">3,571</td></tr>
+        <tr><td><code>canvas.rs</code></td><td>the patchbay: blocks, ports, wires, matrices, hit testing, drags (move, link, rewire, paint, band), menus, tooltips</td><td class="num">1,886</td></tr>
         <tr><td><code>ui.rs</code></td><td>the chrome: title bar, toolbar tiles, the JACK LCD and its menus (buffer size, DMA), sidebar, menus, Luluda's buttons</td><td class="num">1,211</td></tr>
         <tr><td><code>sessui.rs</code> · <code>session.rs</code></td><td>the session panel and dialogs · the link to patchboxd (start it, subscribe, requests)</td><td class="num">1,033 · 307</td></tr>
         <tr><td><code>gfx.rs</code> · <code>text.rs</code> · <code>theme.rs</code></td><td>the renderer (one shader, one buffer, one texture) · fonts and the glyph atlas · colours and sizes</td><td class="num">656 · 167 · 100</td></tr>
         <tr><td><code>pw.rs</code> · <code>pwconf.rs</code></td><td>pw-dump reader, PipeWire graph and state, pw-link / pw-metadata / pw-cli · the bridge's config file, the clock drop-in, the drop-in that leaves audio to JackBus</td><td class="num">569 · 117</td></tr>
         <tr><td><code>compat.rs</code></td><td>JackBus's shims: their settings file (a shim's own key, then the shared one; one key set, the rest kept), which are installed, ALSA's default device (a marked block in the user's asoundrc), the PulseAudio switch and its first version's migration</td><td class="num">235</td></tr>
         <tr><td><code>cpuidle.rs</code></td><td>the CPUs' idle states from sysfs, collated across cores, as the DMA menu's levels and what a limit allows</td><td class="num">158</td></tr>
-        <tr><td><code>dialog.rs</code></td><td>pages and dialogs: rows of labelled controls, immediate mode</td><td class="num">626</td></tr>
+        <tr><td><code>dialog.rs</code></td><td>pages and dialogs: rows of labelled controls, immediate mode; the Level control (a bar and its switch) and its drag</td><td class="num">718</td></tr>
+        <tr><td><code>mixer.rs</code></td><td>the Mixer tab: alsa-lib's simple mixer through a thin FFI, a mixer per card while shown, an element's rows, alsamixer's scale both ways, changes, events and the card list on the tick</td><td class="num">472</td></tr>
         <tr><td><code>server.rs</code></td><td>jackdbus: the worker thread, Cmd / Reply, the parameter tree, signals, the bridges' calls and status, the cpu-dma-latency read with each status</td><td class="num">559</td></tr>
         <tr><td><code>bridges.rs</code></td><td>the Devices tab's cards: <code>/proc/asound/cards</code>, bridge specs (<code>device[/period[/nperiods]][@wake]</code>), state lines from <code>GetBridges</code>, the settings of cards switched off (<code>bridges-off.json</code>); cards with MIDI only left out</td><td class="num">311</td></tr>
         <tr><td><code>model.rs</code> · <code>layout.rs</code></td><td>snapshot → nodes and matrices · what the canvas remembers (per style, per canvas, a camera each)</td><td class="num">390 · 339</td></tr>
@@ -4612,9 +4776,9 @@ td code, li code, p code { font-size: 0.92em; }
 </section>
 
 <footer>
-  PatchBox · architecture · 0.1.0 r95 (github.com/nine7nine/PatchBox) · Rust · SDL 3.4.18
+  PatchBox · architecture · 0.1.0 r99 (github.com/nine7nine/PatchBox) · Rust · SDL 3.4.18
   (static, Wayland) · for JackBus 1.9.22 r150 or later (r191 for the Shims tab) · tested on Linux 7.3 PREEMPT_RT,
-  KDE Plasma · updated 16 November 2026
+  KDE Plasma · updated 17 November 2026
 </footer>
 
 </main>

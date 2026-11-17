@@ -54,8 +54,8 @@ its own.
   one (a browser, OBS). Templates, snapshots, client templates, per-client hooks, notes. Deleted things
   go to the desktop's Trash. `patchbox-ctl` drives it all from a shell.
 - **JACK server.** Start, stop, restart; every driver and engine parameter jackdbus offers, with
-  its constraints, on the settings page (tabs Server, Master, Devices, Shims, PipeWire, Internals,
-  Netjack); presets switched in one click; a session can carry the server's settings. A toolbar
+  its constraints, on the settings page (tabs Server, Master, Devices, Mixer, Shims, PipeWire,
+  Internals, Netjack: Mixer is each sound card's own controls, as alsamixer shows them); presets switched in one click; a session can carry the server's settings. A toolbar
   LCD with the rate, buffer size, xruns and DSP load, and with JackBus the CPU wake-up latency
   limit, offered in levels read from the CPU's own idle states. The event log and jackdbus's own
   log; transport.
