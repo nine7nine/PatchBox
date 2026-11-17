@@ -335,10 +335,8 @@ impl App {
         let anchors = self.anchors(xf);
         let tol = 5.0 * self.scale;
         let mut best: Option<(f32, (usize, usize, f32))> = None;
+        // Every wire whose two ports are shown: another type's too, on blocks showing all their ports.
         for &(o, i) in &self.graph.conns {
-            if self.graph.ports[o].kind != self.kind {
-                continue;
-            }
             let (Some(&a), Some(&b)) = (anchors.get(&o), anchors.get(&i)) else { continue };
             if let Some((d, t)) = curve_dist(self.curve(a, b, xf.z), [x, y])
                 && d < tol
@@ -1136,9 +1134,10 @@ impl App {
                 _ => None,
             };
             for &(o, i) in &self.graph.conns {
-                if self.graph.ports[o].kind != self.kind {
-                    continue;
-                }
+                // Another type's wire where both its ports are shown (blocks showing all their
+                // ports): in its own colour, dimmed as those ports are.
+                let k = self.graph.ports[o].kind;
+                let (wire, fade) = if k == self.kind { (wire, 1.0) } else { (kind_color(k), 0.55) };
                 let (Some(&a), Some(&b)) = (anchors.get(&o), anchors.get(&i)) else { continue };
                 if let Some(((po, pi), moving_in)) = picked
                     && (po, pi) == (o, i)
@@ -1149,7 +1148,7 @@ impl App {
                 }
                 let node_lit = |p: usize| self.model.port_node.get(&p).is_some_and(|n| lit_nodes.contains(n));
                 let lit = hov_wire == Some((o, i)) || hov_port.is_some_and(|p| p == o || p == i) || node_lit(o) || node_lit(i);
-                let col = if lit { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA) };
+                let col = if lit { mix(wire, [1.0, 1.0, 1.0, 1.0], 0.25) } else { alpha(wire, WIRE_ALPHA * fade) };
                 let [p0, p1, p2, p3] = self.curve(a, b, z);
                 g.bezier(p0, p1, p2, p3, if lit { ww * 1.4 } else { ww }, col);
             }
