@@ -111,7 +111,7 @@ constraints and descriptions, in tabs:
 | Server | state, load, latency and xruns; presets; the engine's parameters; jackdbus itself (Quit jackdbus) |
 | Master | the master driver, Switch master (no restart), its parameters |
 | Devices | what else joins the graph: sound cards, bridged; then slave drivers |
-| Mixer | each sound card's own controls, as alsamixer shows them: volumes (a bar, with the control's switch), switches, lists; live, and cards plugged in or out follow |
+| Mixer | each sound card's own controls, as alsamixer shows them: volumes (a bar, with the control's switch), switches, lists; live, and cards plugged in or out follow. "Save as my settings" keeps a card's state for JackBus to put back whenever it opens the card (its start, a restart, the card plugged back in); "Back to my settings" puts it back now |
 | Shims | JackBus's shims: PulseAudio, ALSA and PipeWire applications straight to JackBus; PipeWire leaving audio to JackBus ([below](#shims)) |
 | PipeWire | PipeWire's settings ([below](#pipewire)) |
 | Internals | the other internal clients jackdbus can load |

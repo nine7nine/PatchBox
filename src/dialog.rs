@@ -400,7 +400,9 @@ impl Dialog {
             let i = self.rows.iter().position(|r| r.label == l)?;
             return self.hits.iter().find(|(_, h)| *h == Hit::Row(i, Part::Remove)).map(|(r, _)| center(r));
         }
-        let i = self.rows.iter().position(|r| r.label == what)?;
+        // a label with spaces: "_" for each (test scripts split their steps at spaces)
+        let spaced = what.replace('_', " ");
+        let i = self.rows.iter().position(|r| r.label == what || r.label == spaced)?;
         self.hits.iter().find(|(_, h)| matches!(h, Hit::Row(j, p) if *j == i && *p != Part::Reset)).map(|(r, _)| center(r))
     }
 

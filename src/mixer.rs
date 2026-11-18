@@ -470,3 +470,21 @@ impl Mixer {
         ok
     }
 }
+
+/// JackBus's saved mixer state of card `id` (jackbus-mixer, ~/.config/jackbus/mixer/<id>.state),
+/// put back whenever JackBus opens the card: when it was saved, if it was.
+pub fn saved_state(id: &str) -> Option<String> {
+    let path = crate::compat::config_home()?.join(format!("jackbus/mixer/{id}.state"));
+    let text = std::fs::read_to_string(path).ok()?;
+    let first = text.lines().next().unwrap_or("");
+    Some(first.split(", saved ").nth(1).and_then(|r| r.split('.').next()).unwrap_or("").to_string())
+}
+
+/// `jackbus-mixer save|restore <id>`: Ok(its message) or Err(why)
+pub fn state_command(what: &str, id: &str) -> Result<String, String> {
+    match std::process::Command::new("jackbus-mixer").args([what, id]).output() {
+        Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).trim().to_string()),
+        Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        Err(e) => Err(format!("jackbus-mixer: {e} (JackBus's package has it)")),
+    }
+}

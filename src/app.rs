@@ -2138,7 +2138,7 @@ impl App {
             let mut d = Dialog::new(Kind::Mixer, "Settings");
             d.message = "Each sound card's own controls, as alsamixer shows them: the levels the card plays and records at, in its hardware, before and after the graph. A change made elsewhere (alsamixer, the desktop's volume control) shows here at once.".into();
             d.set_rows(self.mixer_rows());
-            d.note = "Changes apply at once; the card keeps them (alsactl saves them at shutdown).".into();
+            d.note = "Changes apply at once. Saved as your settings, JackBus puts them back whenever it opens the card.".into();
             d.buttons = vec!["Close".into()];
             d
         } else if tab == TAB_SHIMS {
@@ -2368,6 +2368,31 @@ impl App {
         }
         for c in cards {
             rows.push(Row::header(format!("{} · hw:{}", c.name, c.id)));
+            // JackBus's saved state of the card: put back whenever it opens it
+            let saved = crate::mixer::saved_state(&c.id);
+            rows.push(Row {
+                id: format!("mixsave:{}", c.id),
+                label: "Save as my settings".into(),
+                help: format!(
+                    "JackBus puts this card's saved settings back whenever it opens it (its start, a restart, the card plugged back in), undoing whatever changed them meanwhile{}",
+                    match &saved {
+                        Some(d) if !d.is_empty() => format!(" · saved {d}"),
+                        Some(_) => " · saved".to_string(),
+                        None => " · nothing saved yet".to_string(),
+                    }
+                ),
+                control: Control::Link("save".into()),
+                modified: false,
+            });
+            if saved.is_some() {
+                rows.push(Row {
+                    id: format!("mixrestore:{}", c.id),
+                    label: "Back to my settings".into(),
+                    help: "Puts the saved settings back now".into(),
+                    control: Control::Link("restore".into()),
+                    modified: false,
+                });
+            }
             match c.controls {
                 Err(e) => rows.push(Row::info("Its mixer", format!("can't be opened: {e}"))),
                 Ok(v) if v.is_empty() => rows.push(Row::info("Controls", "none")),
@@ -2391,6 +2416,20 @@ impl App {
     }
 
     fn mixer_set(&mut self, id: &str, v: &str) {
+        for (prefix, what) in [("mixsave:", "save"), ("mixrestore:", "restore")] {
+            if let Some(card) = id.strip_prefix(prefix) {
+                match crate::mixer::state_command(what, card) {
+                    Ok(_) if what == "save" => self.say(format!("hw:{card}: saved as your settings; JackBus puts them back whenever it opens the card"), false),
+                    Ok(msg) => self.say(format!("hw:{card}: {msg}"), false),
+                    Err(e) => self.say(format!("hw:{card}: {e}"), true),
+                }
+                if let Some(m) = self.mixer.as_mut() {
+                    m.poll();
+                }
+                self.refresh_mixer_page();
+                return;
+            }
+        }
         let (Some(key), Some(m)) = (id.strip_prefix("mix:"), self.mixer.as_mut()) else { return };
         let ok = if let Some(p) = v.strip_prefix("level:") {
             p.parse::<f64>().is_ok_and(|p| m.set_level(key, p))

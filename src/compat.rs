@@ -8,7 +8,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-fn config_home() -> Option<PathBuf> {
+pub fn config_home() -> Option<PathBuf> {
     match std::env::var_os("XDG_CONFIG_HOME") {
         Some(p) if !p.is_empty() => Some(PathBuf::from(p)),
         _ => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")),
