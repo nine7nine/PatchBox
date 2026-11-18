@@ -2238,6 +2238,17 @@ impl App {
                 }
                 _ => {}
             }
+            let async_help = match shim {
+                "pw" => "PipeWire streams (filters, and streams asking to run in the cycle, stay in it)",
+                "alsa" => "ALSA streams at JackBus's rate (a resampled one runs in the cycle)",
+                _ => "PulseAudio streams",
+            };
+            rows.push(row(
+                format!("shim:{shim}:async"),
+                "Outside the cycle (async)",
+                format!("On: JackBus moves these {async_help} itself each cycle, so an application that stalls can't make other clients xrun: only its own stream drops out. What another JACK client sends them arrives a cycle later. Off: in the graph's cycle. From each application's next start ({conf}: {shim}.async)"),
+                Control::Toggle(get_bool(shim, "async", false)),
+            ));
             rows.push(row(
                 format!("shim:{shim}:resample"),
                 "Resample another rate",
@@ -2303,7 +2314,7 @@ impl App {
         let res = if let Some(rest) = id.strip_prefix("shim:") {
             let (shim, key) = rest.split_once(':').unwrap_or(("", rest));
             let value = match key {
-                "resample" | "autoconnect" => Some(if on { "yes" } else { "no" }),
+                "resample" | "autoconnect" | "async" => Some(if on { "yes" } else { "no" }),
                 "output" | "input" if v.is_empty() => None,
                 "max-latency" if v.trim().parse::<u32>().is_err() => {
                     self.say(format!("\"{v}\" is not a number of ms"), true);
@@ -2330,6 +2341,7 @@ impl App {
                     "compat:alsa-default" => "ALSA's default device: as the system has it",
                     "compat:pw-no-bridge" if on => "PipeWire leaves audio to JackBus once restarted",
                     "compat:pw-no-bridge" => "PipeWire's JACK bridge back once restarted",
+                    _ if id.ends_with(":async") => "Saved: from each application's next start",
                     _ => "Saved: applications' next streams use it",
                 };
                 self.say(what, false);
