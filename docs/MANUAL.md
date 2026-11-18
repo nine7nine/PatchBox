@@ -181,6 +181,7 @@ isn't installed waits in the file.
 
 | | |
 |---|---|
+| Outside the cycle (async) | off (the default): applications run in JackBus's cycle. On: JackBus moves their streams itself, so one that stalls (Teams, a browser) only drops out on its own stream and can't give other clients xruns; what another JACK client sends them arrives a cycle later. PipeWire filters and streams asking to run in the cycle, and resampled ALSA streams, stay in it. From each application's next start |
 | Resample another rate | on (the default): a stream at JackBus's rate goes as it is, one at another rate is resampled; off: a stream at another rate is refused (PipeWire and PulseAudio programs) or held to JackBus's rate (ALSA) |
 | Resampling quality | JackBus's bridge resampler: low (32 taps, the least CPU), normal (56, the default), high (96: the most CPU, a few frames more delay) |
 | Connect new streams | on (the default): a new stream's ports are connected to the output (input) device; off: left unconnected, for you or a session to route |
